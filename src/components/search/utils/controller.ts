@@ -13,13 +13,29 @@ export async function searchTranscripts(params: {
     const queryParams: any = {};
 
     if (params.searchQuery) {
-      whereConditions.push(
-        'LOWER(Search_Doc_1) LIKE CONCAT("%", LOWER(@searchQuery), "%")'
-      );
-      queryParams.searchQuery = params.searchQuery;
+      // Process search query for wildcards and OR operators
+      const searchTerms = processSearchQuery(params.searchQuery);
+      const searchConditions = searchTerms.map((term, index) => {
+        const paramName = `searchQuery${index}`;
+
+        if (term.hasWildcard) {
+          // For wildcard terms, append % to the parameter value for SQL LIKE
+          queryParams[paramName] = `${term.value}%`;
+          return `LOWER(Search_Doc_1) LIKE CONCAT("%", LOWER(@${paramName}), "")`;
+        } else {
+          queryParams[paramName] = term.value;
+          return `LOWER(Search_Doc_1) LIKE CONCAT("%", LOWER(@${paramName}), "%")`;
+        }
+      });
+
+      // Join conditions based on OR logic from the query
+      if (searchConditions.length > 0) {
+        whereConditions.push(`(${searchConditions.join(" OR ")})`);
+      }
     }
 
     if (params.speakerQuery) {
+      // Generate alternative spellings for fuzzy matching
       whereConditions.push(
         'LOWER(Extracted_Speakers) LIKE CONCAT("%", LOWER(@speakerQuery), "%")'
       );
@@ -33,9 +49,7 @@ export async function searchTranscripts(params: {
       queryParams.channelQuery = params.channelQuery;
     }
     if (params.yearFilter && params.yearFilter !== "all") {
-      whereConditions.push(
-        "EXTRACT(YEAR FROM CAST(Upload_Date AS TIMESTAMP)) = @yearFilter"
-      );
+      whereConditions.push("EXTRACT(YEAR FROM Published_Date) = @yearFilter");
       queryParams.yearFilter = parseInt(params.yearFilter);
     }
 
@@ -47,16 +61,14 @@ export async function searchTranscripts(params: {
     let orderByClause;
     switch (params.sortOrder) {
       case "recent":
-        orderByClause = "ORDER BY Upload_Date DESC";
+        orderByClause = "ORDER BY Published_Date DESC";
         break;
       case "oldest":
-        orderByClause = "ORDER BY Upload_Date ASC";
+        orderByClause = "ORDER BY Published_Date ASC";
         break;
-      case "relevance":
       default:
-        // For relevance, we'd typically use a more complex scoring system
-        // but for simplicity, we'll just order by upload date as a fallback
-        orderByClause = "ORDER BY Upload_Date DESC";
+        // Default sorting by most recent if no valid sort order specified
+        orderByClause = "ORDER BY Published_Date DESC";
     }
     const limitClause = `LIMIT ${parseInt(params.resultLimit) || 10}`;
     const query = `
@@ -64,7 +76,7 @@ export async function searchTranscripts(params: {
         ID,
         Video_Title,
         Channel_Name,
-        Upload_Date,
+        Published_Date,
         Extracted_Speakers AS Speakers,
         Youtube_Link,
         Video_Length,
@@ -75,7 +87,6 @@ export async function searchTranscripts(params: {
       ${orderByClause}
       ${limitClause}
     `;
-
     const [rows] = await bigQuery.query({
       query: query,
       params: queryParams,
@@ -85,48 +96,70 @@ export async function searchTranscripts(params: {
       let snippets = [];
       if (params.searchQuery && row.Search_Doc_1) {
         const transcript = row.Search_Doc_1.toLowerCase();
-        const searchTerm = params.searchQuery.toLowerCase();
+        const processedTerms = processSearchQuery(params.searchQuery);
 
-        // Find ALL instances of the search term
-        const contextWindowSize = 110; // Expanded by 10 characters on each side (was 100)
-        const maxSnippets = 5; // Limit to prevent excessive snippets
+        // Find snippets for all search terms
+        for (const term of processedTerms) {
+          const searchTerm = term.value.toLowerCase();
+          const termToSearch = term.hasWildcard
+            ? searchTerm // Use base term without * for searching
+            : searchTerm;
 
-        let lastIndex = 0;
-        let snippetCount = 0;
+          // Find ALL instances of the search term
+          const contextWindowSize = 110;
+          const maxSnippets = 5;
 
-        // Continue searching for instances until we find them all or hit our max
-        while (lastIndex !== -1 && snippetCount < maxSnippets) {
-          const startIndex = transcript.indexOf(searchTerm, lastIndex);
+          let lastIndex = 0;
+          let snippetCount = 0;
 
-          if (startIndex === -1) break; // No more instances found
+          while (lastIndex !== -1 && snippetCount < maxSnippets) {
+            let startIndex = transcript.indexOf(termToSearch, lastIndex);
+            if (startIndex === -1) break; // No more instances found
 
-          // Get a context window around the match
-          const snippetStart = Math.max(0, startIndex - contextWindowSize);
-          const snippetEnd = Math.min(
-            transcript.length,
-            startIndex + searchTerm.length + contextWindowSize
-          );
+            // Get context window around the match
+            const snippetStart = Math.max(0, startIndex - contextWindowSize);
+            const snippetEnd = Math.min(
+              transcript.length,
+              startIndex + termToSearch.length + contextWindowSize
+            );
 
-          let snippet = transcript.substring(snippetStart, snippetEnd);
+            let snippet = transcript.substring(snippetStart, snippetEnd);
 
-          // Mark the search term in the snippet
-          const termStart = startIndex - snippetStart;
-          const termEnd = termStart + searchTerm.length;
-          snippet =
-            snippet.substring(0, termStart) +
-            `<mark>${snippet.substring(termStart, termEnd)}</mark>` +
-            snippet.substring(termEnd);
+            // Mark the search term in the snippet, handling wildcards
+            const termStart = startIndex - snippetStart;
+            let termEnd;
 
-          snippets.push(snippet);
+            if (term.hasWildcard) {
+              // For wildcard terms, highlight until the next space or punctuation
+              termEnd = findWordEndIndex(
+                snippet,
+                termStart + termToSearch.length
+              );
+            } else {
+              termEnd = termStart + termToSearch.length;
+            }
 
-          // Move past this occurrence to find the next one
-          lastIndex = startIndex + searchTerm.length;
-          snippetCount++;
+            snippet =
+              snippet.substring(0, termStart) +
+              `<mark>${snippet.substring(termStart, termEnd)}</mark>` +
+              snippet.substring(termEnd);
+
+            snippets.push(snippet);
+
+            // Move past this occurrence to find the next one
+            lastIndex = startIndex + termToSearch.length;
+            snippetCount++;
+          }
         }
       }
-
       return {
         ...row,
+        Published_Date:
+          typeof row.Published_Date?.value === "string"
+            ? row.Published_Date.value
+            : row.Published_Date?.value?.toString() ||
+              row.Published_Date?.toString() ||
+              null,
         SearchTerm: params.searchQuery || "",
         MatchSnippets: snippets.length > 0 ? snippets : undefined,
       };
@@ -144,6 +177,95 @@ export async function searchTranscripts(params: {
       uniqueVideos: 0,
     };
   }
+}
+
+// Helper function to process the search query for wildcards and OR operators
+function processSearchQuery(
+  query: string
+): Array<{ value: string; hasWildcard: boolean }> {
+  // Split the query by the OR operator, respecting quotation marks
+  const orTerms = splitByOrOperator(query);
+
+  // Process each term for wildcards
+  return orTerms.map((term) => {
+    const trimmed = term.trim();
+    const hasWildcard = trimmed.endsWith("*");
+
+    // If has wildcard, use the term without the asterisk for the SQL query
+    // BigQuery will handle the wildcard with LIKE operator
+    const value = hasWildcard ? trimmed.slice(0, -1) : trimmed;
+
+    return { value, hasWildcard };
+  });
+}
+
+// Function to split a search query by "OR" operator, respecting quotes
+function splitByOrOperator(query: string): string[] {
+  const result: string[] = [];
+  let currentTerm = "";
+  let inQuotes = false;
+
+  // Split by spaces to identify "OR" tokens
+  const tokens = query.split(/\s+/);
+
+  for (let i = 0; i < tokens.length; i++) {
+    const token = tokens[i];
+
+    // Handle quotation marks
+    if (token.startsWith('"') && token.endsWith('"') && token.length > 1) {
+      // Complete quoted term
+      if (currentTerm) result.push(currentTerm.trim());
+      result.push(token.slice(1, -1));
+      currentTerm = "";
+      continue;
+    }
+
+    if (token.startsWith('"')) {
+      inQuotes = true;
+      currentTerm = token.slice(1) + " ";
+      continue;
+    }
+
+    if (token.endsWith('"') && inQuotes) {
+      inQuotes = false;
+      currentTerm += token.slice(0, -1);
+      result.push(currentTerm.trim());
+      currentTerm = "";
+      continue;
+    }
+
+    // Handle OR operator (but not within quotes)
+    if (token.toUpperCase() === "OR" && !inQuotes && currentTerm) {
+      result.push(currentTerm.trim());
+      currentTerm = "";
+      continue;
+    }
+
+    // Add to current term
+    if (inQuotes || token.toUpperCase() !== "OR") {
+      currentTerm += token + " ";
+    }
+  }
+
+  // Add the last term if exists
+  if (currentTerm) {
+    result.push(currentTerm.trim());
+  }
+
+  return result.filter((term) => term.length > 0);
+}
+
+// Helper function to find the end of a word when using wildcards
+function findWordEndIndex(text: string, startIndex: number): number {
+  // Look for the next space or non-alphanumeric character
+  let endIndex = startIndex;
+  while (
+    endIndex < text.length &&
+    (/[a-zA-Z0-9]/.test(text[endIndex]) || text[endIndex] === "_")
+  ) {
+    endIndex++;
+  }
+  return endIndex;
 }
 
 export async function getTranscriptByVideoId(videoId: string): Promise<string> {

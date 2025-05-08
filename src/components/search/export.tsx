@@ -4,12 +4,12 @@ import { exportTranscripts } from "./utils/actions";
 import { toast } from "sonner";
 import { useState } from "react";
 
-export function Export({ formData }: { formData: FormData }) {
+export function Export({ inputs }: { inputs: Record<string, string> }) {
   const [isExporting, setIsExporting] = useState(false);
   const handleExport = async () => {
     try {
       setIsExporting(true);
-      const response = await exportTranscripts(null, formData);
+      const response = await exportTranscripts(inputs);
       if ("error" in response) {
         toast.error(response.error);
         return;

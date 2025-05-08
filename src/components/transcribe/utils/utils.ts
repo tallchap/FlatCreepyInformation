@@ -130,7 +130,7 @@ export function formatTranscriptAsText(transcript: Transcript): string {
 
       return `${timestamp} ${snippet.text}`;
     })
-    .join("\n\n");
+    .join("\n");
 }
 
 /**

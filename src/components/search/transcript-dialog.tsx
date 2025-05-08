@@ -1,44 +1,30 @@
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
-import { VideoResult as VideoResultType } from "./utils/types";
-import { Button } from "@/components/ui/button";
 import { Copy, Edit, FileText, Save, X } from "lucide-react";
-import { useEffect, useState } from "react";
-import { usePreface } from "./utils/hooks/use-preface";
-import { getTranscript } from "./utils/actions";
+import { useState } from "react";
 import { toast } from "sonner";
 import { Textarea } from "../ui/textarea";
-import { Loader } from "../loader";
+import { usePreface } from "./utils/hooks/use-preface";
+import { VideoResult as VideoResultType } from "./utils/types";
 
 export function TranscriptDialog({ video }: { video: VideoResultType }) {
-  const [fullTranscript, setFullTranscript] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [fullTranscript, setFullTranscript] = useState(() => {
+    if (video.Search_Doc_1) {
+      return video.Search_Doc_1.replace(/\n\n/g, "\n");
+    }
+    return "";
+  });
   const [isEditing, setIsEditing] = useState(false);
   const [editedTranscript, setEditedTranscript] = useState("");
   const [open, setOpen] = useState(false);
-  const [hasLoaded, setHasLoaded] = useState(false);
   const [preface] = usePreface();
 
-  const getTranscriptText = (): string => {
-    // First check if we already have the full transcript
-    if (video.Search_Doc_1) {
-      return video.Search_Doc_1;
-    }
-
-    // Fall back to snippets if available
-    if (video.MatchSnippets && video.MatchSnippets.length > 0) {
-      return video.MatchSnippets.map((snippet) =>
-        snippet.replace(/<\/?[^>]+(>|$)/g, "")
-      ).join("\n\n");
-    }
-    return "";
-  };
   const saveEditedTranscript = () => {
     // Check if the edited transcript includes the preface text
     if (editedTranscript.includes(preface)) {
@@ -89,39 +75,6 @@ export function TranscriptDialog({ video }: { video: VideoResultType }) {
       });
   };
 
-  useEffect(() => {
-    async function fetchTranscript() {
-      if (!open || hasLoaded) return;
-
-      if (video.Search_Doc_1) {
-        setFullTranscript(video.Search_Doc_1);
-        setHasLoaded(true);
-        return;
-      }
-
-      try {
-        setIsLoading(true);
-        const data = await getTranscript(video.ID);
-        if (data?.transcript && data.transcript.length > 0) {
-          setFullTranscript(data.transcript);
-        } else {
-          setFullTranscript(getTranscriptText());
-        }
-      } catch (error) {
-        console.error(error);
-        setFullTranscript(getTranscriptText());
-        toast.warning(
-          "Could not fetch the full transcript. Using available snippets instead."
-        );
-      } finally {
-        setIsLoading(false);
-        setHasLoaded(true);
-      }
-    }
-
-    fetchTranscript();
-  }, [open, hasLoaded, video]);
-
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
@@ -137,79 +90,59 @@ export function TranscriptDialog({ video }: { video: VideoResultType }) {
           </DialogTitle>
         </DialogHeader>
         <div className="flex-1 overflow-auto mt-4 relative">
-          {isLoading ? (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Loader />
+          <div className="flex justify-between items-center mb-3">
+            <div className="text-sm text-gray-500">
+              <span className="font-medium">
+                {isEditing
+                  ? editedTranscript.length.toLocaleString()
+                  : `${preface}\n\n${fullTranscript}`.length.toLocaleString()}
+              </span>{" "}
+              characters
             </div>
-          ) : (
-            <>
-              <div className="flex justify-between items-center mb-3">
-                <div className="text-sm text-gray-500">
-                  <span className="font-medium">
-                    {isEditing
-                      ? editedTranscript.length.toLocaleString()
-                      : `${preface}\n\n${fullTranscript}`.length.toLocaleString()}
-                  </span>{" "}
-                  characters
-                </div>
-                <div className="flex gap-2">
-                  {isEditing ? (
-                    <>
-                      <Button
-                        onClick={cancelEditing}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <X size={16} />
-                        Cancel
-                      </Button>
-                      <Button
-                        onClick={saveEditedTranscript}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <Save size={16} />
-                        Save Changes
-                      </Button>
-                    </>
-                  ) : (
-                    <>
-                      <Button
-                        onClick={startEditing}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <Edit size={16} />
-                        Edit Transcript
-                      </Button>
-                      <Button
-                        onClick={copyTranscript}
-                        variant="outline"
-                        size="sm"
-                      >
-                        <Copy size={16} />
-                        Copy to Clipboard
-                      </Button>
-                    </>
-                  )}
-                </div>
-              </div>
-
+            <div className="flex gap-2">
               {isEditing ? (
-                <Textarea
-                  value={editedTranscript}
-                  onChange={(e) => setEditedTranscript(e.target.value)}
-                  className="h-full min-h-[400px] font-mono text-sm p-4"
-                  placeholder="Enter the transcript text here..."
-                />
+                <>
+                  <Button onClick={cancelEditing} variant="outline" size="sm">
+                    <X size={16} />
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={saveEditedTranscript}
+                    variant="outline"
+                    size="sm"
+                  >
+                    <Save size={16} />
+                    Save Changes
+                  </Button>
+                </>
               ) : (
-                <div className="bg-gray-50 p-4 rounded-md whitespace-pre-wrap text-sm font-mono h-full overflow-auto">
-                  {`${preface}\n\n${
-                    fullTranscript || "No transcript data available."
-                  }`}
-                </div>
+                <>
+                  <Button onClick={startEditing} variant="outline" size="sm">
+                    <Edit size={16} />
+                    Edit Transcript
+                  </Button>
+                  <Button onClick={copyTranscript} variant="outline" size="sm">
+                    <Copy size={16} />
+                    Copy to Clipboard
+                  </Button>
+                </>
               )}
-            </>
+            </div>
+          </div>
+
+          {isEditing ? (
+            <Textarea
+              value={editedTranscript}
+              onChange={(e) => setEditedTranscript(e.target.value)}
+              className="h-full min-h-[400px] font-mono text-sm p-4"
+              placeholder="Enter the transcript text here..."
+            />
+          ) : (
+            <div className="bg-gray-50 p-4 rounded-md whitespace-pre-wrap text-sm font-mono h-full overflow-auto">
+              {`${preface}\n\n${
+                fullTranscript || "No transcript data available."
+              }`}
+            </div>
           )}
         </div>
       </DialogContent>

@@ -27,9 +27,9 @@ export function VideoResult({ video }: { video: VideoResultType }) {
               </span>
               <span className="flex items-center gap-1">
                 <Calendar size={16} />
-                {typeof video.Upload_Date === "object"
-                  ? (video.Upload_Date as any)?.value || "Unknown Date"
-                  : video.Upload_Date}
+                {typeof video.Published_Date === "object"
+                  ? (video.Published_Date as any)?.value || "Unknown Date"
+                  : video.Published_Date}
               </span>
               <VideoLength length={video.Video_Length} />
             </div>

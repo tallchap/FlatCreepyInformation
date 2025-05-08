@@ -4,7 +4,7 @@ export const videoResultSchema = z.object({
   ID: z.string(),
   Video_Title: z.string(),
   Channel_Name: z.string(),
-  Upload_Date: z.string(),
+  Published_Date: z.string(),
   Speakers: z.string(),
   Youtube_Link: z.string(),
   Video_Length: z.string(),

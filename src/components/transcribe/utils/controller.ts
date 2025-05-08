@@ -45,12 +45,7 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
     const statistics = videoData.statistics;
 
     // Format the date
-    const publishedDate = new Date(snippet.publishedAt);
-    const formattedDate = publishedDate.toLocaleDateString("en-US", {
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
+    const publishedDate = snippet.publishedAt;
 
     // Convert ISO 8601 duration to human-readable format
     const duration = contentDetails?.duration || "PT0S";
@@ -71,7 +66,7 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
       description: snippet.description,
       channelName: snippet.channelTitle,
       channelId: snippet.channelId,
-      publishedAt: formattedDate,
+      publishedAt: publishedDate,
       duration: durationStr,
       viewCount: statistics?.viewCount || "0",
       speaker,
@@ -509,7 +504,6 @@ export async function addToBigQuery(transcript: any, metadata: any) {
   // Initialize BigQuery client;
   const dataset = bigQuery.dataset("reptranscripts");
   const table = dataset.table("youtube_transcripts");
-
   const row = {
     ID: metadata.videoId,
     Language: transcript.language,
@@ -522,7 +516,7 @@ export async function addToBigQuery(transcript: any, metadata: any) {
     Video_Description: metadata.description,
     Channel_Name: metadata.channelName,
     Channel_Id: metadata.channelId,
-    Upload_Date: metadata.publishedAt,
+    Published_Date: new Date(metadata.publishedAt).toISOString().split("T")[0],
     Video_Length: metadata.duration,
     View_Count: metadata.viewCount,
     User_Speakers: metadata.speaker,

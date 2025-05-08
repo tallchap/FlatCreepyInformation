@@ -1,16 +1,16 @@
 "use client";
 
-import { Card, CardContent } from "@/components/ui/card";
-import { Label } from "@/components/ui/label";
-import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
-import { Button } from "@/components/ui/button";
-import { useActionState } from "react";
-import { singleExtract } from "./utils/actions";
-import { Loader } from "../loader";
 import { useTranscriptHistory } from "@/components/transcribe/utils/hooks/useTranscriptHistory";
-import { useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { useActionState, useEffect } from "react";
 import { toast } from "sonner";
+import { Loader } from "../loader";
+import { BulkForm } from "./bulk-form";
+import { singleExtract } from "./utils/actions";
 
 export function SingleForm() {
   const [state, action, isPending] = useActionState(singleExtract, null);
@@ -36,7 +36,10 @@ export function SingleForm() {
       <CardContent>
         <form className="flex flex-col gap-6" action={action}>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="url">YouTube URL</Label>
+            <div className="flex justify-between items-end gap-2">
+              <Label htmlFor="url">YouTube URL</Label>
+              <BulkForm />
+            </div>
             <Input
               id="url"
               name="url"
@@ -61,14 +64,18 @@ export function SingleForm() {
           </div>
           <div className="flex justify-between items-center gap-2 rounded-lg border p-3">
             <div className="flex flex-col gap-2">
-              <Label htmlFor="store_in_bigquery">Store in BigQuery</Label>
+              <Label htmlFor="store_in_bigquery">Store in Database</Label>
               <p className="text-sm text-gray-500">
-                Save transcript data to BigQuery
+                Save transcript to searchable database
               </p>
             </div>
-            <Switch id="store_in_bigquery" name="store_in_bigquery" />
+            <Switch
+              id="store_in_bigquery"
+              name="store_in_bigquery"
+              defaultChecked={true}
+            />
           </div>
-          <Button type="submit">Extract Metadata & Transcript</Button>
+          <Button type="submit">Process Video</Button>
         </form>
       </CardContent>
       {isPending && <Loader className="mx-auto" />}

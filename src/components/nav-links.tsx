@@ -1,8 +1,5 @@
-"use client";
-
 import Link from "next/link";
 import { Button } from "./ui/button";
-import { usePathname } from "next/navigation";
 
 const links = [
   {
@@ -20,16 +17,10 @@ const links = [
 ];
 
 export function NavLinks() {
-  const pathname = usePathname();
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center justify-center gap-2">
       {links.map((link) => (
-        <Button
-          variant={pathname === link.href ? "secondary" : "link"}
-          asChild
-          key={link.href}
-          className="text-md"
-        >
+        <Button variant="link" asChild key={link.href} className="text-xl">
           <Link href={link.href}>{link.label}</Link>
         </Button>
       ))}

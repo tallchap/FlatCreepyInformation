@@ -27,7 +27,15 @@ export async function singleExtract(prevState: any, formData: FormData) {
     validatedFields.data;
 
   console.log(`Extracting metadata for: ${url}`);
-  const metadata = await fetchYoutubeMetadata(url, speaker);
+  let metadata;
+  try {
+    metadata = await fetchYoutubeMetadata(url, speaker);
+  } catch (error: any) {
+    console.error("Error fetching metadata:", error);
+    return {
+      error: error.message || "Error fetching metadata",
+    };
+  }
   let transcript;
   try {
     transcript = await fetchYoutubeTranscript(url);

@@ -5,7 +5,7 @@ import { NavLinks } from "./nav-links";
 export function Navbar() {
   return (
     <nav className="w-full py-4 px-6 bg-[#99cc66]">
-      <div className="container mx-auto max-w-6xl flex items-center justify-between">
+      <div className="container mx-auto max-w-6xl flex flex-col md:flex-row md:items-center md:justify-around">
         <div className="flex items-center gap-3">
           <Link href="/" className="flex items-center gap-2">
             <Image

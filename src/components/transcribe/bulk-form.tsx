@@ -1,21 +1,24 @@
 "use client";
 
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+  DialogTrigger,
+  DialogClose,
+} from "@/components/ui/dialog";
 import { Button } from "../ui/button";
-import { Label } from "../ui/label";
-import { Input } from "../ui/input";
 import { useRef, useState } from "react";
 import papa from "papaparse";
 import { toast } from "sonner";
 import { singleExtract } from "./utils/actions";
 import { useTranscriptHistory } from "./utils/hooks/useTranscriptHistory";
 import { Progress } from "@/components/ui/progress";
+import { Upload } from "lucide-react";
+
 export function BulkForm() {
   const [data, setData] = useState<[string, string][]>([]);
   const [progress, setProgress] = useState(0);
@@ -23,10 +26,13 @@ export function BulkForm() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [completedEntries, setCompletedEntries] = useState(0);
   const [totalEntries, setTotalEntries] = useState(0);
+  const [fileName, setFileName] = useState<string | null>(null);
   const { addTranscript } = useTranscriptHistory();
+  const [isSuccess, setIsSuccess] = useState(false);
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
+      setFileName(file.name);
       papa.parse<string[]>(file, {
         header: false,
         skipEmptyLines: true,
@@ -46,15 +52,17 @@ export function BulkForm() {
       });
     }
   };
+
   const inputRef = useRef<HTMLInputElement>(null);
-  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
+
+  const handleSubmit = async () => {
     if (data.length === 0) {
       toast.error("Please upload a CSV file");
       return;
     }
 
     setIsProcessing(true);
+    setIsSuccess(false);
     setProgress(0);
     setEta("Calculating...");
     setCompletedEntries(0);
@@ -108,100 +116,116 @@ export function BulkForm() {
 
     setIsProcessing(false);
     setEta(null);
-    toast.success("All entries processed");
+    setIsSuccess(true);
+    setFileName(null);
   };
+
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Bulk Upload YouTube Videos</CardTitle>
-        <CardDescription>
-          Upload a CSV file with YouTube links and speaker names to process
-          multiple videos at once. The format should be: YouTube URL, Speaker
-          Name (one per line).
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form className="flex flex-col gap-6" onSubmit={handleSubmit}>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="csvFile">Upload CSV File</Label>
-            <Input
+    <Dialog>
+      <DialogTrigger className="flex items-center gap-2" asChild>
+        <Button variant="outline">
+          <Upload size={16} />
+          Bulk Import
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Bulk Upload YouTube Videos</DialogTitle>
+          <DialogDescription>
+            Upload a CSV file with YouTube links and speaker names
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="border border-dashed rounded-md p-6 flex flex-col items-center justify-center space-y-2">
+          <div className="w-12 h-12 flex items-center justify-center">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="w-8 h-8 text-gray-400"
+            >
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+          </div>
+          <div className="text-center">
+            <p className="text-sm font-medium">YouTube URL, Speaker Name</p>
+
+            <input
               id="csvFile"
               type="file"
               accept=".csv"
               onChange={handleFileChange}
-              required
               ref={inputRef}
+              className="hidden"
             />
-            <span className="text-sm text-gray-500">
-              Format: YouTube URL, Speaker Name (one per line)
-            </span>
-          </div>
-          {data.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium mb-2">
-                Preview{" "}
-                {data.length > 30
-                  ? `(showing first 30 of ${data.length} entries)`
-                  : `(${data.length} entries)`}
-              </h3>
-              <div className="bg-muted p-2 rounded-md max-h-40 overflow-y-auto text-sm">
-                {data.slice(0, 30).map((entry, index) => (
-                  <div
-                    key={index}
-                    className={`p-1 ${
-                      index < data.slice(0, 30).length - 1
-                        ? "border-b border-muted-foreground/20"
-                        : ""
-                    }`}
-                  >
-                    <div className="flex items-start">
-                      <span className="font-mono mr-2">{index + 1}.</span>
-                      <div>
-                        <div className="truncate">{entry[0]}</div>
-                        <div className="font-medium">Speaker: {entry[1]}</div>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {isProcessing && (
-            <div className="space-y-2">
-              <div className="flex justify-between items-center">
-                <p className="text-xs text-muted-foreground text-right">
-                  {completedEntries}/{totalEntries} completed
-                </p>
-                {eta && (
-                  <span className="text-sm text-muted-foreground">{eta}</span>
-                )}
-              </div>
-              <Progress value={progress} className="h-2" />
-              <p className="text-xs text-amber-500 font-medium mt-2">
-                Please do not close this tab while processing is in progress.
+            <div className="mt-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => inputRef.current?.click()}
+                disabled={isProcessing}
+              >
+                Choose File
+              </Button>
+            </div>
+
+            <p className="text-xs text-gray-500 mt-2">
+              {fileName ? fileName : "No file chosen"}
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-muted p-3 rounded-md">
+          <p className="text-md font-medium mb-1">Example Format:</p>
+          <div className="text-xs">
+            <p>https://www.youtube.com/watch?v=abc123, John Doe</p>
+            <p>https://www.youtube.com/watch?v=def456, Jane Smith</p>
+            <br />
+            <p>(NOTE: there are no column headers)</p>
+          </div>
+        </div>
+
+        {isProcessing && (
+          <div className="space-y-2">
+            <div className="flex justify-between items-center">
+              <p className="text-xs text-muted-foreground text-right">
+                {completedEntries}/{totalEntries} completed
               </p>
+              {eta && (
+                <span className="text-sm text-muted-foreground">{eta}</span>
+              )}
             </div>
-          )}
-
-          <div className="flex justify-between gap-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (inputRef.current) {
-                  inputRef.current.value = "";
-                }
-              }}
-              disabled={isProcessing}
-            >
-              Reset
-            </Button>
-            <Button type="submit" disabled={isProcessing}>
-              {isProcessing ? "Processing..." : "Process"}
-            </Button>
+            <Progress value={progress} className="h-2" />
+            <p className="text-xs text-amber-500 font-medium mt-2">
+              Please do not close this tab while processing is in progress.
+            </p>
           </div>
-        </form>
-      </CardContent>
-    </Card>
+        )}
+        {isSuccess && (
+          <p className="text-green-500">All entries have been processed.</p>
+        )}
+
+        <DialogFooter className="flex justify-between">
+          <DialogClose asChild>
+            <Button variant="outline" disabled={isProcessing}>
+              Cancel
+            </Button>
+          </DialogClose>
+          <Button
+            onClick={handleSubmit}
+            disabled={isProcessing || data.length === 0}
+          >
+            Process
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

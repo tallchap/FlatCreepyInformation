@@ -6,10 +6,8 @@ export default function AboutPage() {
       <div className="mb-12">
         <div className="bg-white rounded-lg shadow-md p-4">
           <p className="text-lg mb-6">
-            Snippysaurus helps you find clipworthy quotes from 2,500+ video
-            transcripts focused on artificial intelligence. Our platform makes
-            it easy to discover, customize, and export valuable content from a
-            growing database of AI-related videos.
+            Snippysaurus helps you find clipworthy quotes from 3,000+ video
+            transcripts focused on artificial intelligence.
           </p>
           <ul className="space-y-4 pl-5 list-disc">
             <li className="ml-1">
@@ -20,12 +18,11 @@ export default function AboutPage() {
               >
                 Search
               </Link>{" "}
-              to find keywords from the transcripts.
+              to find keywords within video transcripts.
             </li>
             <li className="ml-5">
-              Open an individual transcript, or use{" "}
-              <span className="font-medium">Customize Preface</span> to add your
-              own text to the start of it.
+              Use <span className="font-medium">Customize Preface</span> and
+              then copy-paste a modified transcript onto your device.
             </li>
             <li className="ml-5">
               <span className="font-medium">Export</span> all the results from a
@@ -40,6 +37,10 @@ export default function AboutPage() {
                 Transcribe
               </Link>{" "}
               to add new transcripts to the database.
+              <li className="ml-5">
+                <span className="font-medium">Bulk Import </span>
+                up to 30 videos at a time.
+              </li>
             </li>
           </ul>
         </div>

@@ -12,28 +12,54 @@ import {
 } from "@/components/ui/select";
 import { SearchQueryInfo } from "./search-query-info";
 import { Button } from "@/components/ui/button";
+import { useState } from "react";
+import { searchTranscript } from "./utils/actions";
+import { toast } from "sonner";
 
 export function SearchForm({
-  action,
-  isPending,
-  formData,
+  data,
+  setData,
+  isLoading,
+  setIsLoading,
 }: {
-  action: (formData: FormData) => void;
-  isPending: boolean;
-  formData: FormData;
+  data: Record<string, any> | undefined;
+  setData: (data: Record<string, any>) => void;
+  isLoading: boolean;
+  setIsLoading: (isLoading: boolean) => void;
 }) {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    const formData = new FormData(e.target as HTMLFormElement);
+    if (
+      !formData.get("searchQuery") &&
+      !formData.get("speakerQuery") &&
+      !formData.get("channelQuery")
+    ) {
+      toast.error("Please enter a query");
+      return;
+    }
+    try {
+      setIsLoading(true);
+      const result = await searchTranscript(formData);
+      setData(result);
+    } catch (error) {
+      console.error(error);
+      toast.error("An error occurred");
+    } finally {
+      setIsLoading(false);
+    }
+  };
   return (
     <Card>
       <CardContent>
-        <form action={action} className="flex flex-col gap-6">
+        <form onSubmit={handleSubmit} className="flex flex-col gap-6">
           <div className="flex flex-col gap-2">
             <Label htmlFor="searchQuery">Search in Transcripts</Label>
             <Input
               id="searchQuery"
               name="searchQuery"
-              defaultValue={formData?.get("searchQuery")?.toString() || ""}
+              defaultValue={data?.searchQuery || ""}
               placeholder="Enter keywords (e.g., toronto OR program*)"
-              required
             />
             <div className="flex items-center gap-2">
               <span className="text-sm text-gray-500">
@@ -51,7 +77,7 @@ export function SearchForm({
             <Input
               id="speakerQuery"
               name="speakerQuery"
-              defaultValue={formData?.get("speakerQuery")?.toString() || ""}
+              defaultValue={data?.speakerQuery || ""}
               placeholder="Enter speaker name..."
             />
           </div>
@@ -63,7 +89,7 @@ export function SearchForm({
             <Input
               id="channelQuery"
               name="channelQuery"
-              defaultValue={formData?.get("channelQuery")?.toString() || ""}
+              defaultValue={data?.channelQuery || ""}
               placeholder="Enter channel name..."
             />
           </div>
@@ -72,9 +98,7 @@ export function SearchForm({
               <Label>Sort by Date</Label>
               <Select
                 name="sortOrder"
-                defaultValue={
-                  formData?.get("sortOrder")?.toString() || "recent"
-                }
+                defaultValue={data?.sortOrder || "recent"}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Sort Order" />
@@ -89,7 +113,7 @@ export function SearchForm({
               <Label>Number of Results</Label>
               <Select
                 name="resultLimit"
-                defaultValue={formData?.get("resultLimit")?.toString() || "10"}
+                defaultValue={data?.resultLimit || "10"}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Limit" />
@@ -104,7 +128,7 @@ export function SearchForm({
               <Label>Year Filter</Label>
               <Select
                 name="yearFilter"
-                defaultValue={formData?.get("yearFilter")?.toString() || "all"}
+                defaultValue={data?.yearFilter || "all"}
               >
                 <SelectTrigger>
                   <SelectValue placeholder="Year" />
@@ -123,8 +147,8 @@ export function SearchForm({
               </Select>
             </div>
           </div>
-          <Button type="submit" disabled={isPending}>
-            {isPending ? "Searching..." : "Search Videos"}
+          <Button type="submit" disabled={isLoading}>
+            {isLoading ? "Searching..." : "Search Videos"}
           </Button>
         </form>
       </CardContent>
