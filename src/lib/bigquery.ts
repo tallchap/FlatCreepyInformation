@@ -41,3 +41,24 @@ export async function fetchVideoMeta(videoId: string) {
     return null;
   }
 }
+
+/** Return [{start: seconds, text: "word…"}] sorted by time */
+export async function fetchTranscript(id: string) {
+  try {
+    const [rows] = await bigQuery.query({
+      query: `
+        SELECT
+          Timestamp_Seconds AS start,
+          Word             AS text
+        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+        WHERE ID = @id
+        ORDER BY start
+      `,
+      params: { id },
+    });
+    return rows as { start: number; text: string }[];
+  } catch (error) {
+    console.error("Error fetching transcript:", error);
+    return [];
+  }
+}
