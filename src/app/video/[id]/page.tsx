@@ -39,9 +39,9 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
               <h2 className="text-sm text-gray-500 dark:text-gray-400">Published</h2>
               <p className="font-medium">
                 {videoMeta.published_at ? 
-                  (typeof videoMeta.published_at === 'object' 
-                    ? JSON.stringify(videoMeta.published_at)
-                    : videoMeta.published_at)
+                  (typeof videoMeta.published_at === 'object' && videoMeta.published_at.value
+                    ? videoMeta.published_at.value
+                    : String(videoMeta.published_at))
                   : 'Date not available'}
               </p>
             </div>
