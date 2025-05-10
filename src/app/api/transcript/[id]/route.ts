@@ -7,6 +7,8 @@ import { NextResponse } from "next/server";
 import { fetchTranscript } from "@/lib/bigquery";
 
 export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const data = await fetchTranscript(params.id);
+  // Resolve params to fix Next.js warning
+  const resolvedParams = await Promise.resolve(params);
+  const data = await fetchTranscript(resolvedParams.id);
   return NextResponse.json(data ?? [], { status: 200 });
 }

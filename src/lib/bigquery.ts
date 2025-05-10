@@ -1,62 +1,83 @@
+
 import { BigQuery } from "@google-cloud/bigquery";
 
-const credentials = JSON.parse(
-  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}"
-);
+const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}");
+export const bigQuery = new BigQuery({ credentials, projectId: credentials.project_id });
 
-export const bigQuery = new BigQuery({
-  credentials,
-  projectId: credentials.project_id,
-});
-
-export async function fetchVideoMeta(videoId: string) {
-  try {
-    const query = `
+/*─────────────────────────────────────────────────────────────*/
+/*  VIDEO-LEVEL METADATA                                       */
+/*─────────────────────────────────────────────────────────────*/
+/** Returns title, channel, published date, canonical YT link, length, speakers … */
+export async function fetchVideoMeta(id: string) {
+  const [rows] = await bigQuery.query({
+    query: `
       SELECT
-        ID as video_id,
-        Video_Title as title,
-        Channel_Name as channel_name,
-        Published_Date as published_at,
-        Youtube_Link as url,
-        Video_Length as video_length,
-        Extracted_Speakers as speakers
-      FROM 
-        \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
-      WHERE
-        ID = @videoId
+        Video_Title      AS title,
+        Channel_Name     AS channel,
+        Published_Date   AS published,          -- DATE type
+        Video_Length     AS video_length,       -- e.g. "5:52"
+        CONCAT('https://youtu.be/', ID) AS youtube_url,
+        Extracted_Speakers AS speakers
+      FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+      WHERE ID = @id
       LIMIT 1
-    `;
+    `,
+    params: { id },
+  });
 
-    const options = {
-      query,
-      params: { videoId },
-    };
-
-    const [rows] = await bigQuery.query(options);
-    
-    // Simply return the raw result without any date conversion
-    return rows && rows.length > 0 ? rows[0] : null;
-  } catch (error) {
-    console.error("Error fetching video metadata:", error);
-    return null;
-  }
+  return rows[0] as
+    | {
+        title: string;
+        channel: string;
+        published: string | Date;
+        video_length: string | null;
+        youtube_url: string;
+        speakers: string | null;
+      }
+    | undefined;
 }
 
-/** Return [{start: seconds, text: "word…"}] sorted by time */
+/*─────────────────────────────────────────────────────────────*/
+/*  TRANSCRIPT                                                 */
+/*─────────────────────────────────────────────────────────────*/
+/**
+ * Turn the `[00:12] text` lines inside Search_Doc_1
+ * into  [{ start: 12, text: "text" }, …]  sorted by `start`
+ */
 export async function fetchTranscript(id: string) {
   try {
+    /* 1 ▸ get the raw field */
     const [rows] = await bigQuery.query({
       query: `
-        SELECT
-          Timestamp_Seconds AS start,
-          Word             AS text
-        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
-        WHERE ID = @id
-        ORDER BY start
+        SELECT Search_Doc_1
+        FROM   \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+        WHERE  ID = @id
+        LIMIT 1
       `,
       params: { id },
     });
-    return rows as { start: number; text: string }[];
+
+    if (!rows?.length || !rows[0].Search_Doc_1) return [];
+
+    /* 2 ▸ parse every "[mm:ss] …" or "[hh:mm:ss] …" line */
+    const raw: string = rows[0].Search_Doc_1 as string;
+
+    const lines = raw
+      .trim()
+      .split(/\n+/)
+      .map((ln) => {
+        const m = ln.match(/^\[(\d{2}):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
+        if (!m) return null;
+        const [ , mm, ss, hh, txt ] = m;
+        const seconds =
+          (hh ? +hh * 3600 : 0) + /* if hh is present it's actually mm, shift */
+          +mm * 60 +
+          +ss;
+        return { start: seconds, text: txt };
+      })
+      .filter(Boolean) as { start: number; text: string }[];
+
+    return lines;
   } catch (error) {
     console.error("Error fetching transcript:", error);
     return [];
