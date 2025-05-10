@@ -42,22 +42,40 @@ export default function TranscriptPane({ videoId, height = 400 }: Props) {
     }
   }, [videoId]);
 
-  /* 3 ▸ timer to keep highlight in sync */
+  /* 3 ▸ timer to keep highlight in sync — scroll ONLY the inner pane */
   useEffect(() => {
     if (!playerRef.current) return;
-    const id = setInterval(() => {
+
+    const container = containerRef.current!;
+    const tick = () => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
+
+      // find last line whose start ≤ t
       const idx = lines.findIndex(
         (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
       );
-      if (idx !== active) {
-        setActive(idx);
-        if (idx >= 0 && containerRef.current) {
-          const el = containerRef.current.children[idx] as HTMLElement;
-          el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      if (idx === active) return;      // nothing changed
+
+      setActive(idx);
+
+      // optional auto-scroll *inside* the pane:
+      if (idx >= 0 && container) {
+        const el = container.children[idx] as HTMLElement;
+        const top = el.offsetTop;
+        const bottom = top + el.offsetHeight;
+        const visibleTop = container.scrollTop;
+        const visibleBottom = visibleTop + container.clientHeight;
+
+        // scroll only if the line is outside the visible region
+        if (top < visibleTop || bottom > visibleBottom) {
+          const center = top - container.clientHeight / 2 + el.offsetHeight / 2;
+          container.scrollTo({ top: center, behavior: "smooth" });
         }
       }
-    }, 250);
+    };
+
+    // run 4×/sec
+    const id = setInterval(tick, 250);
     return () => clearInterval(id);
   }, [lines, active]);
 
