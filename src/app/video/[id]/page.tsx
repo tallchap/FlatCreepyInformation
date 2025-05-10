@@ -64,16 +64,16 @@ export default async function VideoPage({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div>
             <h2 className="text-sm text-gray-500 dark:text-gray-400">Channel</h2>
-            <p className="font-medium">{videoMeta.channel_name}</p>
+            <p className="font-medium">{videoMeta.channel}</p>
           </div>
           
           <div>
             <h2 className="text-sm text-gray-500 dark:text-gray-400">Published</h2>
             <p className="font-medium">
-              {videoMeta.published_at ? 
-                (typeof videoMeta.published_at === 'object' && videoMeta.published_at.value
-                  ? videoMeta.published_at.value
-                  : String(videoMeta.published_at))
+              {videoMeta.published ? 
+                (typeof videoMeta.published === 'object' && videoMeta.published.value
+                  ? videoMeta.published.value
+                  : String(videoMeta.published))
                 : 'Date not available'}
             </p>
           </div>
