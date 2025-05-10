@@ -91,10 +91,27 @@ export default function TranscriptPane({
       if (!active || active.para !== pIdx || active.line !== lIdx) {
         setActive({ para: pIdx, line: lIdx });
 
-        /* keep the line in view—no maths, no overshoot */
-        const lineEl = (box.children[pIdx] as HTMLElement)
-                         .children[lIdx] as HTMLElement;
-        lineEl.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        /* ---------- keep line visible without moving the page ---------- */
+        const lineEl  = (box.children[pIdx] as HTMLElement).children[lIdx] as HTMLElement;
+        const margin  = 40;                        // px breathing room
+
+        const lineTop    = lineEl.offsetTop;
+        const lineBottom = lineTop + lineEl.offsetHeight;
+        const viewTop    = box.scrollTop + margin;
+        const viewBottom = box.scrollTop + box.clientHeight - margin;
+
+        if (lineTop < viewTop) {
+          /* line above viewport  → scroll up just enough */
+          box.scrollTo({
+            top: Math.max(lineTop - margin, 0),
+            behavior: "smooth",
+          });
+        } else if (lineBottom > viewBottom) {
+          /* line below viewport → scroll down just enough */
+          const max   = box.scrollHeight - box.clientHeight;
+          const dest  = Math.min(lineBottom - box.clientHeight + margin, max);
+          box.scrollTo({ top: dest, behavior: "smooth" });
+        }
       }
     }, 250);
 
