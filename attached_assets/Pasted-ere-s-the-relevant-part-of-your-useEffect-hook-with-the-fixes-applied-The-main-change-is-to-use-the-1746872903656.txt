@@ -1,0 +1,81 @@
+ere's the relevant part of your useEffect hook with the fixes applied. The main change is to use the paragraph's offset for scrolling calculations and ensure lIdx is handled if it's initially -1.
+
+JavaScript
+
+// Inside the useEffect hook for highlight & auto-scroll:
+useEffect(() => {
+  if (!playerRef.current) return;
+
+  const box = boxRef.current!;
+  const scrollMargin = 40; // Renamed for clarity, was 'margin'
+
+  const timer = setInterval(() => {
+    const t = playerRef.current.getCurrentTime?.() ?? 0;
+
+    /* ─ locate paragraph & line ─ */
+    const pIdx = paras.findIndex(
+      (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t)
+    );
+    if (pIdx < 0) return; // Current time is outside any paragraph range
+
+    const linesInCurrentPara = paras[pIdx].lines;
+    let lIdx = linesInCurrentPara.findIndex(
+      (l, i) => l.start <= t && (i + 1 === linesInCurrentPara.length || linesInCurrentPara[i + 1].start > t)
+    );
+
+    // Handle cases where t might be within a paragraph's time but before the first explicitly timed line,
+    // or if paragraph has no lines (though less likely for transcripts).
+    if (lIdx < 0) {
+      if (linesInCurrentPara.length > 0) {
+        lIdx = 0; // Default to the first line of the paragraph for highlighting
+      } else {
+        // This case means the paragraph has no lines, or t is beyond all lines.
+        // If pIdx is valid, but no lines, lIdx remains what it is for setActive,
+        // but scrolling will be paragraph-based anyway.
+        // If it's critical to have a line, you might return or handle as an error.
+        // For now, we assume pIdx is valid and lIdx might be 0 or a found index.
+      }
+    }
+    // If lIdx is still < 0 and linesInCurrentPara is empty, setActive might receive {-1}
+    // Ensure lIdx for setActive is sensible e.g. 0 if pIdx is valid.
+    const activeLineIdx = (lIdx >= 0 && lIdx < linesInCurrentPara.length) ? lIdx : 0;
+
+
+    /* ─ update highlight only if position changed ─ */
+    if (!active || active.para !== pIdx || active.line !== activeLineIdx) {
+      setActive({ para: pIdx, line: activeLineIdx });
+
+      /* ---------- Scroll to keep the active PARAGRAPH visible ---------- */
+      const currentParaElement = box.children[pIdx] as HTMLElement;
+      if (currentParaElement) {
+        const paraTop    = currentParaElement.offsetTop;
+        const paraHeight = currentParaElement.offsetHeight;
+        const paraBottom = paraTop + paraHeight;
+
+        const viewTop    = box.scrollTop + scrollMargin;
+        const viewBottom = box.scrollTop + box.clientHeight - scrollMargin;
+
+        if (paraTop < viewTop) {
+          /* paragraph top is above or partially above viewport → scroll up just enough */
+          box.scrollTo({
+            top: Math.max(paraTop - scrollMargin, 0),
+            behavior: "smooth",
+          });
+        } else if (paraBottom > viewBottom) {
+          /* paragraph bottom is below or partially below viewport → scroll down just enough */
+          const maxScrollPossible = box.scrollHeight - box.clientHeight;
+          // Calculate the scrollTop needed to bring the paragraph's bottom into view with margin
+          const targetScrollTop = paraBottom - box.clientHeight + scrollMargin;
+          box.scrollTo({
+            top: Math.min(targetScrollTop, maxScrollPossible), // Ensure not to scroll beyond content
+            behavior: "smooth",
+          });
+        }
+      }
+    }
+  }, 250);
+
+  return () => clearInterval(timer);
+}, [paras, active, videoId]); // Added videoId to deps as playerRef depends on it, though playerRef itself is stable.
+                                // sentencesPerPara might also be relevant if it changes paras structure.
+                                // Main dependencies are paras and active.
