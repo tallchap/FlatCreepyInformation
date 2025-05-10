@@ -1,4 +1,45 @@
+src/lib/bigquery.ts
+ts
+Copy
+Edit
+import { BigQuery } from "@google-cloud/bigquery";
 
+// Share a single client between hot-reloads during `next dev`
+const bigquery =
+  (global as any).bigquery ??
+  new BigQuery({ projectId: "youtubetranscripts-429803" });
+
+if (process.env.NODE_ENV !== "production") (global as any).bigquery = bigquery;
+
+/**
+ * Fetch title, channel, published date, and the canonical YouTube URL
+ * for a single video from
+ *   youtubetranscripts-429803.reptranscripts.youtube_transcripts
+ */
+export async function fetchVideoMeta(videoId: string) {
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT
+        title,
+        channel_title     AS channel,
+        published_at      AS published,
+        CONCAT('https://youtu.be/', video_id) AS youtube_url
+      FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+      WHERE video_id = @id
+      LIMIT 1
+    `,
+    params: { id: videoId },
+  });
+
+  // returns undefined if nothing found
+  return rows[0] as
+    | { title: string; channel: string; published: string; youtube_url: string }
+    | undefined;
+}
+src/app/video/[id]/page.tsx
+tsx
+Copy
+Edit
 export const runtime = "nodejs";
 export const revalidate = 3600;          // cache each page for 1 h
 
@@ -7,8 +48,7 @@ import { fetchVideoMeta } from "@/lib/bigquery";
 import { format } from "date-fns";
 
 export default async function VideoPage({ params }: { params: { id: string } }) {
-  // Explicitly await the params to handle Next.js dynamic route parameters correctly
-  const id = params?.id;
+  const { id } = params;
   if (!/^[\w-]{11}$/.test(id)) notFound();
 
   const meta = await fetchVideoMeta(id);

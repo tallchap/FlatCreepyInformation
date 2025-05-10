@@ -1,14 +1,55 @@
+2 . Drop in a lightweight BigQuery helper
+src/lib/bigquery.ts
 
+ts
+Copy
+Edit
+import { BigQuery } from "@google-cloud/bigquery";
+
+// re-use the client across hot-reloads in dev
+const bigquery =
+  (global as any).bigquery ?? new BigQuery({ projectId: process.env.GCP_PROJECT });
+
+if (process.env.NODE_ENV !== "production") (global as any).bigquery = bigquery;
+
+export async function fetchVideoMeta(videoId: string) {
+  // Parameterised query to avoid SQL-injection
+  const [rows] = await bigquery.query({
+    query: `
+      SELECT
+        title,
+        channel_title     AS channel,
+        published_at      AS published,
+        CONCAT('https://youtu.be/', video_id) AS youtube_url
+      FROM \`project.dataset.videos\`
+      WHERE video_id = @id
+      LIMIT 1
+    `,
+    params: { id: videoId },
+  });
+
+  return rows[0] as
+    | { title: string; channel: string; published: string; youtube_url: string }
+    | undefined;
+}
+🔐 Credentials — store a service-account JSON in the cloud host’s secrets and set GOOGLE_APPLICATION_CREDENTIALS=/var/task/key.json, or use Workload Identity if you’re on GCP.
+
+3 . Revamp the route
+src/app/video/[id]/page.tsx
+
+tsx
+Copy
+Edit
+// Opt in to Node.js runtime – BigQuery’s client needs it
 export const runtime = "nodejs";
-export const revalidate = 3600;          // cache each page for 1 h
+export const revalidate = 3600;           // cache page for 1 h (tweak as you like)
 
 import { notFound } from "next/navigation";
 import { fetchVideoMeta } from "@/lib/bigquery";
 import { format } from "date-fns";
 
 export default async function VideoPage({ params }: { params: { id: string } }) {
-  // Explicitly await the params to handle Next.js dynamic route parameters correctly
-  const id = params?.id;
+  const { id } = params;
   if (!/^[\w-]{11}$/.test(id)) notFound();
 
   const meta = await fetchVideoMeta(id);
@@ -18,7 +59,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
 
   return (
     <main className="mx-auto max-w-3xl p-6 space-y-6">
-      {/* Metadata card */}
+      {/* ---- metadata card ---- */}
       <section className="rounded-xl bg-white shadow-md p-6">
         <h1 className="text-2xl font-semibold mb-2">{meta.title}</h1>
 
@@ -38,7 +79,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
         </div>
       </section>
 
-      {/* Video embed */}
+      {/* ---- video embed ---- */}
       <div className="aspect-video w-full rounded-xl overflow-hidden shadow-lg">
         <iframe
           className="w-full h-full"

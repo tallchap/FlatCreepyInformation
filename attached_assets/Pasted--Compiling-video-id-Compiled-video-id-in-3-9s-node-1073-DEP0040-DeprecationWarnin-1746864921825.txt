@@ -1,0 +1,37 @@
+ ○ Compiling /video/[id] ...
+ ✓ Compiled /video/[id] in 3.9s
+(node:1073) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+Error: Route "/video/[id]" used `params.id`. `params` should be awaited before using its properties. Learn more: https://nextjs.org/docs/messages/sync-dynamic-apis
+    at VideoPage (src/app/video/[id]/page.tsx:10:10)
+   8 |
+   9 | export default async function VideoPage({ params }: { params: { id: string } }) {
+> 10 |   const { id } = params;
+     |          ^
+  11 |   if (!/^[\w-]{11}$/.test(id)) notFound();
+  12 |
+  13 |   const meta = await fetchVideoMeta(id);
+(node:1154) [DEP0040] DeprecationWarning: The `punycode` module is deprecated. Please use a userland alternative instead.
+(Use `node --trace-deprecation ...` to show where the warning was created)
+ ⨯ Error: Could not refresh access token: request to http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fbigquery failed, reason: connect ECONNREFUSED 169.254.169.254:80
+    at <unknown> (Error: Could not refresh access token: request to http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fbigquery failed, reason: connect ECONNREFUSED 169.254.169.254:80)
+    at Gaxios._request (../../src/gaxios.ts:157:12)
+    at async metadataAccessor (../../src/index.ts:167:14) {
+  config: [Object],
+  response: undefined,
+  error: Error [FetchError]: request to http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fbigquery failed, reason: connect ECONNREFUSED 169.254.169.254:80
+      at <unknown> (FetchError: request to http://169.254.169.254/computeMetadata/v1/instance/service-accounts/default/token?scopes=https%3A%2F%2Fwww.googleapis.com%2Fauth%2Fbigquery failed, reason: connect ECONNREFUSED 169.254.169.254:80) {
+    type: 'system',
+    errno: 'ECONNREFUSED',
+    code: 'ECONNREFUSED',
+    constructor: [Function: FetchError]
+  },
+  code: 'ECONNREFUSED',
+  digest: '2803825432'
+}
+ GET /video/z88sps6FI88 500 in 7151ms
+ ⚠ Cross origin request detected from d3ca294a-7367-4fb3-8bbf-0102da14322c-00-2rk87h4drf6nw.picard.replit.dev to /_next/* resource. In a future major version of Next.js, you will need to explicitly configure "allowedDevOrigins" in next.config to allow this.
+Read more: https://nextjs.org/docs/app/api-reference/config/next-config-js/allowedDevOrigins
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 900ms
+ GET /favicon.ico?favicon.bd18eb83.ico 200 in 1179ms
