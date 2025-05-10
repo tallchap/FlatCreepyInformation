@@ -1,28 +1,36 @@
+
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-type Line = { start: number; text: string };
-type Paragraph = { start: number; lines: Line[] };
-type ActivePos = { para: number; line: number } | null;
-type Props = { videoId: string; height?: number; sentencesPerPara?: number };
+type Line       = { start: number; text: string };
+type Paragraph  = { start: number; lines: Line[] };
+type ActivePos  = { para: number; line: number } | null;
+type Props      = { videoId: string; height?: number; sentencesPerPara?: number };
+
+// Extend HTMLDivElement to include our custom property
+declare global {
+  interface HTMLDivElement {
+    scrollingProgrammatically?: boolean;
+  }
+}
 
 export default function TranscriptPane({
   videoId,
   height = 400,
-  sentencesPerPara = 3, // ← change if you prefer longer/shorter paragraphs
+  sentencesPerPara = 3,          // ← change if you prefer longer/shorter paragraphs
 }: Props) {
-  const [paras, setParas] = useState<Paragraph[]>([]);
+  const [paras,  setParas]  = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
   const [userScrolling, setUserScrolling] = useState(false);
   const userScrollTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  const boxRef = useRef<HTMLDivElement>(null);
+  const boxRef    = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
 
   /* ─────────────────────────────────── 1 ▸ FETCH & GROUP  */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
-      .then((r) => r.json())
+      .then(r => r.json())
       .then((lines: Line[]) => {
         const paragraphs: Paragraph[] = [];
         let cur: Paragraph | null = null;
@@ -72,25 +80,45 @@ export default function TranscriptPane({
     const box = boxRef.current;
     if (!box) return;
 
+    let scrollTimeoutId: number | null = null;
+    
     const handleScroll = () => {
-      setUserScrolling(true);
+      // We only consider it user scrolling if not triggered by our own scrollTo calls
+      // This helps prevent false positives from smooth scrolling animations
+      if (!box.scrollingProgrammatically) {
+        setUserScrolling(true);
+        
+        // Reset the timer if it exists
+        if (userScrollTimeout.current) {
+          clearTimeout(userScrollTimeout.current);
+        }
+        
+        // Set a new timer to reset userScrolling after scroll stops
+        userScrollTimeout.current = setTimeout(() => {
+          setUserScrolling(false);
+        }, 2000); // 2 seconds before auto-scroll resumes
+      }
+    };
 
-      // Reset the timer if it exists
+    // Throttle the scroll handler to improve performance
+    const throttledHandleScroll = () => {
+      if (scrollTimeoutId === null) {
+        scrollTimeoutId = window.setTimeout(() => {
+          handleScroll();
+          scrollTimeoutId = null;
+        }, 100); // 100ms throttle
+      }
+    };
+
+    box.addEventListener('scroll', throttledHandleScroll);
+    
+    return () => {
+      box.removeEventListener('scroll', throttledHandleScroll);
       if (userScrollTimeout.current) {
         clearTimeout(userScrollTimeout.current);
       }
-
-      // Set a new timer to reset userScrolling after scroll stops
-      userScrollTimeout.current = setTimeout(() => {
-        setUserScrolling(false);
-      }, 2000); // 2 seconds before auto-scroll resumes
-    };
-
-    box.addEventListener("scroll", handleScroll);
-    return () => {
-      box.removeEventListener("scroll", handleScroll);
-      if (userScrollTimeout.current) {
-        clearTimeout(userScrollTimeout.current);
+      if (scrollTimeoutId !== null) {
+        window.clearTimeout(scrollTimeoutId);
       }
     };
   }, []);
@@ -100,22 +128,20 @@ export default function TranscriptPane({
     if (!playerRef.current) return;
 
     const box = boxRef.current!;
-    const margin = 40; // px padding before we nudge
+    const margin = 40;                 // px padding before we nudge
 
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
       /* ─ locate paragraph & line ─ */
       const pIdx = paras.findIndex(
-        (p, i) =>
-          p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
+        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t)
       );
       if (pIdx < 0) return;
 
       const lines = paras[pIdx].lines;
       const lIdx = lines.findIndex(
-        (l, i) =>
-          l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
       );
 
       /* ─ update highlight only if position changed ─ */
@@ -126,24 +152,49 @@ export default function TranscriptPane({
         if (!userScrolling) {
           const lineEl = box.children[pIdx]?.children[lIdx] as HTMLElement;
           if (!lineEl) return;
-
+          
+          // Calculate the line's position relative to the container
           const lineTop = lineEl.offsetTop;
-          const lineBottom = lineTop + lineEl.offsetHeight;
+          const lineHeight = lineEl.clientHeight;
+          const lineBottom = lineTop + lineHeight;
+          
+          // Calculate the visible area with margins
           const viewTop = box.scrollTop + margin;
           const viewBottom = box.scrollTop + box.clientHeight - margin;
-
-          if (lineTop < viewTop) {
-            /* line above viewport  → scroll up just enough */
+          
+          // Determine if scrolling is needed
+          const isAboveView = lineTop < viewTop;
+          const isBelowView = lineBottom > viewBottom;
+          
+          if (isAboveView || isBelowView) {
+            let targetScroll;
+            
+            if (isAboveView) {
+              // Scroll up: position the line margin pixels from the top
+              targetScroll = lineTop - margin;
+            } else {
+              // Scroll down: position the line so there are margin pixels below it
+              targetScroll = lineTop + lineHeight + margin - box.clientHeight;
+            }
+            
+            // Clamp the target scroll position to valid bounds
+            targetScroll = Math.max(0, Math.min(targetScroll, box.scrollHeight - box.clientHeight));
+            
+            // Mark that we're doing a programmatic scroll
+            box.scrollingProgrammatically = true;
+            
+            // Perform the scroll smoothly
             box.scrollTo({
-              top: Math.max(lineTop - margin, 0),
+              top: targetScroll,
               behavior: "smooth",
             });
-          } else if (lineBottom > viewBottom) {
-            /* line below viewport → scroll down just enough */
-            const max = box.scrollHeight - box.clientHeight;
-            const dest = Math.min(lineBottom - box.clientHeight + margin, max);
-            box.scrollTo({ top: dest, behavior: "smooth" });
+            
+            // Reset the flag after the animation completes (typical duration ~300ms)
+            setTimeout(() => {
+              box.scrollingProgrammatically = false;
+            }, 500);
           }
+          // If the line is already in view with sufficient margins, no scrolling is needed
         }
       }
     }, 250);
@@ -152,22 +203,25 @@ export default function TranscriptPane({
   }, [paras, active, userScrolling]);
 
   /* ─────────────────────────────────── Handle line clicks */
-  const handleLineClick = (lineStart: number) => {
+  const handleLineClick = (lineStart: number, paraIdx: number, lineIdx: number) => {
     // Temporarily prevent auto-scrolling when user clicks a line
     setUserScrolling(true);
-
+    
     // Reset the timer if it exists
     if (userScrollTimeout.current) {
       clearTimeout(userScrollTimeout.current);
     }
-
+    
     // Set a new timer to reset userScrolling after a delay
     userScrollTimeout.current = setTimeout(() => {
       setUserScrolling(false);
     }, 2000);
-
+    
     // Seek to the timestamp
     playerRef.current?.seekTo(lineStart, true);
+    
+    // Update active highlight immediately without waiting for player time update
+    setActive({ para: paraIdx, line: lineIdx });
   };
 
   /* ─────────────────────────────────── 4 ▸ RENDER         */
@@ -182,7 +236,7 @@ export default function TranscriptPane({
           {p.lines.map((l, li) => (
             <span
               key={li}
-              onClick={() => handleLineClick(l.start)}
+              onClick={() => handleLineClick(l.start, pi, li)}
               className={`cursor-pointer mr-1 ${
                 active && active.para === pi && active.line === li
                   ? "bg-blue-200 dark:bg-blue-700"
