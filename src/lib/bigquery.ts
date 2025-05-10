@@ -1,64 +1,95 @@
+// src/lib/bigquery.ts
+// ─────────────────────────────────────────────────────────────
+//  BigQuery helpers for Snippysaurus
+//  • fetchVideoMeta(id)      → high-level video metadata
+//  • fetchTranscript(id)     → [{ start: seconds, text: string }, …]
+// ─────────────────────────────────────────────────────────────
 import { BigQuery } from "@google-cloud/bigquery";
 
+/* 1 ▸ initialise BigQuery client (reuse between hot-reloads) */
 const credentials = JSON.parse(
-  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}"
+  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}",
 );
 
-export const bigQuery = new BigQuery({
-  credentials,
-  projectId: credentials.project_id,
-});
+export const bigQuery =
+  (global as any).bigQuery ??
+  new BigQuery({ credentials, projectId: credentials.project_id });
 
-export async function fetchVideoMeta(videoId: string) {
-  try {
-    const query = `
-      SELECT
-        ID as video_id,
-        Video_Title as title,
-        Channel_Name as channel_name,
-        Published_Date as published_at,
-        Youtube_Link as url,
-        Video_Length as video_length,
-        Extracted_Speakers as speakers
-      FROM 
-        \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
-      WHERE
-        ID = @videoId
-      LIMIT 1
-    `;
-
-    const options = {
-      query,
-      params: { videoId },
-    };
-
-    const [rows] = await bigQuery.query(options);
-    
-    // Simply return the raw result without any date conversion
-    return rows && rows.length > 0 ? rows[0] : null;
-  } catch (error) {
-    console.error("Error fetching video metadata:", error);
-    return null;
-  }
+if (process.env.NODE_ENV !== "production") {
+  (global as any).bigQuery = bigQuery;
 }
 
-/** Return [{start: seconds, text: "word…"}] sorted by time */
+/*─────────────────────────────────────────────────────────────*/
+/*  VIDEO-LEVEL METADATA                                       */
+/*─────────────────────────────────────────────────────────────*/
+export async function fetchVideoMeta(id: string) {
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT
+        Video_Title         AS title,
+        Channel_Name        AS channel,
+        Published_Date      AS published,          -- DATE
+        Video_Length        AS video_length,       -- e.g. "5:52"
+        CONCAT('https://youtu.be/', ID) AS youtube_url,
+        Extracted_Speakers  AS speakers
+      FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+      WHERE ID = @id
+      LIMIT 1
+    `,
+    params: { id },
+  });
+
+  return rows[0] as
+    | {
+        title: string;
+        channel: string;
+        published: string | Date;
+        video_length: string | null;
+        youtube_url: string;
+        speakers: string | null;
+      }
+    | undefined;
+}
+
+/*─────────────────────────────────────────────────────────────*/
+/*  TRANSCRIPT PARSER                                          */
+/*─────────────────────────────────────────────────────────────*/
+/**
+ * Convert Search_Doc_1 lines like “[00:42] some text” (or “[01:02:05] …”)
+ * into an array sorted by `start` seconds:
+ *   [{ start: 42, text: "some text" }, …]
+ */
 export async function fetchTranscript(id: string) {
-  try {
-    const [rows] = await bigQuery.query({
-      query: `
-        SELECT
-          Timestamp_Seconds AS start,
-          Word             AS text
-        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
-        WHERE ID = @id
-        ORDER BY start
-      `,
-      params: { id },
-    });
-    return rows as { start: number; text: string }[];
-  } catch (error) {
-    console.error("Error fetching transcript:", error);
-    return [];
-  }
+  /* Grab the raw Search_Doc_1 field */
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT Search_Doc_1
+      FROM   \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+      WHERE  ID = @id
+      LIMIT 1
+    `,
+    params: { id },
+  });
+
+  if (!rows?.length || !rows[0].Search_Doc_1) return [];
+
+  const raw: string = rows[0].Search_Doc_1 as string;
+
+  /* Parse each timestamped line */
+  return raw
+    .trim()
+    .split(/\n+/)
+    .map((ln) => {
+      // Matches [mm:ss] …   or   [hh:mm:ss] …
+      const match = ln.match(/^\[(\d{2}):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
+      if (!match) return null;
+
+      const [, a, b, c, text] = match; // a=mm or hh, b=ss or mm, c=ss?
+      const seconds = c
+        ? +a * 3600 + +b * 60 + +c // [hh:mm:ss]
+        : +a * 60 + +b; // [mm:ss]
+
+      return { start: seconds, text };
+    })
+    .filter(Boolean) as { start: number; text: string }[];
 }
