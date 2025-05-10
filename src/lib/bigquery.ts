@@ -14,16 +14,15 @@ export async function fetchVideoMeta(videoId: string) {
   try {
     const query = `
       SELECT
-        video_id,
-        title,
-        channel_name,
-        upload_date,
-        published_at,
-        url
+        ID as video_id,
+        Video_Title as title,
+        Channel_Name as channel_name,
+        Published_Date as published_at,
+        Youtube_Link as url
       FROM 
-        \`your_dataset.videos\`
+        \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
       WHERE
-        video_id = @videoId
+        ID = @videoId
       LIMIT 1
     `;
 

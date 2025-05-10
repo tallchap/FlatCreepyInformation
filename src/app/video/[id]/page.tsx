@@ -2,11 +2,10 @@
 // src/app/video/[id]/page.tsx
 import { notFound } from "next/navigation";
 import { fetchVideoMeta } from "@/lib/bigquery";
-import { format } from "date-fns";
 
 export default async function VideoPage({ params }: { params: { id: string } }) {
   // Explicitly await the params to handle Next.js dynamic route parameters correctly
-  const { id } = params;
+  const { id } = await Promise.resolve(params);
 
   // rudimentary guard: bail if it doesn't look like a YouTube ID
   if (!/^[\w-]{11}$/.test(id)) notFound();
@@ -40,8 +39,16 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
               <h2 className="text-sm text-gray-500 dark:text-gray-400">Published</h2>
               <p className="font-medium">
                 {videoMeta.published_at ? 
-                  format(new Date(videoMeta.published_at), 'MMMM d, yyyy') : 
-                  format(new Date(videoMeta.upload_date || Date.now()), 'MMMM d, yyyy')}
+                  new Date(videoMeta.published_at).toLocaleDateString('en-US', {
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric'
+                  }) : 
+                  new Date().toLocaleDateString('en-US', {
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric'
+                  })}
               </p>
             </div>
           </div>
