@@ -38,17 +38,8 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
             <div>
               <h2 className="text-sm text-gray-500 dark:text-gray-400">Published</h2>
               <p className="font-medium">
-                {videoMeta.published_at ? 
-                  new Date(videoMeta.published_at).toLocaleDateString('en-US', {
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric'
-                  }) : 
-                  new Date().toLocaleDateString('en-US', {
-                    year: 'numeric', 
-                    month: 'long', 
-                    day: 'numeric'
-                  })}
+                {/* Simply display the raw date string */}
+                {videoMeta.published_at ? String(videoMeta.published_at) : 'Date not available'}
               </p>
             </div>
           </div>
