@@ -1,104 +1,119 @@
 
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 
 type Line = { start: number; text: string };
+type Paragraph = { start: number; lines: Line[] };
 type Props = { videoId: string; height?: number };
 
 export default function TranscriptPane({ videoId, height = 400 }: Props) {
-  const [lines, setLines]   = useState<Line[]>([]);
-  const [active, setActive] = useState<number | null>(null);
-  const containerRef        = useRef<HTMLDivElement>(null);
-  const playerRef           = useRef<any>(null);   // YT.Player once ready
+  const [paras, setParas]   = useState<Paragraph[]>([]);
+  const [active, setActive] = useState<{ para: number; line: number } | null>(null);
 
-  /* 1 ▸ fetch transcript JSON */
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef    = useRef<any>(null);
+
+  /* 1 ▸ fetch + group */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
       .then((r) => r.json())
-      .then(setLines)
+      .then((lines: Line[]) => {
+        const gapThreshold = 2;                // seconds
+        const out: Paragraph[] = [];
+        let cur: Paragraph | null = null;
+
+        lines.forEach((ln, i) => {
+          if (
+            !cur ||
+            (i > 0 && ln.start - lines[i - 1].start > gapThreshold)
+          ) {
+            cur && out.push(cur);
+            cur = { start: ln.start, lines: [] };
+          }
+          cur!.lines.push(ln);
+        });
+        cur && out.push(cur);
+        setParas(out);
+      })
       .catch(console.error);
   }, [videoId]);
 
-  /* 2 ▸ load IFrame API & create a Player for the existing iframe */
+  /* 2 ▸ load YT API + mount player (same as before) */
   useEffect(() => {
-    // helper that runs once API is loaded
-    const mountPlayer = () => {
-      if (playerRef.current) return; // already done
+    const mount = () => {
+      if (playerRef.current) return;
       const el = document.getElementById(`player-${videoId}`);
       if (el && (window as any).YT?.Player) {
         playerRef.current = new (window as any).YT.Player(el);
       }
     };
-
-    // if API already there → mount immediately
-    if ((window as any).YT?.Player) {
-      mountPlayer();
-    } else {
+    if ((window as any).YT?.Player) mount();
+    else {
       const tag = document.createElement("script");
       tag.src = "https://www.youtube.com/iframe_api";
       document.body.appendChild(tag);
-      (window as any).onYouTubeIframeAPIReady = mountPlayer;
+      (window as any).onYouTubeIframeAPIReady = mount;
     }
   }, [videoId]);
 
-  /* 3 ▸ timer to keep highlight in sync — scroll ONLY the inner pane */
+  /* 3 ▸ highlight & auto-scroll inside the pane */
   useEffect(() => {
     if (!playerRef.current) return;
-
-    const container = containerRef.current!;
-    const tick = () => {
+    const box = containerRef.current!;
+    const id = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
-      // find last line whose start ≤ t
-      const idx = lines.findIndex(
+      // locate para + line
+      let pIdx = paras.findIndex(
+        (p, j) => p.start <= t && (j + 1 === paras.length || paras[j + 1].start > t)
+      );
+      if (pIdx < 0) return;
+
+      const lines = paras[pIdx].lines;
+      let lIdx = lines.findIndex(
         (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
       );
-      if (idx === active) return;      // nothing changed
 
-      setActive(idx);
+      if (!active || active.para !== pIdx || active.line !== lIdx) {
+        setActive({ para: pIdx, line: lIdx });
 
-      // optional auto-scroll *inside* the pane:
-      if (idx >= 0 && container) {
-        const el = container.children[idx] as HTMLElement;
-        const top = el.offsetTop;
-        const bottom = top + el.offsetHeight;
-        const visibleTop = container.scrollTop;
-        const visibleBottom = visibleTop + container.clientHeight;
-
-        // scroll only if the line is outside the visible region
-        if (top < visibleTop || bottom > visibleBottom) {
-          const center = top - container.clientHeight / 2 + el.offsetHeight / 2;
-          container.scrollTo({ top: center, behavior: "smooth" });
+        // scroll paragraph into view if needed
+        const paraEl = box.children[pIdx] as HTMLElement;
+        const top = paraEl.offsetTop;
+        const bottom = top + paraEl.offsetHeight;
+        const visTop = box.scrollTop;
+        const visBot = visTop + box.clientHeight;
+        if (top < visTop || bottom > visBot) {
+          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
         }
       }
-    };
-
-    // run 4×/sec
-    const id = setInterval(tick, 250);
+    }, 250);
     return () => clearInterval(id);
-  }, [lines, active]);
+  }, [paras, active]);
 
   /* 4 ▸ render */
   return (
     <div
       ref={containerRef}
-      className="overflow-y-auto text-[15px] leading-6 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mb-6"
+      className="overflow-y-auto text-[15px] leading-6 space-y-3 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mb-6"
       style={{ maxHeight: height }}
     >
-      {lines.map((l, i) => (
-        <span
-          key={i}
-          onClick={() => {
-            const p = playerRef.current;
-            if (p?.seekTo) p.seekTo(l.start, true);
-          }}
-          className={`cursor-pointer mr-1 ${
-            i === active ? "bg-blue-200 dark:bg-blue-700" : ""
-          }`}
-        >
-          {l.text}
-        </span>
+      {paras.map((p, pi) => (
+        <p key={pi} className="mb-0">
+          {p.lines.map((l, li) => (
+            <span
+              key={li}
+              onClick={() => playerRef.current?.seekTo(l.start, true)}
+              className={`cursor-pointer mr-1 ${
+                active && active.para === pi && active.line === li
+                  ? "bg-blue-200 dark:bg-blue-700"
+                  : ""
+              }`}
+            >
+              {l.text}
+            </span>
+          ))}
+        </p>
       ))}
     </div>
   );
