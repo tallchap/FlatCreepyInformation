@@ -66,36 +66,47 @@ export default function TranscriptPane({
     }
   }, [videoId]);
 
-  /* ─────────────────────────────────── 3 ▸ SYNC HIGHLIGHT */
+  /* ─────────────────────────────────── 3 ▸ highlight & minimal auto-scroll */
   useEffect(() => {
     if (!playerRef.current) return;
+
     const box = boxRef.current!;
+    const margin = 40;                 // px padding before we nudge
+
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
-      // locate paragraph
+      /* ─ locate paragraph & line ─ */
       const pIdx = paras.findIndex(
-        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
+        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t)
       );
       if (pIdx < 0) return;
 
-      // locate line inside paragraph
       const lines = paras[pIdx].lines;
       const lIdx = lines.findIndex(
-        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
       );
 
+      /* ─ update highlight only if position changed ─ */
       if (!active || active.para !== pIdx || active.line !== lIdx) {
         setActive({ para: pIdx, line: lIdx });
 
-        const paraEl = box.children[pIdx] as HTMLElement;
-        const top = paraEl.offsetTop;
-        const bot = top + paraEl.offsetHeight;
-        if (top < box.scrollTop || bot > box.scrollTop + box.clientHeight) {
-          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
+        /* ---- smart scroll just inside box ---- */
+        const lineEl  = (box.children[pIdx] as HTMLElement).children[lIdx] as HTMLElement;
+        const top     = lineEl.offsetTop;
+        const bottom  = top + lineEl.offsetHeight;
+
+        const viewTop = box.scrollTop + margin;
+        const viewBot = box.scrollTop + box.clientHeight - margin;
+
+        if (top < viewTop) {
+          box.scrollTo({ top: top - margin, behavior: "smooth" });
+        } else if (bottom > viewBot) {
+          box.scrollTo({ top: bottom - box.clientHeight + margin, behavior: "smooth" });
         }
       }
     }, 250);
+
     return () => clearInterval(timer);
   }, [paras, active]);
 
