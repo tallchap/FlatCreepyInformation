@@ -1,0 +1,141 @@
+Below is a surgical patch that:
+
+groups the lines array into paragraphs on the client,
+
+renders each paragraph as its own <p> block (keeps every word clickable),
+
+keeps all the existing highlight/seek logic.
+
+Only the TranscriptPane.tsx file changes.
+
+tsx
+Copy
+Edit
+"use client";
+import { useEffect, useRef, useState } from "react";
+
+type Line = { start: number; text: string };
+type Paragraph = { start: number; lines: Line[] };
+type Props = { videoId: string; height?: number };
+
+export default function TranscriptPane({ videoId, height = 400 }: Props) {
+  const [paras, setParas]   = useState<Paragraph[]>([]);
+  const [active, setActive] = useState<{ para: number; line: number } | null>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef    = useRef<any>(null);
+
+  /* 1 ▸ fetch + group */
+  useEffect(() => {
+    fetch(`/api/transcript/${videoId}`)
+      .then((r) => r.json())
+      .then((lines: Line[]) => {
+        const gapThreshold = 2;                // seconds
+        const out: Paragraph[] = [];
+        let cur: Paragraph | null = null;
+
+        lines.forEach((ln, i) => {
+          if (
+            !cur ||
+            (i > 0 && ln.start - lines[i - 1].start > gapThreshold)
+          ) {
+            cur && out.push(cur);
+            cur = { start: ln.start, lines: [] };
+          }
+          cur!.lines.push(ln);
+        });
+        cur && out.push(cur);
+        setParas(out);
+      })
+      .catch(console.error);
+  }, [videoId]);
+
+  /* 2 ▸ load YT API + mount player (same as before) */
+  useEffect(() => {
+    const mount = () => {
+      if (playerRef.current) return;
+      const el = document.getElementById(`player-${videoId}`);
+      if (el && (window as any).YT?.Player) {
+        playerRef.current = new (window as any).YT.Player(el);
+      }
+    };
+    if ((window as any).YT?.Player) mount();
+    else {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+      (window as any).onYouTubeIframeAPIReady = mount;
+    }
+  }, [videoId]);
+
+  /* 3 ▸ highlight & auto-scroll inside the pane */
+  useEffect(() => {
+    if (!playerRef.current) return;
+    const box = containerRef.current!;
+    const id = setInterval(() => {
+      const t = playerRef.current.getCurrentTime?.() ?? 0;
+
+      // locate para + line
+      let pIdx = paras.findIndex(
+        (p, j) => p.start <= t && (j + 1 === paras.length || paras[j + 1].start > t)
+      );
+      if (pIdx < 0) return;
+
+      const lines = paras[pIdx].lines;
+      let lIdx = lines.findIndex(
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
+      );
+
+      if (!active || active.para !== pIdx || active.line !== lIdx) {
+        setActive({ para: pIdx, line: lIdx });
+
+        // scroll paragraph into view if needed
+        const paraEl = box.children[pIdx] as HTMLElement;
+        const top = paraEl.offsetTop;
+        const bottom = top + paraEl.offsetHeight;
+        const visTop = box.scrollTop;
+        const visBot = visTop + box.clientHeight;
+        if (top < visTop || bottom > visBot) {
+          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
+        }
+      }
+    }, 250);
+    return () => clearInterval(id);
+  }, [paras, active]);
+
+  /* 4 ▸ render */
+  return (
+    <div
+      ref={containerRef}
+      className="overflow-y-auto text-[15px] leading-6 space-y-3"
+      style={{ maxHeight: height }}
+    >
+      {paras.map((p, pi) => (
+        <p key={pi} className="mb-0">
+          {p.lines.map((l, li) => (
+            <span
+              key={li}
+              onClick={() => playerRef.current?.seekTo(l.start, true)}
+              className={`cursor-pointer mr-1 ${
+                active && active.para === pi && active.line === li
+                  ? "bg-blue-200 dark:bg-blue-700"
+                  : ""
+              }`}
+            >
+              {l.text}
+            </span>
+          ))}
+        </p>
+      ))}
+    </div>
+  );
+}
+What it does
+Grouping – consecutive caption lines are merged into paragraphs until a pause > 2 s appears.
+Change gapThreshold to tighten/loosen paragraph breaks.
+
+Rendering – each paragraph is a <p> block; Tailwind’s space-y-3 adds vertical spacing.
+
+Highlight logic – tracks both the paragraph and the line; only the active word span gets the blue background.
+
+Auto-scroll – scrolls just enough to keep the paragraph roughly centred inside the transcript pane. The browser window never moves.
