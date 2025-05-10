@@ -2,108 +2,100 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-type Line       = { start: number; text: string };
-type Paragraph  = { start: number; lines: Line[] };
-type ActivePos  = { para: number; line: number } | null;
-type Props      = { videoId: string; height?: number; sentencesPerPara?: number };
+type Line = { start: number; text: string };
+type Paragraph = { start: number; lines: Line[] };
+type Props = { videoId: string; height?: number };
 
-export default function TranscriptPane({
-  videoId,
-  height = 400,
-  sentencesPerPara = 3,          // ← change if you prefer longer/shorter paragraphs
-}: Props) {
-  const [paras,  setParas]  = useState<Paragraph[]>([]);
-  const [active, setActive] = useState<ActivePos>(null);
+export default function TranscriptPane({ videoId, height = 400 }: Props) {
+  const [paras, setParas]   = useState<Paragraph[]>([]);
+  const [active, setActive] = useState<{ para: number; line: number } | null>(null);
 
-  const boxRef    = useRef<HTMLDivElement>(null);
-  const playerRef = useRef<any>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef    = useRef<any>(null);
 
-  /* ─────────────────────────────────── 1 ▸ FETCH & GROUP  */
+  /* 1 ▸ fetch + group */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
-      .then(r => r.json())
+      .then((r) => r.json())
       .then((lines: Line[]) => {
-        const paragraphs: Paragraph[] = [];
+        const gapThreshold = 2;                // seconds
+        const out: Paragraph[] = [];
         let cur: Paragraph | null = null;
-        let sentCnt = 0;
 
-        const sentEnd = /[.!?](?:\s|$)/g;
-
-        for (const ln of lines) {
-          if (!cur) {
+        lines.forEach((ln, i) => {
+          if (
+            !cur ||
+            (i > 0 && ln.start - lines[i - 1].start > gapThreshold)
+          ) {
+            cur && out.push(cur);
             cur = { start: ln.start, lines: [] };
-            sentCnt = 0;
           }
-          cur.lines.push(ln);
-          sentCnt += (ln.text.match(sentEnd) || []).length;
-
-          if (sentCnt >= sentencesPerPara) {
-            paragraphs.push(cur);
-            cur = null;
-          }
-        }
-        if (cur) paragraphs.push(cur);
-        setParas(paragraphs);
+          cur!.lines.push(ln);
+        });
+        cur && out.push(cur);
+        setParas(out);
       })
       .catch(console.error);
-  }, [videoId, sentencesPerPara]);
+  }, [videoId]);
 
-  /* ─────────────────────────────────── 2 ▸ PLAYER READY   */
+  /* 2 ▸ load YT API + mount player (same as before) */
   useEffect(() => {
-    const mountPlayer = () => {
+    const mount = () => {
       if (playerRef.current) return;
       const el = document.getElementById(`player-${videoId}`);
       if (el && (window as any).YT?.Player) {
         playerRef.current = new (window as any).YT.Player(el);
       }
     };
-    if ((window as any).YT?.Player) mountPlayer();
+    if ((window as any).YT?.Player) mount();
     else {
-      const s = document.createElement("script");
-      s.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(s);
-      (window as any).onYouTubeIframeAPIReady = mountPlayer;
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+      (window as any).onYouTubeIframeAPIReady = mount;
     }
   }, [videoId]);
 
-  /* ─────────────────────────────────── 3 ▸ SYNC HIGHLIGHT */
+  /* 3 ▸ highlight & auto-scroll inside the pane */
   useEffect(() => {
     if (!playerRef.current) return;
-    const box = boxRef.current!;
-    const timer = setInterval(() => {
+    const box = containerRef.current!;
+    const id = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
-      // locate paragraph
-      const pIdx = paras.findIndex(
-        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
+      // locate para + line
+      let pIdx = paras.findIndex(
+        (p, j) => p.start <= t && (j + 1 === paras.length || paras[j + 1].start > t)
       );
       if (pIdx < 0) return;
 
-      // locate line inside paragraph
       const lines = paras[pIdx].lines;
-      const lIdx = lines.findIndex(
-        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
+      let lIdx = lines.findIndex(
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
       );
 
       if (!active || active.para !== pIdx || active.line !== lIdx) {
         setActive({ para: pIdx, line: lIdx });
 
+        // scroll paragraph into view if needed
         const paraEl = box.children[pIdx] as HTMLElement;
         const top = paraEl.offsetTop;
-        const bot = top + paraEl.offsetHeight;
-        if (top < box.scrollTop || bot > box.scrollTop + box.clientHeight) {
+        const bottom = top + paraEl.offsetHeight;
+        const visTop = box.scrollTop;
+        const visBot = visTop + box.clientHeight;
+        if (top < visTop || bottom > visBot) {
           box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
         }
       }
     }, 250);
-    return () => clearInterval(timer);
+    return () => clearInterval(id);
   }, [paras, active]);
 
-  /* ─────────────────────────────────── 4 ▸ RENDER         */
+  /* 4 ▸ render */
   return (
     <div
-      ref={boxRef}
-      className="overflow-y-auto text-[15px] leading-6 space-y-4 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4"
+      ref={containerRef}
+      className="overflow-y-auto text-[15px] leading-6 space-y-3 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mb-6"
       style={{ maxHeight: height }}
     >
       {paras.map((p, pi) => (
