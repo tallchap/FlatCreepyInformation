@@ -20,8 +20,6 @@ export default function TranscriptPane({
 }: Props) {
   const [paras, setParas] = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
-  const [userScrolling, setUserScrolling] = useState(false);
-  const userScrollTimeout = useRef<NodeJS.Timeout | null>(null);
 
   const boxRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
@@ -122,12 +120,11 @@ export default function TranscriptPane({
     };
   }, []);
 
-  /* ─────────────────────────────────── 3 ▸ highlight & auto-scroll */
+  /* ─────────────────────────────────── 3 ▸ highlight & minimal auto-scroll */
   useEffect(() => {
     if (!playerRef.current) return;
 
     const box = boxRef.current!;
-    const scrollMargin = 40; // Renamed for clarity, was 'margin'
 
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
@@ -137,71 +134,25 @@ export default function TranscriptPane({
         (p, i) =>
           p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
       );
-      if (pIdx < 0) return; // Current time is outside any paragraph range
+      if (pIdx < 0) return;
 
-      const linesInCurrentPara = paras[pIdx].lines;
-      let lIdx = linesInCurrentPara.findIndex(
-        (l, i) => l.start <= t && (i + 1 === linesInCurrentPara.length || linesInCurrentPara[i + 1].start > t),
+      const lines = paras[pIdx].lines;
+      const lIdx = lines.findIndex(
+        (l, i) =>
+          l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
       );
 
-      // Handle cases where t might be within a paragraph's time but before the first explicitly timed line,
-      // or if paragraph has no lines (though less likely for transcripts).
-      if (lIdx < 0) {
-        if (linesInCurrentPara.length > 0) {
-          lIdx = 0; // Default to the first line of the paragraph for highlighting
-        }
-      }
-      // Ensure lIdx for setActive is sensible e.g. 0 if pIdx is valid.
-      const activeLineIdx = (lIdx >= 0 && lIdx < linesInCurrentPara.length) ? lIdx : 0;
-
       /* ─ update highlight only if position changed ─ */
-      if (!active || active.para !== pIdx || active.line !== activeLineIdx) {
-        setActive({ para: pIdx, line: activeLineIdx });
+      if (!active || active.para !== pIdx || active.line !== lIdx) {
+        setActive({ para: pIdx, line: lIdx });
 
-        /* ---------- Scroll to keep the active PARAGRAPH visible ---------- */
-        if (!userScrolling) { // Only auto-scroll if user isn't manually scrolling
-          const currentParaElement = box.children[pIdx] as HTMLElement;
-          if (currentParaElement) {
-            const paraTop = currentParaElement.offsetTop;
-            const paraHeight = currentParaElement.offsetHeight;
-            const paraBottom = paraTop + paraHeight;
-
-            const viewTop = box.scrollTop + scrollMargin;
-            const viewBottom = box.scrollTop + box.clientHeight - scrollMargin;
-
-            if (paraTop < viewTop) {
-              /* paragraph top is above or partially above viewport → scroll up just enough */
-              box.scrollingProgrammatically = true; // Set flag to prevent triggering user scroll event
-              box.scrollTo({
-                top: Math.max(paraTop - scrollMargin, 0),
-                behavior: "smooth",
-              });
-              // Reset the flag after animation
-              setTimeout(() => {
-                box.scrollingProgrammatically = false;
-              }, 500);
-            } else if (paraBottom > viewBottom) {
-              /* paragraph bottom is below or partially below viewport → scroll down just enough */
-              const maxScrollPossible = box.scrollHeight - box.clientHeight;
-              // Calculate the scrollTop needed to bring the paragraph's bottom into view with margin
-              const targetScrollTop = paraBottom - box.clientHeight + scrollMargin;
-              box.scrollingProgrammatically = true; // Set flag to prevent triggering user scroll event
-              box.scrollTo({
-                top: Math.min(targetScrollTop, maxScrollPossible), // Ensure not to scroll beyond content
-                behavior: "smooth",
-              });
-              // Reset the flag after animation
-              setTimeout(() => {
-                box.scrollingProgrammatically = false;
-              }, 500);
-            }
-          }
-        }
+        // NO AUTO-SCROLLING DURING PLAYBACK
+        // We'll only scroll when the user explicitly clicks on a transcript line
       }
     }, 250);
 
     return () => clearInterval(timer);
-  }, [paras, active, videoId, userScrolling]); // Added videoId and userScrolling to dependencies
+  }, [paras, active]);
 
   /* ─────────────────────────────────── Handle line clicks */
   const handleLineClick = (
