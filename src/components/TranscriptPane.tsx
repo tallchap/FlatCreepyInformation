@@ -91,18 +91,26 @@ export default function TranscriptPane({
       if (!active || active.para !== pIdx || active.line !== lIdx) {
         setActive({ para: pIdx, line: lIdx });
 
-        /* ---- smart scroll just inside box ---- */
-        const lineEl  = (box.children[pIdx] as HTMLElement).children[lIdx] as HTMLElement;
-        const top     = lineEl.offsetTop;
-        const bottom  = top + lineEl.offsetHeight;
+        /* ---------- smart scroll just enough, never past line ---------- */
+        const lineEl = (box.children[pIdx] as HTMLElement)
+                         .children[lIdx] as HTMLElement;
 
-        const viewTop = box.scrollTop + margin;
-        const viewBot = box.scrollTop + box.clientHeight - margin;
+        const lineTop    = lineEl.offsetTop;
+        const lineBottom = lineTop + lineEl.offsetHeight;
+        const viewTop    = box.scrollTop + margin;
+        const viewBottom = box.scrollTop + box.clientHeight - margin;
 
-        if (top < viewTop) {
-          box.scrollTo({ top: top - margin, behavior: "smooth" });
-        } else if (bottom > viewBot) {
-          box.scrollTo({ top: bottom - box.clientHeight + margin, behavior: "smooth" });
+        if (lineTop < viewTop) {
+          /* line above view → scroll up */
+          box.scrollTo({
+            top: Math.max(lineTop - margin, 0),
+            behavior: "smooth",
+          });
+        } else if (lineBottom > viewBottom) {
+          /* line below view → scroll down */
+          const max = box.scrollHeight - box.clientHeight;
+          const dest = Math.min(lineBottom - box.clientHeight + margin, max);
+          box.scrollTo({ top: dest, behavior: "smooth" });
         }
       }
     }, 250);
