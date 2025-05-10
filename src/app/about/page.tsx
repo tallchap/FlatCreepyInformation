@@ -58,4 +58,16 @@ export default function AboutPage() {
       </div>
     </section>
   );
+
+  // src/app/video/[id]/page.tsx
+  import { notFound } from "next/navigation";
+
+  export default function VideoPage({
+    params,
+  }: {
+    params: { id: string };
+  }) {
+    const { id } = params;
+
+  
 }
