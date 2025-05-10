@@ -50,7 +50,7 @@ export default async function VideoPage({
           id={`player-${id}`}
           className="w-full h-full rounded-xl shadow-lg"
           src={`https://www.youtube.com/embed/${id}${
-            startSec !== null ? `?start=${startSec}&autoplay=1` : ""
+            startSec !== null ? `?start=${startSec}&autoplay=1&enablejsapi=1` : `?enablejsapi=1`
           }`}
           title={videoMeta.title}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

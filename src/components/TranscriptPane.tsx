@@ -7,50 +7,61 @@ type Line = { start: number; text: string };
 type Props = { videoId: string; height?: number };
 
 export default function TranscriptPane({ videoId, height = 400 }: Props) {
-  const [lines, setLines] = useState<Line[]>([]);
+  const [lines, setLines]   = useState<Line[]>([]);
   const [active, setActive] = useState<number | null>(null);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const playerRef   = useRef<any>();        // YT player instance
+  const containerRef        = useRef<HTMLDivElement>(null);
+  const playerRef           = useRef<any>(null);   // YT.Player once ready
 
-  /* 1 Load transcript JSON */
+  /* 1 ▸ fetch transcript JSON */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
-      .then(r => r.json())
+      .then((r) => r.json())
       .then(setLines)
       .catch(console.error);
   }, [videoId]);
 
-  /* 2 Load YouTube IFrame API & create player */
+  /* 2 ▸ load IFrame API & create a Player for the existing iframe */
   useEffect(() => {
-    if (playerRef.current) return;          // already loaded
-
-    const tag = document.createElement("script");
-    tag.src = "https://www.youtube.com/iframe_api";
-    document.body.appendChild(tag);
-
-    // The API calls window.onYouTubeIframeAPIReady()
-    (window as any).onYouTubeIframeAPIReady = () => {
-      playerRef.current = new (window as any).YT.Player(`player-${videoId}`);
+    // helper that runs once API is loaded
+    const mountPlayer = () => {
+      if (playerRef.current) return; // already done
+      const el = document.getElementById(`player-${videoId}`);
+      if (el && (window as any).YT?.Player) {
+        playerRef.current = new (window as any).YT.Player(el);
+      }
     };
+
+    // if API already there → mount immediately
+    if ((window as any).YT?.Player) {
+      mountPlayer();
+    } else {
+      const tag = document.createElement("script");
+      tag.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(tag);
+      (window as any).onYouTubeIframeAPIReady = mountPlayer;
+    }
   }, [videoId]);
 
-  /* 3 Highlight timer */
+  /* 3 ▸ timer to keep highlight in sync */
   useEffect(() => {
     if (!playerRef.current) return;
     const id = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
-      // find last line whose start ≤ t
-      const idx = lines.findIndex((l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t));
-      setActive(idx >= 0 ? idx : null);
-      if (idx >= 0 && containerRef.current) {
-        const el = containerRef.current.children[idx] as HTMLElement;
-        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      const idx = lines.findIndex(
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
+      );
+      if (idx !== active) {
+        setActive(idx);
+        if (idx >= 0 && containerRef.current) {
+          const el = containerRef.current.children[idx] as HTMLElement;
+          el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+        }
       }
-    }, 200);
+    }, 250);
     return () => clearInterval(id);
-  }, [lines]);
+  }, [lines, active]);
 
-  /* 4 Render */
+  /* 4 ▸ render */
   return (
     <div
       ref={containerRef}
@@ -60,8 +71,13 @@ export default function TranscriptPane({ videoId, height = 400 }: Props) {
       {lines.map((l, i) => (
         <span
           key={i}
-          onClick={() => playerRef.current?.seekTo(l.start, true)}
-          className={`cursor-pointer mr-1 ${i === active ? "bg-blue-200 dark:bg-blue-700" : ""}`}
+          onClick={() => {
+            const p = playerRef.current;
+            if (p?.seekTo) p.seekTo(l.start, true);
+          }}
+          className={`cursor-pointer mr-1 ${
+            i === active ? "bg-blue-200 dark:bg-blue-700" : ""
+          }`}
         >
           {l.text}
         </span>
