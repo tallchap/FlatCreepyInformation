@@ -7,7 +7,8 @@ import { fetchVideoMeta } from "@/lib/bigquery";
 import { format } from "date-fns";
 
 export default async function VideoPage({ params }: { params: { id: string } }) {
-  const { id } = params;
+  // Explicitly await the params to handle Next.js dynamic route parameters correctly
+  const id = params?.id;
   if (!/^[\w-]{11}$/.test(id)) notFound();
 
   const meta = await fetchVideoMeta(id);

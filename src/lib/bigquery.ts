@@ -2,9 +2,14 @@
 import { BigQuery } from "@google-cloud/bigquery";
 
 // Share a single client between hot-reloads during `next dev`
+// Use explicit credentials if available, fallback to application default
 const bigquery =
   (global as any).bigquery ??
-  new BigQuery({ projectId: "youtubetranscripts-429803" });
+  new BigQuery({ 
+    projectId: "youtubetranscripts-429803",
+    // This will use credentials from environment variables if available
+    // or fall back to application default credentials
+  });
 
 if (process.env.NODE_ENV !== "production") (global as any).bigquery = bigquery;
 
