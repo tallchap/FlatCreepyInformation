@@ -51,10 +51,7 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
                 <p className="font-medium">{videoMeta.video_length || 'Not available'}</p>
               </div>
               
-              <div>
-                <h2 className="text-sm text-gray-500 dark:text-gray-400">Speakers</h2>
-                <p className="font-medium">{videoMeta.speakers || 'Not listed'}</p>
-              </div>
+              {/* Speakers field removed as it's not available in the database */}
             </div>
           </div>
         </>
