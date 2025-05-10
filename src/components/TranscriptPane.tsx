@@ -12,10 +12,12 @@ export default function TranscriptPane({
   height = 400,
   sentencesPerPara = 3,          // ← change if you prefer longer/shorter paragraphs
 }: Props) {
-  const [paras,  setParas]  = useState<Paragraph[]>([]);
+  const [paras, setParas] = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
+  const [userScrolling, setUserScrolling] = useState(false);
+  const userScrollTimeout = useRef<NodeJS.Timeout | null>(null);
 
-  const boxRef    = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<any>(null);
 
   /* ─────────────────────────────────── 1 ▸ FETCH & GROUP  */
@@ -70,6 +72,8 @@ export default function TranscriptPane({
   useEffect(() => {
     if (!playerRef.current) return;
     const box = boxRef.current!;
+    const scrollMargin = 40;
+    
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
@@ -84,20 +88,107 @@ export default function TranscriptPane({
       const lIdx = lines.findIndex(
         (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
       );
+      
+      // Ensure we have a valid line index
+      const validLineIdx = lIdx >= 0 ? lIdx : 0;
 
-      if (!active || active.para !== pIdx || active.line !== lIdx) {
-        setActive({ para: pIdx, line: lIdx });
+      if (!active || active.para !== pIdx || active.line !== validLineIdx) {
+        setActive({ para: pIdx, line: validLineIdx });
 
-        const paraEl = box.children[pIdx] as HTMLElement;
-        const top = paraEl.offsetTop;
-        const bot = top + paraEl.offsetHeight;
-        if (top < box.scrollTop || bot > box.scrollTop + box.clientHeight) {
-          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
+        // Only auto-scroll if user isn't manually scrolling
+        if (!userScrolling && box.children[pIdx]) {
+          const paraEl = box.children[pIdx] as HTMLElement;
+          const paraTop = paraEl.offsetTop;
+          const paraHeight = paraEl.offsetHeight;
+          const paraBottom = paraTop + paraHeight;
+          
+          const viewTop = box.scrollTop + scrollMargin;
+          const viewBottom = box.scrollTop + box.clientHeight - scrollMargin;
+          
+          if (paraTop < viewTop) {
+            // Paragraph is above viewport - scroll up
+            box.scrollingProgrammatically = true;
+            box.scrollTo({
+              top: Math.max(paraTop - scrollMargin, 0),
+              behavior: "smooth",
+            });
+          } else if (paraBottom > viewBottom) {
+            // Paragraph is below viewport - scroll down
+            const maxScrollPossible = box.scrollHeight - box.clientHeight;
+            const targetScrollTop = paraBottom - box.clientHeight + scrollMargin;
+            box.scrollingProgrammatically = true;
+            box.scrollTo({
+              top: Math.min(targetScrollTop, maxScrollPossible),
+              behavior: "smooth",
+            });
+          }
+          
+          // Reset the flag after animation
+          setTimeout(() => {
+            box.scrollingProgrammatically = false;
+          }, 500);
         }
       }
     }, 250);
     return () => clearInterval(timer);
-  }, [paras, active]);
+  }, [paras, active, userScrolling]);
+
+  /* ─────────────────────────────────── Handle line clicks */
+  const handleLineClick = (
+    lineStart: number,
+    paraIdx: number,
+    lineIdx: number,
+  ) => {
+    setUserScrolling(true);
+    if (userScrollTimeout.current) {
+      clearTimeout(userScrollTimeout.current);
+    }
+    userScrollTimeout.current = setTimeout(() => {
+      setUserScrolling(false);
+    }, 2000); // Consider a slightly shorter timeout if 2s feels too long
+
+    playerRef.current?.seekTo(lineStart, true);
+    setActive({ para: paraIdx, line: lineIdx });
+
+    // --- Add direct scroll logic here ---
+    if (boxRef.current) {
+      const box = boxRef.current;
+      // Ensure DOM has updated if setActive causes a re-render that affects children
+      requestAnimationFrame(() => {
+        const targetParaElement = box.children[paraIdx] as HTMLElement;
+        if (targetParaElement) {
+          const scrollMargin = 40; // Consistent margin
+
+          const paraTop = targetParaElement.offsetTop;
+          const paraHeight = targetParaElement.offsetHeight;
+          const paraBottom = paraTop + paraHeight;
+
+          const viewTop = box.scrollTop + scrollMargin;
+          const viewBottom = box.scrollTop + box.clientHeight - scrollMargin;
+
+          box.scrollingProgrammatically = true; // Set flag
+
+          if (paraTop < viewTop) {
+            box.scrollTo({
+              top: Math.max(paraTop - scrollMargin, 0),
+              behavior: "smooth",
+            });
+          } else if (paraBottom > viewBottom) {
+            const maxScrollPossible = box.scrollHeight - box.clientHeight;
+            const destScrollTop = paraBottom - box.clientHeight + scrollMargin;
+            box.scrollTo({
+              top: Math.min(destScrollTop, maxScrollPossible),
+              behavior: "smooth",
+            });
+          }
+          // Reset the flag after animation
+          setTimeout(() => {
+            box.scrollingProgrammatically = false;
+          }, 500);
+        }
+      });
+    }
+  };
 
   /* ─────────────────────────────────── 4 ▸ RENDER         */
   return (
@@ -105,13 +196,24 @@ export default function TranscriptPane({
       ref={boxRef}
       className="overflow-y-auto text-[15px] leading-6 space-y-4 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4"
       style={{ maxHeight: height }}
+      onScroll={() => {
+        if (!boxRef.current?.scrollingProgrammatically) {
+          setUserScrolling(true);
+          if (userScrollTimeout.current) {
+            clearTimeout(userScrollTimeout.current);
+          }
+          userScrollTimeout.current = setTimeout(() => {
+            setUserScrolling(false);
+          }, 2000);
+        }
+      }}
     >
       {paras.map((p, pi) => (
         <p key={pi} className="mb-0">
           {p.lines.map((l, li) => (
             <span
               key={li}
-              onClick={() => playerRef.current?.seekTo(l.start, true)}
+              onClick={() => handleLineClick(l.start, pi, li)}
               className={`cursor-pointer mr-1 ${
                 active && active.para === pi && active.line === li
                   ? "bg-blue-200 dark:bg-blue-700"
