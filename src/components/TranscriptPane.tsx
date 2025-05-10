@@ -1,104 +1,127 @@
 
 "use client";
-
 import { useEffect, useRef, useState } from "react";
 
-type Line = { start: number; text: string };
-type Props = { videoId: string; height?: number };
+type Line       = { start: number; text: string };
+type Paragraph  = { start: number; lines: Line[] };
+type ActivePos  = { para: number; line: number } | null;
+type Props      = { videoId: string; height?: number; sentencesPerPara?: number };
 
-export default function TranscriptPane({ videoId, height = 400 }: Props) {
-  const [lines, setLines]   = useState<Line[]>([]);
-  const [active, setActive] = useState<number | null>(null);
-  const containerRef        = useRef<HTMLDivElement>(null);
-  const playerRef           = useRef<any>(null);   // YT.Player once ready
+export default function TranscriptPane({
+  videoId,
+  height = 400,
+  sentencesPerPara = 3,          // ← change if you prefer longer/shorter paragraphs
+}: Props) {
+  const [paras,  setParas]  = useState<Paragraph[]>([]);
+  const [active, setActive] = useState<ActivePos>(null);
 
-  /* 1 ▸ fetch transcript JSON */
+  const boxRef    = useRef<HTMLDivElement>(null);
+  const playerRef = useRef<any>(null);
+
+  /* ─────────────────────────────────── 1 ▸ FETCH & GROUP  */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
-      .then((r) => r.json())
-      .then(setLines)
-      .catch(console.error);
-  }, [videoId]);
+      .then(r => r.json())
+      .then((lines: Line[]) => {
+        const paragraphs: Paragraph[] = [];
+        let cur: Paragraph | null = null;
+        let sentCnt = 0;
 
-  /* 2 ▸ load IFrame API & create a Player for the existing iframe */
+        const sentEnd = /[.!?](?:\s|$)/g;
+
+        for (const ln of lines) {
+          if (!cur) {
+            cur = { start: ln.start, lines: [] };
+            sentCnt = 0;
+          }
+          cur.lines.push(ln);
+          sentCnt += (ln.text.match(sentEnd) || []).length;
+
+          if (sentCnt >= sentencesPerPara) {
+            paragraphs.push(cur);
+            cur = null;
+          }
+        }
+        if (cur) paragraphs.push(cur);
+        setParas(paragraphs);
+      })
+      .catch(console.error);
+  }, [videoId, sentencesPerPara]);
+
+  /* ─────────────────────────────────── 2 ▸ PLAYER READY   */
   useEffect(() => {
-    // helper that runs once API is loaded
     const mountPlayer = () => {
-      if (playerRef.current) return; // already done
+      if (playerRef.current) return;
       const el = document.getElementById(`player-${videoId}`);
       if (el && (window as any).YT?.Player) {
         playerRef.current = new (window as any).YT.Player(el);
       }
     };
-
-    // if API already there → mount immediately
-    if ((window as any).YT?.Player) {
-      mountPlayer();
-    } else {
-      const tag = document.createElement("script");
-      tag.src = "https://www.youtube.com/iframe_api";
-      document.body.appendChild(tag);
+    if ((window as any).YT?.Player) mountPlayer();
+    else {
+      const s = document.createElement("script");
+      s.src = "https://www.youtube.com/iframe_api";
+      document.body.appendChild(s);
       (window as any).onYouTubeIframeAPIReady = mountPlayer;
     }
   }, [videoId]);
 
-  /* 3 ▸ timer to keep highlight in sync — scroll ONLY the inner pane */
+  /* ─────────────────────────────────── 3 ▸ SYNC HIGHLIGHT */
   useEffect(() => {
     if (!playerRef.current) return;
-
-    const container = containerRef.current!;
-    const tick = () => {
+    const box = boxRef.current!;
+    const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
-      // find last line whose start ≤ t
-      const idx = lines.findIndex(
-        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
+      // locate paragraph
+      const pIdx = paras.findIndex(
+        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
       );
-      if (idx === active) return;      // nothing changed
+      if (pIdx < 0) return;
 
-      setActive(idx);
+      // locate line inside paragraph
+      const lines = paras[pIdx].lines;
+      const lIdx = lines.findIndex(
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
+      );
 
-      // optional auto-scroll *inside* the pane:
-      if (idx >= 0 && container) {
-        const el = container.children[idx] as HTMLElement;
-        const top = el.offsetTop;
-        const bottom = top + el.offsetHeight;
-        const visibleTop = container.scrollTop;
-        const visibleBottom = visibleTop + container.clientHeight;
+      if (!active || active.para !== pIdx || active.line !== lIdx) {
+        setActive({ para: pIdx, line: lIdx });
 
-        // scroll only if the line is outside the visible region
-        if (top < visibleTop || bottom > visibleBottom) {
-          const center = top - container.clientHeight / 2 + el.offsetHeight / 2;
-          container.scrollTo({ top: center, behavior: "smooth" });
+        const paraEl = box.children[pIdx] as HTMLElement;
+        const top = paraEl.offsetTop;
+        const bot = top + paraEl.offsetHeight;
+        if (top < box.scrollTop || bot > box.scrollTop + box.clientHeight) {
+          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
         }
       }
-    };
+    }, 250);
+    return () => clearInterval(timer);
+  }, [paras, active]);
 
-    // run 4×/sec
-    const id = setInterval(tick, 250);
-    return () => clearInterval(id);
-  }, [lines, active]);
-
-  /* 4 ▸ render */
+  /* ─────────────────────────────────── 4 ▸ RENDER         */
   return (
     <div
-      ref={containerRef}
-      className="overflow-y-auto text-[15px] leading-6 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 mb-6"
+      ref={boxRef}
+      className="overflow-y-auto text-[15px] leading-6 space-y-4 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4"
       style={{ maxHeight: height }}
     >
-      {lines.map((l, i) => (
-        <span
-          key={i}
-          onClick={() => {
-            const p = playerRef.current;
-            if (p?.seekTo) p.seekTo(l.start, true);
-          }}
-          className={`cursor-pointer mr-1 ${
-            i === active ? "bg-blue-200 dark:bg-blue-700" : ""
-          }`}
-        >
-          {l.text}
-        </span>
+      {paras.map((p, pi) => (
+        <p key={pi} className="mb-0">
+          {p.lines.map((l, li) => (
+            <span
+              key={li}
+              onClick={() => playerRef.current?.seekTo(l.start, true)}
+              className={`cursor-pointer mr-1 ${
+                active && active.para === pi && active.line === li
+                  ? "bg-blue-200 dark:bg-blue-700"
+                  : ""
+              }`}
+            >
+              {l.text}
+            </span>
+          ))}
+        </p>
       ))}
     </div>
   );
