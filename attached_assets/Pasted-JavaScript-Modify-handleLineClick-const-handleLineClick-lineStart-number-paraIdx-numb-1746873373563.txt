@@ -1,0 +1,61 @@
+JavaScript
+
+// Modify handleLineClick
+const handleLineClick = (
+  lineStart: number,
+  paraIdx: number,
+  lineIdx: number,
+) => {
+  setUserScrolling(true);
+  if (userScrollTimeout.current) {
+    clearTimeout(userScrollTimeout.current);
+  }
+  userScrollTimeout.current = setTimeout(() => {
+    setUserScrolling(false);
+  }, 2000); // Consider a slightly shorter timeout if 2s feels too long
+
+  playerRef.current?.seekTo(lineStart, true);
+  setActive({ para: paraIdx, line: lineIdx });
+
+  // --- Add direct scroll logic here ---
+  if (boxRef.current) {
+    const box = boxRef.current;
+    // Ensure DOM has updated if setActive causes a re-render that affects children
+    // requestAnimationFrame can help, or a small timeout
+    requestAnimationFrame(() => { // Or setTimeout
+      const targetParaElement = box.children[paraIdx] as HTMLElement;
+      if (targetParaElement) {
+        const scrollMargin = 40; // Consistent margin
+
+        const paraTop = targetParaElement.offsetTop;
+        const paraHeight = targetParaElement.offsetHeight;
+        const paraBottom = paraTop + paraHeight;
+
+        const viewTop = box.scrollTop + scrollMargin;
+        const viewBottom = box.scrollTop + box.clientHeight - scrollMargin;
+
+        box.scrollingProgrammatically = true; // Set flag
+
+        if (paraTop < viewTop) {
+          box.scrollTo({
+            top: Math.max(paraTop - scrollMargin, 0),
+            behavior: "smooth",
+          });
+        } else if (paraBottom > viewBottom) {
+          const maxScrollPossible = box.scrollHeight - box.clientHeight;
+          const destScrollTop = paraBottom - box.clientHeight + scrollMargin;
+          box.scrollTo({
+            top: Math.min(destScrollTop, maxScrollPossible),
+            behavior: "smooth",
+          });
+        }
+        // Reset the flag after animation (important to manage this carefully)
+        // The existing mechanism in the useEffect might still be useful,
+        // or you manage it here too.
+        setTimeout(() => {
+          box.scrollingProgrammatically = false;
+        }, 500); // Ensure this timeout matches or makes sense with smooth scroll duration
+      }
+    });
+  }
+};
