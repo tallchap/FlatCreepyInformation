@@ -66,55 +66,36 @@ export default function TranscriptPane({
     }
   }, [videoId]);
 
-  /* ─────────────────────────────────── 3 ▸ highlight & minimal auto-scroll */
+  /* ─────────────────────────────────── 3 ▸ SYNC HIGHLIGHT */
   useEffect(() => {
     if (!playerRef.current) return;
-
     const box = boxRef.current!;
-    const margin = 40;                 // px padding before we nudge
-
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
 
-      /* ─ locate paragraph & line ─ */
+      // locate paragraph
       const pIdx = paras.findIndex(
-        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t)
+        (p, i) => p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
       );
       if (pIdx < 0) return;
 
+      // locate line inside paragraph
       const lines = paras[pIdx].lines;
       const lIdx = lines.findIndex(
-        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t)
+        (l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
       );
 
-      /* ─ update highlight only if position changed ─ */
       if (!active || active.para !== pIdx || active.line !== lIdx) {
         setActive({ para: pIdx, line: lIdx });
 
-        /* ---------- keep line visible without moving the page ---------- */
-        const lineEl  = (box.children[pIdx] as HTMLElement).children[lIdx] as HTMLElement;
-        const margin  = 40;                        // px breathing room
-
-        const lineTop    = lineEl.offsetTop;
-        const lineBottom = lineTop + lineEl.offsetHeight;
-        const viewTop    = box.scrollTop + margin;
-        const viewBottom = box.scrollTop + box.clientHeight - margin;
-
-        if (lineTop < viewTop) {
-          /* line above viewport  → scroll up just enough */
-          box.scrollTo({
-            top: Math.max(lineTop - margin, 0),
-            behavior: "smooth",
-          });
-        } else if (lineBottom > viewBottom) {
-          /* line below viewport → scroll down just enough */
-          const max   = box.scrollHeight - box.clientHeight;
-          const dest  = Math.min(lineBottom - box.clientHeight + margin, max);
-          box.scrollTo({ top: dest, behavior: "smooth" });
+        const paraEl = box.children[pIdx] as HTMLElement;
+        const top = paraEl.offsetTop;
+        const bot = top + paraEl.offsetHeight;
+        if (top < box.scrollTop || bot > box.scrollTop + box.clientHeight) {
+          box.scrollTo({ top: top - box.clientHeight / 2, behavior: "smooth" });
         }
       }
     }, 250);
-
     return () => clearInterval(timer);
   }, [paras, active]);
 
