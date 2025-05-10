@@ -1,0 +1,144 @@
+1 ▸ src/lib/bigquery.ts (add one extra helper)
+ts
+Copy
+Edit
+import { BigQuery } from "@google-cloud/bigquery";
+
+const credentials = JSON.parse(process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}");
+export const bigQuery = new BigQuery({ credentials, projectId: credentials.project_id });
+
+export async function fetchVideoMeta(id: string) { /* ← already in your file */ }
+
+/** NEW: return [{start: 🚀seconds, text: "word…"}] sorted by time */
+export async function fetchTranscript(id: string) {
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT
+        Timestamp_Seconds AS start,
+        Word             AS text
+      FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+      WHERE ID = @id
+      ORDER BY start
+    `,
+    params: { id },
+  });
+  return rows as { start: number; text: string }[];
+}
+(Adjust column names if your schema differs; Timestamp_Seconds should be an INT64 number of seconds since video start.)
+
+2 ▸ src/app/api/transcript/[id]/route.ts
+ts
+Copy
+Edit
+// runtime: Node for BigQuery; cache for 1 hour
+export const runtime = "nodejs";
+export const revalidate = 3600;
+
+import { NextResponse } from "next/server";
+import { fetchTranscript } from "@/lib/bigquery";
+
+export async function GET(_: Request, { params }: { params: { id: string } }) {
+  const data = await fetchTranscript(params.id);
+  return NextResponse.json(data ?? [], { status: 200 });
+}
+3 ▸ src/components/TranscriptPane.tsx
+tsx
+Copy
+Edit
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+type Line = { start: number; text: string };
+type Props = { videoId: string; height?: number };
+
+export default function TranscriptPane({ videoId, height = 400 }: Props) {
+  const [lines, setLines] = useState<Line[]>([]);
+  const [active, setActive] = useState<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playerRef   = useRef<any>();        // YT player instance
+
+  /* 1 Load transcript JSON */
+  useEffect(() => {
+    fetch(`/api/transcript/${videoId}`)
+      .then(r => r.json())
+      .then(setLines)
+      .catch(console.error);
+  }, [videoId]);
+
+  /* 2 Load YouTube IFrame API & create player */
+  useEffect(() => {
+    if (playerRef.current) return;          // already loaded
+
+    const tag = document.createElement("script");
+    tag.src = "https://www.youtube.com/iframe_api";
+    document.body.appendChild(tag);
+
+    // The API calls window.onYouTubeIframeAPIReady()
+    (window as any).onYouTubeIframeAPIReady = () => {
+      playerRef.current = new (window as any).YT.Player(`player-${videoId}`);
+    };
+  }, [videoId]);
+
+  /* 3 Highlight timer */
+  useEffect(() => {
+    if (!playerRef.current) return;
+    const id = setInterval(() => {
+      const t = playerRef.current.getCurrentTime?.() ?? 0;
+      // find last line whose start ≤ t
+      const idx = lines.findIndex((l, i) => l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t));
+      setActive(idx >= 0 ? idx : null);
+      if (idx >= 0 && containerRef.current) {
+        const el = containerRef.current.children[idx] as HTMLElement;
+        el?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    }, 200);
+    return () => clearInterval(id);
+  }, [lines]);
+
+  /* 4 Render */
+  return (
+    <div
+      ref={containerRef}
+      className="overflow-y-auto text-[15px] leading-6"
+      style={{ maxHeight: height }}
+    >
+      {lines.map((l, i) => (
+        <span
+          key={i}
+          onClick={() => playerRef.current?.seekTo(l.start, true)}
+          className={`cursor-pointer mr-1 ${i === active ? "bg-blue-200 dark:bg-blue-700" : ""}`}
+        >
+          {l.text}
+        </span>
+      ))}
+    </div>
+  );
+}
+4 ▸ tweak video/[id]/page.tsx
+Right after the <iframe> add <TranscriptPane … />:
+
+tsx
+Copy
+Edit
+import TranscriptPane from "@/components/TranscriptPane";
+
+{/* video embed … */}
+
+<TranscriptPane videoId={id} height={500} />
+
+{/* metadata card stays here */}
+The YouTube <iframe id={player-${id}}> already exists on the page
+(the one you render just above), so TranscriptPane binds to that.
+
+How it behaves
+Page loads ➜ server fetches video meta (your existing code).
+
+Client code downloads @google/iframe-api, initialises YT.Player, and fetches /api/transcript/<id>.
+
+Every ≈200 ms it asks the player for currentTime(), highlights the matching word-chunk, and scrolls it into view.
+
+Clicking any word calls player.seekTo(…), instantly jumping the video.
+
+Everything runs client-side only; the server does a single cached BigQuery query per video to serve the transcript JSON.
+
