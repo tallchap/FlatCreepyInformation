@@ -1,4 +1,3 @@
-
 import { BigQuery } from "@google-cloud/bigquery";
 
 const credentials = JSON.parse(
@@ -32,8 +31,20 @@ export async function fetchVideoMeta(videoId: string) {
     };
 
     const [rows] = await bigQuery.query(options);
-    
-    return rows && rows.length > 0 ? rows[0] : null;
+
+    if (!rows?.length) return null;
+
+    const result = rows[0];
+
+    // Format date if it exists and is valid
+    if (result.published_at) {
+      const dateValue = new Date(result.published_at);
+      if (!isNaN(dateValue.getTime())) {
+        result.published_at = dateValue.toISOString();
+      }
+    }
+
+    return result;
   } catch (error) {
     console.error("Error fetching video metadata:", error);
     return null;
