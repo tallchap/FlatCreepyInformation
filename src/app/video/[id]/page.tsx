@@ -38,8 +38,11 @@ export default async function VideoPage({ params }: { params: { id: string } }) 
             <div>
               <h2 className="text-sm text-gray-500 dark:text-gray-400">Published</h2>
               <p className="font-medium">
-                {/* Simply display the raw date string */}
-                {videoMeta.published_at ? String(videoMeta.published_at) : 'Date not available'}
+                {videoMeta.published_at ? 
+                  (typeof videoMeta.published_at === 'object' 
+                    ? JSON.stringify(videoMeta.published_at)
+                    : videoMeta.published_at)
+                  : 'Date not available'}
               </p>
             </div>
           </div>
