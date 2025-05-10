@@ -17,7 +17,9 @@ export async function fetchVideoMeta(videoId: string) {
         Video_Title as title,
         Channel_Name as channel_name,
         Published_Date as published_at,
-        Youtube_Link as url
+        Youtube_Link as url,
+        Video_Length as video_length,
+        Speakers as speakers
       FROM 
         \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
       WHERE
