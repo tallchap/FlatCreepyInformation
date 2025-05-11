@@ -62,3 +62,24 @@ export default function AboutPage() {
     </section>
   );
 }
+import Link from "next/link";
+
+export default function AboutPage() {
+  return (
+    <section className="container mx-auto max-w-4xl space-y-8">
+      {/* Existing content would be here */}
+
+      {/* ─────────── NEW: one-click downloader ─────────── */}
+      <div className="text-center">
+        <form action="/api/download" method="post">
+          <button
+            type="submit"
+            className="px-6 py-3 rounded-lg bg-red-600 text-white text-lg font-semibold shadow hover:bg-red-700"
+          >
+            Download the demo video
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
