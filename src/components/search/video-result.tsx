@@ -28,7 +28,7 @@ export function VideoResult({ video }: { video: VideoResultType }) {
               <span className="flex items-center gap-1">
                 <Calendar size={16} />
                 {typeof video.Published_Date === "object"
-                  ? (video.Published_Datae as any)?.value || "Unknown Date"
+                  ? (video.Published_Date as any)?.value || "Unknown Date"
                   : video.Published_Date}
               </span>
               <VideoLength length={video.Video_Length} />
@@ -51,8 +51,12 @@ export function VideoResult({ video }: { video: VideoResultType }) {
             <TranscriptDialog video={video} />
           </div>
         </div>
-        {video.MatchSnippets && video.MatchSnippets.length > 0 && (
-          <MatchSnippets snippets={video.MatchSnippets} className="mt-4" />
+         {video.MatchSnippets && video.MatchSnippets.length > 0 && (
+           <MatchSnippets
+             videoId={video.ID}            // ← ID is the YouTube id from BigQuery
+             snippets={video.MatchSnippets}
+             className="mt-4"
+           />
         )}
       </CardContent>
     </Card>

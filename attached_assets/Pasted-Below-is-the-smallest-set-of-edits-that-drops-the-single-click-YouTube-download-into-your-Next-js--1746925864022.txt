@@ -1,0 +1,90 @@
+Below is the smallest set of edits that drops the “single-click YouTube download” into your Next.js repo and wires it to the existing /about page.
+
+1 Add the yt-dlp helper
+src/lib/fetch-youtube.ts
+
+ts
+Copy
+Edit
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { readFile } from "node:fs/promises";
+
+const exec = promisify(execFile);
+const YT_URL = "https://www.youtube.com/watch?v=zjnxt5mZ1Uc"; // hard-coded
+
+export async function getVideo(): Promise<Buffer> {
+  const outfile = join(tmpdir(), `video-${Date.now()}.mp4`);
+
+  // yt-dlp-exec bundles a static binary for every platform
+  const { default: ytdlp } = await import("yt-dlp-exec");
+
+  await exec(
+    ytdlp as unknown as string,
+    [YT_URL, "-f", "best", "-o", outfile],
+    { maxBuffer: 10 * 1024 * 1024 } // ignore stdout; real data goes to file
+  );
+  const data = await readFile(outfile);
+  return data;
+}
+Add the dependency once:
+
+bash
+Copy
+Edit
+npm i yt-dlp-exec
+2 Create an API route
+src/app/api/download/route.ts
+
+ts
+Copy
+Edit
+// run on the Node runtime (not edge) because we spawn a binary
+export const runtime = "nodejs";
+
+import { NextResponse } from "next/server";
+import { getVideo } from "@/lib/fetch-youtube";
+
+export async function POST() {
+  const mp4 = await getVideo();
+
+  return new NextResponse(mp4, {
+    status: 200,
+    headers: {
+      "Content-Type": "video/mp4",
+      "Content-Disposition": 'attachment; filename="video.mp4"',
+      "Content-Length": mp4.byteLength.toString(),
+    },
+  });
+}
+3 Patch the /about page (only 12 lines added)
+diff
+Copy
+Edit
+ // src/app/about/page.tsx  :contentReference[oaicite:0]{index=0}:contentReference[oaicite:1]{index=1}
+ import Link from "next/link";
+
+ export default function AboutPage() {
+   return (
+-    <section className="container mx-auto max-w-4xl">
++    <section className="container mx-auto max-w-4xl space-y-8">
+       {/* existing content … */}
++
++      {/* ─────────── NEW: one-click downloader ─────────── */}
++      <div className="text-center">
++        <form action="/api/download" method="post">
++          <button
++            type="submit"
++            className="px-6 py-3 rounded-lg bg-red-600 text-white text-lg font-semibold shadow hover:bg-red-700"
++          >
++            Download the demo video
++          </button>
++        </form>
++      </div>
+     </section>
+   );
+ }
+The form makes a plain POST /api/download; the route streams the MP4 back, so the browser shows a normal “Save file” dialog.
+

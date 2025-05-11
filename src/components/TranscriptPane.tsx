@@ -1,24 +1,24 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 
-type Line       = { start: number; text: string };
-type Paragraph  = { start: number; lines: Line[] };
-type ActivePos  = { para: number; line: number } | null;
-type Props      = { videoId: string; height?: number; sentencesPerPara?: number };
+type Line = { start: number; text: string };
+type Paragraph = { start: number; lines: Line[] };
+type ActivePos = { para: number; line: number } | null;
+type Props = { videoId: string; height?: number; sentencesPerPara?: number };
 
 export default function TranscriptPane({
   videoId,
-  height = 400,
-  sentencesPerPara = 3, // ← change if you prefer longer/shorter paragraphs
+  height = 300, // Reduced default height
+  sentencesPerPara = 4, // Fewer sentences per paragraph
 }: Props) {
-  const [paras, setParas]       = useState<Paragraph[]>([]);
-  const [active, setActive]     = useState<ActivePos>(null);
-  const playerRef               = useRef<any>(null);
+  const [paras, setParas] = useState<Paragraph[]>([]);
+  const [active, setActive] = useState<ActivePos>(null);
+  const playerRef = useRef<any>(null);
 
-  /* ─────────────────────────────────── 1 ▸ FETCH & GROUP  */
+  /* 1 ▸ FETCH & GROUP */
   useEffect(() => {
     fetch(`/api/transcript/${videoId}`)
-      .then(r => r.json())
+      .then((r) => r.json())
       .then((lines: Line[]) => {
         const paragraphs: Paragraph[] = [];
         let cur: Paragraph | null = null;
@@ -44,7 +44,7 @@ export default function TranscriptPane({
       .catch(console.error);
   }, [videoId, sentencesPerPara]);
 
-  /* ─────────────────────────────────── 2 ▸ PLAYER READY   */
+  /* 2 ▸ PLAYER SETUP */
   useEffect(() => {
     const mountPlayer = () => {
       if (playerRef.current) return;
@@ -63,65 +63,50 @@ export default function TranscriptPane({
     }
   }, [videoId]);
 
-  /* ─────────────────────────────────── 3 ▸ SYNC HIGHLIGHT ONLY */
+  /* 3 ▸ SYNC & HIGHLIGHT */
   useEffect(() => {
     if (!playerRef.current) return;
-
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
-
-      // find paragraph index
       const pIdx = paras.findIndex(
         (p, i) =>
-          p.start <= t &&
-          (i + 1 === paras.length || paras[i + 1].start > t)
+          p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
       );
       if (pIdx < 0) return;
-
-      // find line index
       const lines = paras[pIdx].lines;
       const lIdx = lines.findIndex(
         (l, i) =>
-          l.start <= t &&
-          (i + 1 === lines.length || lines[i + 1].start > t)
+          l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
       );
       const validLineIdx = lIdx >= 0 ? lIdx : 0;
-
-      // only update highlight state
-      if (
-        !active ||
-        active.para !== pIdx ||
-        active.line !== validLineIdx
-      ) {
+      if (!active || active.para !== pIdx || active.line !== validLineIdx) {
         setActive({ para: pIdx, line: validLineIdx });
       }
-    }, 250);
-
+    }, 300);
     return () => clearInterval(timer);
   }, [paras, active]);
 
-  /* ─────────────────────────────────── 4 ▸ HANDLE LINE CLICK */
+  /* 4 ▸ CLICK TO SEEK */
   const handleLineClick = (start: number, pIdx: number, lIdx: number) => {
-    // just seek and highlight — no scrolling
     playerRef.current?.seekTo(start, true);
     setActive({ para: pIdx, line: lIdx });
   };
 
-  /* ─────────────────────────────────── 5 ▸ RENDER */
+  /* 5 ▸ RENDER */
   return (
     <div
-      className="overflow-y-auto text-[15px] leading-6 space-y-4 bg-white dark:bg-gray-800 rounded-xl shadow-md p-4"
+      className="overflow-y-auto text-m leading-tight space-y-2 bg-white dark:bg-gray-800 rounded-lg shadow p-3"
       style={{ maxHeight: height }}
     >
       {paras.map((p, pi) => (
-        <p key={pi} className="mb-0">
+        <p key={pi} className="mb-1">
           {p.lines.map((l, li) => (
             <span
               key={li}
               onClick={() => handleLineClick(l.start, pi, li)}
               className={`cursor-pointer mr-1 ${
-                active && active.para === pi && active.line === li
-                  ? "bg-blue-200 dark:bg-blue-700"
+                active?.para === pi && active.line === li
+                  ? "bg-blue-100 dark:bg-blue-600"
                   : ""
               }`}
             >

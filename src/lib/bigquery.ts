@@ -75,21 +75,35 @@ export async function fetchTranscript(id: string) {
 
   const raw: string = rows[0].Search_Doc_1 as string;
 
-  /* Parse each timestamped line */
-  return raw
-    .trim()
-    .split(/\n+/)
-    .map((ln) => {
-      // Matches [mm:ss] …   or   [hh:mm:ss] …
-      const match = ln.match(/^\[(\d{2}):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
-      if (!match) return null;
+  /* 2 ▸ parse lines */
+  const out: { start: number | null; text: string }[] = [];
 
-      const [, a, b, c, text] = match; // a=mm or hh, b=ss or mm, c=ss?
-      const seconds = c
-        ? +a * 3600 + +b * 60 + +c // [hh:mm:ss]
-        : +a * 60 + +b; // [mm:ss]
+  raw.trim().split(/\n+/).forEach((ln) => {
+    // [hh:mm:ss]  or [mm:ss]
+    let m = ln.match(/^\[(\d{2}):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
+    if (m) {
+      const [, a, b, c, txt] = m;
+      const sec = (c ? +a * 3600 + +b * 60 + +c : +a * 60 + +b);
+      out.push({ start: sec, text: txt });
+      return;
+    }
 
-      return { start: seconds, text };
-    })
-    .filter(Boolean) as { start: number; text: string }[];
-}
+    // seconds.fraction:  (e.g. 12.64: text)
+    m = ln.match(/^(\d+(?:\.\d+)?):\s*(.*)$/);
+    if (m) {
+      out.push({ start: parseFloat(m[1]), text: m[2] });
+      return;
+    }
+
+    // plain line with NO timing – keep it, but mark start=null
+    if (ln.trim()) out.push({ start: null, text: ln.trim() });
+  });
+
+  /* sort only lines that have real timestamps */
+  out.sort((a, b) => {
+    if (a.start === null) return 1;
+    if (b.start === null) return -1;
+    return a.start - b.start;
+  });
+
+  return out;
