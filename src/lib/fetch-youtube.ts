@@ -1,15 +1,16 @@
-// src/lib/fetch-youtube.ts
+
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import { readFile, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
 import YTDlpWrap from "yt-dlp-wrap";
 
 /* --------------------------------------------------------- *
  *  CONFIG — hard-coded URL for the About-page demo button   *
  *  (You can pass a dynamic URL from the API route instead.) *
  * --------------------------------------------------------- */
-const DEMO_URL = "https://www.youtube.com/watch?v=zjnxt5mZ1Uc";
+const DEMO_URL = "https://www.youtube.com/watch?v=EYg3fmaycZA";
 
 /**
  * Download <url> with yt-dlp and return the resulting MP4 bytes.
@@ -38,4 +39,10 @@ export async function getVideo(url: string = DEMO_URL): Promise<Buffer> {
     /* ignore if already removed */
   });
   return data;
+}
+
+// Helper function to generate UUID
+function randomUUID(): string {
+  return Math.random().toString(36).substring(2, 15) + 
+         Math.random().toString(36).substring(2, 15);
 }
