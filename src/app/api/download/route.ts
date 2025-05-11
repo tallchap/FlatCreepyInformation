@@ -1,12 +1,11 @@
-
-// run on the Node runtime (not edge) because we spawn a binary
-export const runtime = "nodejs";
-
+// src/app/api/download/route.ts
 import { NextResponse } from "next/server";
 import { getVideo } from "@/lib/fetch-youtube";
 
+export const runtime = "nodejs";
+
 export async function POST() {
-  const mp4 = await getVideo();
+  const mp4 = await getVideo(); // or getVideo(customUrl)
 
   return new NextResponse(mp4, {
     status: 200,

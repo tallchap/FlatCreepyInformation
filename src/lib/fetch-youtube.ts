@@ -1,46 +1,41 @@
+// src/lib/fetch-youtube.ts
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import YTDlpWrap from "yt-dlp-wrap";
 
-const exec = promisify(execFile);
-const YT_URL = "https://www.youtube.com/watch?v=zjnxt5mZ1Uc"; // hard-coded
+/* --------------------------------------------------------- *
+ *  CONFIG — hard-coded URL for the About-page demo button   *
+ *  (You can pass a dynamic URL from the API route instead.) *
+ * --------------------------------------------------------- */
+const DEMO_URL = "https://www.youtube.com/watch?v=zjnxt5mZ1Uc";
 
-export async function getVideo(): Promise<Buffer> {
-  const outfile = join(tmpdir(), `video-${Date.now()}.mp4`);
+/**
+ * Download <url> with yt-dlp and return the resulting MP4 bytes.
+ */
+export async function getVideo(url: string = DEMO_URL): Promise<Buffer> {
+  const outfile = join(tmpdir(), `video-${randomUUID()}.mp4`);
 
-  // yt-dlp-exec bundles a static binary for every platform
-  const { default: ytdlp } = await import("yt-dlp-exec");
+  // 1) spawn yt-dlp
+  const ytdlp = new YTDlpWrap();
+  await new Promise<void>((resolve, reject) => {
+    ytdlp
+      .exec([
+        url,
+        "-f",
+        "bestvideo*+bestaudio/best", // the usual quality logic
+        "-o",
+        outfile,
+      ])
+      .on("error", reject)
+      .on("close", () => resolve());
+  });
 
-  await exec(
-    ytdlp as unknown as string,
-    [YT_URL, "-f", "best", "-o", outfile],
-    { maxBuffer: 10 * 1024 * 1024 }, // ignore stdout; real data goes to file
-  );
+  // 2) read the file into memory and clean up
   const data = await readFile(outfile);
-  return data;
-}
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { readFile } from "node:fs/promises";
-
-const exec = promisify(execFile);
-const YT_URL = "https://www.youtube.com/watch?v=zjnxt5mZ1Uc"; // hard-coded
-
-export async function getVideo(): Promise<Buffer> {
-  const outfile = join(tmpdir(), `video-${Date.now()}.mp4`);
-
-  // yt-dlp-exec bundles a static binary for every platform
-  const { default: ytdlp } = await import("yt-dlp-exec");
-
-  await exec(
-    ytdlp as unknown as string,
-    [YT_URL, "-f", "best", "-o", outfile],
-    { maxBuffer: 10 * 1024 * 1024 } // ignore stdout; real data goes to file
-  );
-  const data = await readFile(outfile);
+  await unlink(outfile).catch(() => {
+    /* ignore if already removed */
+  });
   return data;
 }
