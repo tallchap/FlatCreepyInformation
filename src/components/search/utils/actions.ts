@@ -62,7 +62,7 @@ export async function exportTranscripts(inputs: Record<string, string>) {
   }
 
   let plainText = "";
-  searchResults.results.forEach((video, index) => {
+  searchResults.results.forEach((video: any, index: number) => {
     // Extract title from video object, defaulting to Video_Title or Untitled if not present
     const title =
       video.Video_Title ||

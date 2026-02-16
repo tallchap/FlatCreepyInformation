@@ -91,11 +91,13 @@ export async function searchTranscripts(params: {
       query: query,
       params: queryParams,
     });
-    const results = rows.map((row) => {
+    const results = rows.map((row: any) => {
       // Create snippets if search query exists
-      let snippets = [];
+      let snippets: { text: string; seconds: number }[] = [];
       if (params.searchQuery && row.Search_Doc_1) {
-        const transcript = row.Search_Doc_1.toLowerCase();
+        const original: string = row.Search_Doc_1;
+        const transcript = original.toLowerCase();
+        const tsIndex = buildTimestampIndex(original);
         const processedTerms = processSearchQuery(params.searchQuery);
 
         // Find snippets for all search terms
@@ -119,11 +121,12 @@ export async function searchTranscripts(params: {
             // Get context window around the match
             const snippetStart = Math.max(0, startIndex - contextWindowSize);
             const snippetEnd = Math.min(
-              transcript.length,
+              original.length,
               startIndex + termToSearch.length + contextWindowSize
             );
 
-            let snippet = transcript.substring(snippetStart, snippetEnd);
+            // Extract display text from original (preserves casing)
+            let snippet = original.substring(snippetStart, snippetEnd);
 
             // Mark the search term in the snippet, handling wildcards
             const termStart = startIndex - snippetStart;
@@ -144,7 +147,8 @@ export async function searchTranscripts(params: {
               `<mark>${snippet.substring(termStart, termEnd)}</mark>` +
               snippet.substring(termEnd);
 
-            snippets.push(snippet);
+            const seconds = findNearestTimestamp(tsIndex, startIndex);
+            snippets.push({ text: snippet, seconds });
 
             // Move past this occurrence to find the next one
             lastIndex = startIndex + termToSearch.length;
@@ -266,6 +270,53 @@ function findWordEndIndex(text: string, startIndex: number): number {
     endIndex++;
   }
   return endIndex;
+}
+
+/**
+ * Scan a transcript and return every timestamp's character position and seconds.
+ * Handles `[MM:SS]`, `[HH:MM:SS]`, and `123.45:` formats.
+ */
+function buildTimestampIndex(
+  transcript: string
+): { pos: number; sec: number }[] {
+  const index: { pos: number; sec: number }[] = [];
+  // [HH:MM:SS] or [MM:SS]
+  const reBracket = /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g;
+  // decimal-seconds at start of line: 816.76:
+  const reDecimal = /(?:^|\n)(\d+(?:\.\d+)?):/gm;
+
+  let m: RegExpExecArray | null;
+  while ((m = reBracket.exec(transcript)) !== null) {
+    const [, a, b, c] = m;
+    const sec = c ? +a * 3600 + +b * 60 + +c : +a * 60 + +b;
+    index.push({ pos: m.index, sec });
+  }
+  while ((m = reDecimal.exec(transcript)) !== null) {
+    index.push({ pos: m.index, sec: parseFloat(m[1]) });
+  }
+  index.sort((a, b) => a.pos - b.pos);
+  return index;
+}
+
+/** Binary-search for the last timestamp at or before `matchPos`. */
+function findNearestTimestamp(
+  index: { pos: number; sec: number }[],
+  matchPos: number
+): number {
+  if (index.length === 0) return 0;
+  let lo = 0;
+  let hi = index.length - 1;
+  let best = -1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >>> 1;
+    if (index[mid].pos <= matchPos) {
+      best = mid;
+      lo = mid + 1;
+    } else {
+      hi = mid - 1;
+    }
+  }
+  return best >= 0 ? index[best].sec : 0;
 }
 
 export async function getTranscriptByVideoId(videoId: string): Promise<string> {

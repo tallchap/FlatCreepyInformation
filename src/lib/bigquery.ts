@@ -107,3 +107,4 @@ export async function fetchTranscript(id: string) {
   });
 
   return out;
+}

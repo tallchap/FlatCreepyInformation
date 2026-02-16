@@ -10,7 +10,7 @@ export const videoResultSchema = z.object({
   Video_Length: z.string(),
   Transcript_Doc_Link: z.string(),
   SearchTerm: z.string().optional(),
-  MatchSnippets: z.array(z.string()).optional(),
+  MatchSnippets: z.array(z.object({ text: z.string(), seconds: z.number() })).optional(),
   Transcript: z.string().optional(),
   Search_Doc_1: z.string().optional(), // Full transcript content
 });

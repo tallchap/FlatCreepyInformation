@@ -23,12 +23,11 @@ export default async function VideoPage({
   params,
   searchParams, // ⬅️  comes from Next 15
 }: {
-  params: { id: string };
-  searchParams: { t?: string };
+  params: Promise<{ id: string }>;
+  searchParams: Promise<{ t?: string }>;
 }) {
-  // Explicitly await params and searchParams to address Next.js 15 warnings
-  const resolvedParams = await Promise.resolve(params);
-  const resolvedSearchParams = await Promise.resolve(searchParams);
+  const resolvedParams = await params;
+  const resolvedSearchParams = await searchParams;
 
   const { id } = resolvedParams;
   if (!/^[\w-]{11}$/.test(id)) notFound();
@@ -77,8 +76,8 @@ export default async function VideoPage({
             <p className="font-medium">
               {videoMeta.published
                 ? typeof videoMeta.published === "object" &&
-                  videoMeta.published.value
-                  ? videoMeta.published.value
+                  (videoMeta.published as any).value
+                  ? (videoMeta.published as any).value
                   : String(videoMeta.published)
                 : "Date not available"}
             </p>

@@ -6,7 +6,8 @@ export const revalidate = 3600;
 import { NextResponse } from "next/server";
 import { fetchTranscript } from "@/lib/bigquery";
 
-export async function GET(_: Request, { params }: { params: { id: string } }) {
-  const data = await fetchTranscript(params.id);
+export async function GET(_: Request, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const data = await fetchTranscript(id);
   return NextResponse.json(data ?? [], { status: 200 });
 }
