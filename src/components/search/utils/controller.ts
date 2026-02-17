@@ -1,5 +1,9 @@
 import { bigQuery } from "@/lib/bigquery";
 
+function escapeRegex(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 export async function searchTranscripts(params: {
   searchQuery?: string;
   speakerQuery?: string;
@@ -19,12 +23,13 @@ export async function searchTranscripts(params: {
         const paramName = `searchQuery${index}`;
 
         if (term.hasWildcard) {
-          // For wildcard terms, append % to the parameter value for SQL LIKE
-          queryParams[paramName] = `${term.value}%`;
-          return `LOWER(Search_Doc_1) LIKE CONCAT("%", LOWER(@${paramName}), "")`;
+          // \b at start only — prefix match at word boundary
+          queryParams[paramName] = `\\b${escapeRegex(term.value.toLowerCase())}`;
+          return `REGEXP_CONTAINS(LOWER(Search_Doc_1), @${paramName})`;
         } else {
-          queryParams[paramName] = term.value;
-          return `LOWER(Search_Doc_1) LIKE CONCAT("%", LOWER(@${paramName}), "%")`;
+          // \b on both sides — whole word match
+          queryParams[paramName] = `\\b${escapeRegex(term.value.toLowerCase())}\\b`;
+          return `REGEXP_CONTAINS(LOWER(Search_Doc_1), @${paramName})`;
         }
       });
 
@@ -93,7 +98,7 @@ export async function searchTranscripts(params: {
     });
     const results = rows.map((row: any) => {
       // Create snippets if search query exists
-      let snippets: { text: string; seconds: number }[] = [];
+      let snippets: { text: string; seconds: number | null }[] = [];
       if (params.searchQuery && row.Search_Doc_1) {
         const original: string = row.Search_Doc_1;
         const transcript = original.toLowerCase();
@@ -107,16 +112,20 @@ export async function searchTranscripts(params: {
             ? searchTerm // Use base term without * for searching
             : searchTerm;
 
-          // Find ALL instances of the search term
+          // Find ALL whole-word instances of the search term
           const contextWindowSize = 110;
           const maxSnippets = 5;
 
-          let lastIndex = 0;
+          const escapedTerm = escapeRegex(termToSearch);
+          const pattern = term.hasWildcard
+            ? new RegExp(`\\b${escapedTerm}`, 'gi')
+            : new RegExp(`\\b${escapedTerm}\\b`, 'gi');
+
+          let match: RegExpExecArray | null;
           let snippetCount = 0;
 
-          while (lastIndex !== -1 && snippetCount < maxSnippets) {
-            let startIndex = transcript.indexOf(termToSearch, lastIndex);
-            if (startIndex === -1) break; // No more instances found
+          while ((match = pattern.exec(transcript)) !== null && snippetCount < maxSnippets) {
+            const startIndex = match.index;
 
             // Get context window around the match
             const snippetStart = Math.max(0, startIndex - contextWindowSize);
@@ -150,8 +159,6 @@ export async function searchTranscripts(params: {
             const seconds = findNearestTimestamp(tsIndex, startIndex);
             snippets.push({ text: snippet, seconds });
 
-            // Move past this occurrence to find the next one
-            lastIndex = startIndex + termToSearch.length;
             snippetCount++;
           }
         }
@@ -281,7 +288,7 @@ function buildTimestampIndex(
 ): { pos: number; sec: number }[] {
   const index: { pos: number; sec: number }[] = [];
   // [HH:MM:SS] or [MM:SS]
-  const reBracket = /\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]/g;
+  const reBracket = /\[(\d+):(\d{2})(?::(\d{2}))?\]/g;
   // decimal-seconds at start of line: 816.76:
   const reDecimal = /(?:^|\n)(\d+(?:\.\d+)?):/gm;
 
@@ -302,8 +309,8 @@ function buildTimestampIndex(
 function findNearestTimestamp(
   index: { pos: number; sec: number }[],
   matchPos: number
-): number {
-  if (index.length === 0) return 0;
+): number | null {
+  if (index.length === 0) return null;
   let lo = 0;
   let hi = index.length - 1;
   let best = -1;
@@ -316,7 +323,7 @@ function findNearestTimestamp(
       hi = mid - 1;
     }
   }
-  return best >= 0 ? index[best].sec : 0;
+  return best >= 0 ? index[best].sec : null;
 }
 
 export async function getTranscriptByVideoId(videoId: string): Promise<string> {
