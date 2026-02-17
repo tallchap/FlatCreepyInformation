@@ -1,19 +1,36 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 
 type Line = { start: number; text: string };
 type Paragraph = { start: number; lines: Line[] };
 type ActivePos = { para: number; line: number } | null;
-type Props = { videoId: string; height?: number; sentencesPerPara?: number };
+type Props = { videoId: string; height?: number; sentencesPerPara?: number; initialTimestamp?: number | null };
+
+/** Find the paragraph + line matching a given timestamp. */
+function findPositionForTime(paras: Paragraph[], t: number): ActivePos {
+  const pIdx = paras.findIndex(
+    (p, i) =>
+      p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
+  );
+  if (pIdx < 0) return null;
+  const lines = paras[pIdx].lines;
+  const lIdx = lines.findIndex(
+    (l, i) =>
+      l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
+  );
+  return { para: pIdx, line: lIdx >= 0 ? lIdx : 0 };
+}
 
 export default function TranscriptPane({
   videoId,
   height = 300, // Reduced default height
   sentencesPerPara = 4, // Fewer sentences per paragraph
+  initialTimestamp = null,
 }: Props) {
   const [paras, setParas] = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
   const playerRef = useRef<any>(null);
+  const activeLineRef = useRef<HTMLSpanElement | null>(null);
 
   /* 1 ▸ FETCH & GROUP */
   useEffect(() => {
@@ -40,9 +57,15 @@ export default function TranscriptPane({
         }
         if (cur) paragraphs.push(cur);
         setParas(paragraphs);
+
+        // Set initial scroll position from timestamp
+        if (initialTimestamp != null && paragraphs.length > 0) {
+          const pos = findPositionForTime(paragraphs, initialTimestamp);
+          if (pos) setActive(pos);
+        }
       })
       .catch(console.error);
-  }, [videoId, sentencesPerPara]);
+  }, [videoId, sentencesPerPara, initialTimestamp]);
 
   /* 2 ▸ PLAYER SETUP */
   useEffect(() => {
@@ -68,29 +91,32 @@ export default function TranscriptPane({
     if (!playerRef.current) return;
     const timer = setInterval(() => {
       const t = playerRef.current.getCurrentTime?.() ?? 0;
-      const pIdx = paras.findIndex(
-        (p, i) =>
-          p.start <= t && (i + 1 === paras.length || paras[i + 1].start > t),
-      );
-      if (pIdx < 0) return;
-      const lines = paras[pIdx].lines;
-      const lIdx = lines.findIndex(
-        (l, i) =>
-          l.start <= t && (i + 1 === lines.length || lines[i + 1].start > t),
-      );
-      const validLineIdx = lIdx >= 0 ? lIdx : 0;
-      if (!active || active.para !== pIdx || active.line !== validLineIdx) {
-        setActive({ para: pIdx, line: validLineIdx });
+      const pos = findPositionForTime(paras, t);
+      if (!pos) return;
+      if (!active || active.para !== pos.para || active.line !== pos.line) {
+        setActive(pos);
       }
     }, 300);
     return () => clearInterval(timer);
   }, [paras, active]);
+
+  /* 3b ▸ SCROLL TO ACTIVE LINE */
+  useEffect(() => {
+    if (activeLineRef.current) {
+      activeLineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+  }, [active]);
 
   /* 4 ▸ CLICK TO SEEK */
   const handleLineClick = (start: number, pIdx: number, lIdx: number) => {
     playerRef.current?.seekTo(start, true);
     setActive({ para: pIdx, line: lIdx });
   };
+
+  /* Ref callback for the active line */
+  const activeRefCallback = useCallback((el: HTMLSpanElement | null) => {
+    activeLineRef.current = el;
+  }, []);
 
   /* 5 ▸ RENDER */
   return (
@@ -100,19 +126,21 @@ export default function TranscriptPane({
     >
       {paras.map((p, pi) => (
         <p key={pi} className="mb-1">
-          {p.lines.map((l, li) => (
-            <span
-              key={li}
-              onClick={() => handleLineClick(l.start, pi, li)}
-              className={`cursor-pointer mr-1 ${
-                active?.para === pi && active.line === li
-                  ? "bg-blue-100 dark:bg-blue-600"
-                  : ""
-              }`}
-            >
-              {l.text}
-            </span>
-          ))}
+          {p.lines.map((l, li) => {
+            const isActive = active?.para === pi && active.line === li;
+            return (
+              <span
+                key={li}
+                ref={isActive ? activeRefCallback : undefined}
+                onClick={() => handleLineClick(l.start, pi, li)}
+                className={`cursor-pointer mr-1 ${
+                  isActive ? "bg-blue-100 dark:bg-blue-600" : ""
+                }`}
+              >
+                {l.text}
+              </span>
+            );
+          })}
         </p>
       ))}
     </div>

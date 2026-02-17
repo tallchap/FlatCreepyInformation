@@ -100,7 +100,7 @@ export default async function VideoPage({
           </div>
         </div>
       </div>
-      <TranscriptPane videoId={id} height={200} />
+      <TranscriptPane videoId={id} height={200} initialTimestamp={startSec} />
     </main>
   );
 }
