@@ -156,9 +156,30 @@ export async function searchTranscripts(params: {
               `<mark>${snippet.substring(termStart, termEnd)}</mark>` +
               snippet.substring(termEnd);
 
-            // Strip inline timestamps from display text
-            snippet = snippet.replace(/\[\d+:\d{2}(?::\d{2})?\]\s*/g, '');
+            // Strip timestamps from display text
+            snippet = snippet.replace(/\[\d+:\d{2}(?::\d{2})?\]:?\s*/g, '');
             snippet = snippet.replace(/(?:^|\s)\d+(?:\.\d+)?:\s*/g, ' ');
+            snippet = snippet.replace(/^[\d:]*\]\s*/g, '');
+            snippet = snippet.replace(/\s*\[\d+:?\d*$/g, '');
+
+            // Strip leading partial word if we started mid-word
+            if (snippetStart > 0 && /\w/.test(original[snippetStart - 1] || '')) {
+              const firstSpace = snippet.indexOf(' ');
+              const firstMark = snippet.indexOf('<mark>');
+              if (firstSpace !== -1 && (firstMark === -1 || firstSpace < firstMark)) {
+                snippet = snippet.substring(firstSpace + 1);
+              }
+            }
+            // Strip trailing partial word if we ended mid-word
+            if (snippetEnd < original.length && /\w/.test(original[snippetEnd] || '')) {
+              const lastSpace = snippet.lastIndexOf(' ');
+              const lastMarkEnd = snippet.lastIndexOf('</mark>');
+              if (lastSpace > lastMarkEnd) {
+                snippet = snippet.substring(0, lastSpace);
+              }
+            }
+            // Clean any remaining leading non-letter junk
+            snippet = snippet.replace(/^[^a-zA-Z<]+/, '');
 
             const seconds = findNearestTimestamp(tsIndex, startIndex);
             snippets.push({ text: snippet, seconds });
