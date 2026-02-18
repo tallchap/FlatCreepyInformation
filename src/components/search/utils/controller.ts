@@ -42,7 +42,7 @@ export async function searchTranscripts(params: {
     if (params.speakerQuery) {
       // Generate alternative spellings for fuzzy matching
       whereConditions.push(
-        'LOWER(Extracted_Speakers) LIKE CONCAT("%", LOWER(@speakerQuery), "%")'
+        'LOWER(Speakers_Claude) LIKE CONCAT("%", LOWER(@speakerQuery), "%")'
       );
       queryParams.speakerQuery = params.speakerQuery;
     }
@@ -82,7 +82,7 @@ export async function searchTranscripts(params: {
         Video_Title,
         Channel_Name,
         Published_Date,
-        Extracted_Speakers AS Speakers,
+        Speakers_Claude AS Speakers,
         Youtube_Link,
         Video_Length,
         Transcript_Doc_Link,
