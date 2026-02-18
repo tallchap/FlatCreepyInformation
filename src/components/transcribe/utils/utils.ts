@@ -110,11 +110,12 @@ export async function identifySpeakers(
   transcriptText: string,
   videoTitle: string,
   videoDescription: string,
-  userSpeaker: string
+  userSpeaker: string,
+  channelName?: string
 ): Promise<string> {
   try {
     const client = new OpenAI();
-    const transcriptSample = transcriptText.slice(0, 4000);
+    const transcriptSample = transcriptText.slice(0, 20000);
 
     const response = await client.chat.completions.create({
       model: "gpt-4o",
@@ -123,22 +124,20 @@ export async function identifySpeakers(
           role: "system",
           content: `You are identifying speakers in a video transcript.
 
-Given a transcript excerpt, video title, description, and a user-provided speaker hint, identify ALL people who are actually SPEAKING in this video.
+Given a transcript excerpt, video title, channel name, description, and user-provided speaker names, identify ALL people who are actually SPEAKING in this video.
 
 Rules:
-1. Analyze the transcript for speaker introductions, self-references, and conversational cues (e.g., "thank you Sam", "as I was saying", host introductions)
-2. Cross-reference with the title, description, and user-provided speaker hint
-3. Only include people who are actually SPEAKING in the video, not people merely mentioned or discussed
-4. For each potential speaker, assess your confidence (0-100%)
-5. Only return speakers where you have 90%+ confidence they are actually speaking
-6. Use full names (first + last) when identifiable
-7. Return ONLY a comma-separated list of names, nothing else
-8. If you cannot identify any speakers with 90%+ confidence, return the user-provided speaker name as-is`,
+1. The user-provided speaker field may contain multiple comma-separated names. These are strong candidates who very likely speak in this video — include them in your output UNLESS there is clear evidence they do not actually speak (e.g., the person is deceased, is only discussed as a topic, or is clearly not a participant in this recording). When in doubt, include them.
+2. Analyze the transcript for additional speakers: look for introductions, self-references, conversational cues (e.g., "thank you Sam", host introductions), and back-and-forth dialogue patterns.
+3. For additional speakers beyond the user-provided ones, only include them if you have 90%+ confidence they are actually speaking, not merely mentioned or discussed.
+4. Use full names (first + last) when identifiable. When the transcript uses informal or shortened names (e.g., "Clay and Buck"), cross-reference with the channel name, title, and description to resolve to full names (e.g., "Clay Travis, Buck Sexton").
+5. Return ONLY a comma-separated list of names, nothing else.`,
         },
         {
           role: "user",
-          content: `User-provided speaker: ${userSpeaker}
+          content: `User-provided speaker(s): ${userSpeaker}
 Video title: ${videoTitle}
+Channel name: ${channelName || "Unknown"}
 Description (first 500 chars): ${videoDescription.slice(0, 500)}
 
 Transcript excerpt:

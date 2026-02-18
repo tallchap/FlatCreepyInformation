@@ -59,7 +59,8 @@ export async function singleExtract(prevState: any, formData: FormData) {
       transcriptText,
       metadata.title,
       metadata.description,
-      speaker
+      speaker,
+      metadata.channelName
     );
     console.log(`AI-identified speakers: ${(metadata as any).speakersClaude}`);
   } catch (error) {
