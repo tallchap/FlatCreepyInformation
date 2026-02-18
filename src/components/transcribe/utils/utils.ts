@@ -106,6 +106,58 @@ export async function extractHumanNames(
   }
 }
 
+export async function identifySpeakers(
+  transcriptText: string,
+  videoTitle: string,
+  videoDescription: string,
+  userSpeaker: string
+): Promise<string> {
+  try {
+    const client = new OpenAI();
+    const transcriptSample = transcriptText.slice(0, 4000);
+
+    const response = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `You are identifying speakers in a video transcript.
+
+Given a transcript excerpt, video title, description, and a user-provided speaker hint, identify ALL people who are actually SPEAKING in this video.
+
+Rules:
+1. Analyze the transcript for speaker introductions, self-references, and conversational cues (e.g., "thank you Sam", "as I was saying", host introductions)
+2. Cross-reference with the title, description, and user-provided speaker hint
+3. Only include people who are actually SPEAKING in the video, not people merely mentioned or discussed
+4. For each potential speaker, assess your confidence (0-100%)
+5. Only return speakers where you have 90%+ confidence they are actually speaking
+6. Use full names (first + last) when identifiable
+7. Return ONLY a comma-separated list of names, nothing else
+8. If you cannot identify any speakers with 90%+ confidence, return the user-provided speaker name as-is`,
+        },
+        {
+          role: "user",
+          content: `User-provided speaker: ${userSpeaker}
+Video title: ${videoTitle}
+Description (first 500 chars): ${videoDescription.slice(0, 500)}
+
+Transcript excerpt:
+${transcriptSample}
+
+Return ONLY the comma-separated list of confirmed speakers (90%+ confidence):`,
+        },
+      ],
+    });
+
+    let names = response.choices[0].message.content?.trim();
+    if (!names) return userSpeaker;
+    return deduplicateAndFormatNames(names);
+  } catch (error) {
+    console.error("Error identifying speakers:", error);
+    return userSpeaker;
+  }
+}
+
 export function formatTranscriptAsText(transcript: Transcript): string {
   if (
     !transcript ||
@@ -121,12 +173,12 @@ export function formatTranscriptAsText(transcript: Transcript): string {
 
   return transcript.transcript_data
     .map((snippet) => {
-      // Format timestamp (seconds) to [MM:SS]
-      const minutes = Math.floor(snippet.start / 60);
+      const hours = Math.floor(snippet.start / 3600);
+      const minutes = Math.floor((snippet.start % 3600) / 60);
       const seconds = Math.floor(snippet.start % 60);
-      const timestamp = `[${minutes.toString().padStart(2, "0")}:${seconds
-        .toString()
-        .padStart(2, "0")}]`;
+      const timestamp = hours > 0
+        ? `[${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}]`
+        : `[${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}]`;
 
       return `${timestamp} ${snippet.text}`;
     })
@@ -172,11 +224,12 @@ function formatSRTTime(seconds: number): string {
 }
 
 export function formatTimestamp(timeInSeconds: number): string {
-  const minutes = Math.floor(timeInSeconds / 60);
+  const hours = Math.floor(timeInSeconds / 3600);
+  const minutes = Math.floor((timeInSeconds % 3600) / 60);
   const seconds = Math.floor(timeInSeconds % 60);
-  return `${minutes.toString().padStart(2, "0")}:${seconds
-    .toString()
-    .padStart(2, "0")}`;
+  return hours > 0
+    ? `${hours}:${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`
+    : `${minutes.toString().padStart(2, "0")}:${seconds.toString().padStart(2, "0")}`;
 }
 
 export async function getGoogleDocsAuth() {

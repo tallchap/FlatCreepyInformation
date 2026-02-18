@@ -80,7 +80,7 @@ export async function fetchTranscript(id: string) {
 
   raw.trim().split(/\n+/).forEach((ln) => {
     // [hh:mm:ss]  or [mm:ss]
-    let m = ln.match(/^\[(\d{2}):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
+    let m = ln.match(/^\[(\d+):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
     if (m) {
       const [, a, b, c, txt] = m;
       const sec = (c ? +a * 3600 + +b * 60 + +c : +a * 60 + +b);

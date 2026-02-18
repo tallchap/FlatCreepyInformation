@@ -8,6 +8,7 @@ import {
   fetchYoutubeMetadata,
   fetchYoutubeTranscript,
 } from "./controller";
+import { identifySpeakers, formatTranscriptAsText } from "./utils";
 
 const singleExtractSchema = z.object({
   url: z.string().url(),
@@ -51,8 +52,20 @@ export async function singleExtract(prevState: any, formData: FormData) {
     };
   }
 
-  // const textTranscript = formatTranscriptAsText(transcript);
-  // const srtTranscript = formatTranscriptAsSRT(transcript);
+  // AI speaker identification using transcript content
+  try {
+    const transcriptText = formatTranscriptAsText(transcript);
+    (metadata as any).speakersClaude = await identifySpeakers(
+      transcriptText,
+      metadata.title,
+      metadata.description,
+      speaker
+    );
+    console.log(`AI-identified speakers: ${(metadata as any).speakersClaude}`);
+  } catch (error) {
+    console.error("Error in AI speaker identification:", error);
+    (metadata as any).speakersClaude = null;
+  }
 
   let googleDocUrl;
   try {

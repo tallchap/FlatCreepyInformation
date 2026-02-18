@@ -5,10 +5,10 @@ import { notFound } from "next/navigation";
 import { fetchVideoMeta } from "@/lib/bigquery";
 import TranscriptPane from "@/components/TranscriptPane";
 
-/** 🔹 tiny util: "1h2m3s" → 3723  •  "90" → 90 */
+/** 🔹 tiny util: "1h2m3s" → 3723  •  "90" → 90  •  "816.76" → 816 */
 function toSeconds(raw: string | undefined): number | null {
   if (!raw) return null;
-  if (/^\d+$/.test(raw)) return parseInt(raw, 10); // plain seconds
+  if (/^\d+(\.\d+)?$/.test(raw)) return Math.floor(parseFloat(raw));
 
   const re = /(\d+h)?(\d+m)?(\d+s)?/;
   const [, h, m, s] = raw.match(re) || [];

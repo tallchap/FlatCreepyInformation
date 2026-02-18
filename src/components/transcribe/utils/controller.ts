@@ -521,6 +521,7 @@ export async function addToBigQuery(transcript: any, metadata: any) {
     View_Count: metadata.viewCount,
     User_Speakers: metadata.speaker,
     Extracted_Speakers: metadata.extractedNames,
+    Speakers_Claude: metadata.speakersClaude || null,
     Transcript_Doc_Link: transcript.google_doc_url,
   };
 
