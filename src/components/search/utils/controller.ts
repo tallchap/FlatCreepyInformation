@@ -156,6 +156,10 @@ export async function searchTranscripts(params: {
               `<mark>${snippet.substring(termStart, termEnd)}</mark>` +
               snippet.substring(termEnd);
 
+            // Strip inline timestamps from display text
+            snippet = snippet.replace(/\[\d+:\d{2}(?::\d{2})?\]\s*/g, '');
+            snippet = snippet.replace(/(?:^|\s)\d+(?:\.\d+)?:\s*/g, ' ');
+
             const seconds = findNearestTimestamp(tsIndex, startIndex);
             snippets.push({ text: snippet, seconds });
 
