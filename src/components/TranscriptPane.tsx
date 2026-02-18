@@ -31,6 +31,9 @@ export default function TranscriptPane({
   const [active, setActive] = useState<ActivePos>(null);
   const playerRef = useRef<any>(null);
   const activeLineRef = useRef<HTMLSpanElement | null>(null);
+  const seekedAtRef = useRef<number>(0);
+  const playerReadyRef = useRef<boolean>(false);
+  const activeRef = useRef<ActivePos>(null);
 
   /* 1 ▸ FETCH & GROUP */
   useEffect(() => {
@@ -61,7 +64,10 @@ export default function TranscriptPane({
         // Set initial scroll position from timestamp
         if (initialTimestamp != null && paragraphs.length > 0) {
           const pos = findPositionForTime(paragraphs, initialTimestamp);
-          if (pos) setActive(pos);
+          if (pos) {
+            seekedAtRef.current = Date.now();
+            setActive(pos);
+          }
         }
       })
       .catch(console.error);
@@ -71,9 +77,17 @@ export default function TranscriptPane({
   useEffect(() => {
     const mountPlayer = () => {
       if (playerRef.current) return;
-      const el = document.getElementById(`player-${videoId}`);
+      const el = document.getElementById(`player-${videoId}`) as HTMLIFrameElement | null;
       if (el && (window as any).YT?.Player) {
-        playerRef.current = new (window as any).YT.Player(el);
+        if (el.src && !el.src.includes('origin=')) {
+          const sep = el.src.includes('?') ? '&' : '?';
+          el.src = `${el.src}${sep}origin=${encodeURIComponent(window.location.origin)}`;
+        }
+        playerRef.current = new (window as any).YT.Player(el, {
+          events: {
+            onReady: () => { playerReadyRef.current = true; },
+          },
+        });
       }
     };
     if ((window as any).YT?.Player) {
@@ -88,17 +102,20 @@ export default function TranscriptPane({
 
   /* 3 ▸ SYNC & HIGHLIGHT */
   useEffect(() => {
-    if (!playerRef.current) return;
+    if (paras.length === 0) return;
     const timer = setInterval(() => {
-      const t = playerRef.current.getCurrentTime?.() ?? 0;
+      if (!playerReadyRef.current) return;
+      if (Date.now() - seekedAtRef.current < 1000) return;
+      const t = playerRef.current?.getCurrentTime?.();
+      if (t == null) return;
       const pos = findPositionForTime(paras, t);
       if (!pos) return;
-      if (!active || active.para !== pos.para || active.line !== pos.line) {
+      if (!activeRef.current || activeRef.current.para !== pos.para || activeRef.current.line !== pos.line) {
         setActive(pos);
       }
     }, 300);
     return () => clearInterval(timer);
-  }, [paras, active]);
+  }, [paras]);
 
   /* 3b ▸ SCROLL TO ACTIVE LINE */
   useEffect(() => {
@@ -107,9 +124,17 @@ export default function TranscriptPane({
     }
   }, [active]);
 
+  /* 3c ▸ KEEP ACTIVE REF IN SYNC */
+  useEffect(() => {
+    activeRef.current = active;
+  }, [active]);
+
   /* 4 ▸ CLICK TO SEEK */
   const handleLineClick = (start: number, pIdx: number, lIdx: number) => {
-    playerRef.current?.seekTo(start, true);
+    seekedAtRef.current = Date.now();
+    if (playerReadyRef.current) {
+      playerRef.current?.seekTo(start, true);
+    }
     setActive({ para: pIdx, line: lIdx });
   };
 
