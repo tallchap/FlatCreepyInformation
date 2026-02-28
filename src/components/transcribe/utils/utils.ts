@@ -213,7 +213,25 @@ export async function verifyAndCleanSpeakers(
     const cleaned = deduplicateAndFormatNames(stripPromptArtifacts(raw));
 
     // Enforce at least two tokens and enforce strict subset of candidate list.
-    const finalNames = cleaned
+    const llTitle = (videoTitle || "").toLowerCase();
+    const llDesc = (videoDescription || "").toLowerCase();
+
+    const keptByModel = cleaned
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
+      .filter((n) => candidateSet.has(n.toLowerCase()));
+
+    // Guardrail: if a pass-2 candidate appears in title/description, keep it.
+    // This prevents over-pruning of known participants (e.g., hosts/guests explicitly named in metadata).
+    const rescueFromMetadata = candidateList.filter((n) => {
+      const k = n.toLowerCase();
+      return llTitle.includes(k) || llDesc.includes(k);
+    });
+
+    const finalNames = deduplicateAndFormatNames(
+      [...keptByModel, ...rescueFromMetadata].join(", "),
+    )
       .split(",")
       .map((n) => n.trim())
       .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
