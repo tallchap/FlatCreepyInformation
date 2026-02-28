@@ -173,6 +173,18 @@ export async function verifyAndCleanSpeakers(
   identifiedSpeakers: string,
   channelName?: string
 ): Promise<string> {
+  const candidateList = deduplicateAndFormatNames(
+    stripPromptArtifacts(identifiedSpeakers || ""),
+  )
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
+
+  // If pass 2 gave nothing, pass 3 cannot invent speakers.
+  if (candidateList.length === 0) return "";
+
+  const candidateSet = new Set(candidateList.map((n) => n.toLowerCase()));
+
   try {
     const client = new OpenAI();
     const transcriptSample = transcriptText.slice(0, 20000);
@@ -182,11 +194,11 @@ export async function verifyAndCleanSpeakers(
       messages: [
         {
           role: "system",
-          content: `You are a strict final QA pass for speaker names.\n\nInput includes candidate speakers from prior passes plus transcript/title/channel/description.\n\nYour job:\n1) Keep ONLY people who are actually speaking in the video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures who are clearly discussed but not present in this recording.\n4) Output ONLY real human names in CSV format.\n5) Each name must be First Last (middle allowed). No single-word names, no titles, no organizations.\n6) Deduplicate.\n7) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of cleaned names.`,
+          content: `You are a strict final QA pass for speaker names.\n\nCRITICAL CONSTRAINT: You may ONLY keep or remove names from the provided candidate list.\nDo NOT add new names under any circumstance.\n\nYour job:\n1) Keep ONLY people from candidate list who are actually speaking in this video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures clearly discussed but not present in this recording.\n4) Output ONLY names from candidate list in CSV format.\n5) Each kept name must be First Last (middle allowed). No single-word names, no titles, no organizations.\n6) Deduplicate.\n7) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of kept names (subset of candidates).`,
         },
         {
           role: "user",
-          content: `User speaker input: ${userSpeaker}\nPrior identified speakers: ${identifiedSpeakers}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nTranscript excerpt:\n${transcriptSample}\n\nReturn ONLY the cleaned CSV list of speakers.`,
+          content: `Candidate list (pass 2): ${candidateList.join(", ")}\nUser speaker input: ${userSpeaker}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nTranscript excerpt:\n${transcriptSample}\n\nReturn ONLY the kept names as CSV (must be a subset of candidate list).`,
         },
       ],
     });
@@ -194,20 +206,19 @@ export async function verifyAndCleanSpeakers(
     const raw = response.choices[0].message.content?.trim() || "";
     const cleaned = deduplicateAndFormatNames(stripPromptArtifacts(raw));
 
-    // Enforce at least two tokens (First Last) while allowing middle names.
+    // Enforce at least two tokens and enforce strict subset of candidate list.
     const finalNames = cleaned
       .split(",")
       .map((n) => n.trim())
       .filter((n) => n.split(/\s+/).length >= 2)
+      .filter((n) => candidateSet.has(n.toLowerCase()))
       .join(", ");
 
     return finalNames;
   } catch (error) {
     console.error("Error in third-pass speaker verification:", error);
-    const fallback = deduplicateAndFormatNames(stripPromptArtifacts(identifiedSpeakers));
-    return fallback
-      .split(",")
-      .map((n) => n.trim())
+    // Safe fallback: clean pass2 only, never add.
+    return candidateList
       .filter((n) => n.split(/\s+/).length >= 2)
       .join(", ");
   }

@@ -70,7 +70,14 @@ function containsDeadName(csv = "") {
 
 async function thirdCheck(row) {
   const transcriptSample = String(row.Search_Doc_1 || "").slice(0, 20000);
-  const prompt = `User speaker input: ${row.User_Speakers || ""}\nPrior identified speakers: ${row.Speakers_Claude || ""}\nVideo title: ${row.Video_Title || ""}\nChannel name: ${row.Channel_Name || "Unknown"}\nDescription (first 500 chars): ${String(row.Video_Description || "").slice(0, 500)}\n\nTranscript excerpt:\n${transcriptSample}\n\nReturn ONLY the cleaned CSV list of speakers.`;
+  const candidates = dedupCsv(row.Speakers_Claude || "")
+    .split(",")
+    .map((n) => n.trim())
+    .filter(Boolean);
+  const candidateSet = new Set(candidates.map((n) => n.toLowerCase()));
+  if (candidates.length === 0) return "";
+
+  const prompt = `Candidate list (pass 2): ${candidates.join(", ")}\nUser speaker input: ${row.User_Speakers || ""}\nVideo title: ${row.Video_Title || ""}\nChannel name: ${row.Channel_Name || "Unknown"}\nDescription (first 500 chars): ${String(row.Video_Description || "").slice(0, 500)}\n\nTranscript excerpt:\n${transcriptSample}\n\nReturn ONLY kept names from candidate list as CSV (subset only).`;
 
   const resp = await openai.chat.completions.create({
     model: "gpt-4o",
@@ -78,7 +85,7 @@ async function thirdCheck(row) {
       {
         role: "system",
         content:
-          "You are a strict final QA pass for speaker names. Keep only actual speakers in the video. Remove prompt artifacts/fragments. Remove obvious deceased historical figures clearly discussed but not present. Output ONLY real human names in CSV format. Each name must be First Last (middle allowed). No single-word names, no titles, no organizations. Deduplicate. If uncertain, exclude.",
+          "You are a strict final QA pass for speaker names. CRITICAL: output must be a subset of candidate list; never add names. Keep only actual speakers. Remove prompt artifacts/fragments and obvious deceased non-participants. Return only CSV names, First Last (middle allowed), deduped.",
       },
       { role: "user", content: prompt },
     ],
@@ -89,10 +96,11 @@ async function thirdCheck(row) {
     .split(",")
     .map((n) => n.trim())
     .filter((n) => n && n.split(/\s+/).length >= 2)
+    .filter((n) => candidateSet.has(n.toLowerCase()))
     .join(", ");
 }
 
-const [rows] = await bigQuery.query({
+const [sample] = await bigQuery.query({
   query: `
     SELECT
       ID,
@@ -105,13 +113,12 @@ const [rows] = await bigQuery.query({
     FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
     WHERE Search_Doc_1 IS NOT NULL
       AND LENGTH(Search_Doc_1) > 200
-    ORDER BY Created_Time DESC
-    LIMIT 40
+      AND Speakers_Claude IS NOT NULL
+      AND TRIM(Speakers_Claude) != ''
+    ORDER BY RAND()
+    LIMIT 9
   `,
 });
-
-// sample 8 from the recent 40 for speed/cost balance
-const sample = rows.sort(() => Math.random() - 0.5).slice(0, 8);
 
 const results = [];
 for (const r of sample) {
