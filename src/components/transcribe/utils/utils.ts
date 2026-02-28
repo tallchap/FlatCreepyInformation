@@ -171,42 +171,63 @@ function isAllowedSingleTokenName(name: string): boolean {
   return ["will.i.am", "will i am", "william adams"].includes(n);
 }
 
-function hasSpeakerContextForName(name: string, title: string, description: string): boolean {
+function hasSpeakerContextForName(
+  name: string,
+  title: string,
+  description: string,
+  transcriptFirstPart: string,
+): boolean {
   const n = name.trim().toLowerCase();
   if (!n) return false;
 
-  const text = `${title || ""} ${description || ""}`.toLowerCase();
-  const idx = text.indexOf(n);
-  if (idx === -1) return false;
+  const titleDesc = `${title || ""} ${description || ""}`.toLowerCase();
+  const transcript = (transcriptFirstPart || "").toLowerCase();
 
-  // Take a small context window around the name and look for speaker-role cues.
-  const start = Math.max(0, idx - 80);
-  const end = Math.min(text.length, idx + n.length + 80);
-  const ctx = text.slice(start, end);
+  const cueRegex = new RegExp(
+    [
+      `(?:interview|conversation|talk|fireside|podcast|debate|panel|q\\&a|q&a|hosted by|host|guest|featuring|with)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      `${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(?:interview|conversation|talk|fireside|podcast|debate|panel|guest|speaker)`
+    ].join("|"),
+    "i",
+  );
 
-  const cues = [
-    "with",
-    "interview",
-    "in conversation",
-    "conversation with",
-    "hosted by",
-    "host",
-    "guest",
-    "featuring",
-    "featuring",
-    "talks with",
-    "fireside",
-    "podcast",
-    "q&a",
-    "debate",
-    "panel",
-    "speaks",
-    "speech",
-    "lecture",
-    "discusses",
-  ];
+  const introRegex = new RegExp(
+    [
+      `(?:i am|i'm|my name is|this is)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      `(?:welcome|joining us|join me|speaking with)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+    ].join("|"),
+    "i",
+  );
 
-  return cues.some((c) => ctx.includes(c));
+  // Metadata is strong signal when phrased as speaker/guest/host context.
+  if (cueRegex.test(titleDesc)) return true;
+
+  // Transcript first-part signal for introductions and direct self-identification.
+  if (introRegex.test(transcript)) return true;
+
+  // Fallback windowed context match in transcript for nearby cue words.
+  const idx = transcript.indexOf(n);
+  if (idx !== -1) {
+    const start = Math.max(0, idx - 120);
+    const end = Math.min(transcript.length, idx + n.length + 120);
+    const ctx = transcript.slice(start, end);
+    const cues = [
+      "i am",
+      "i'm",
+      "my name is",
+      "this is",
+      "welcome",
+      "joining us",
+      "interview",
+      "host",
+      "guest",
+      "with",
+      "speaking with",
+    ];
+    if (cues.some((c) => ctx.includes(c))) return true;
+  }
+
+  return false;
 }
 
 export async function verifyAndCleanSpeakers(
@@ -260,7 +281,7 @@ export async function verifyAndCleanSpeakers(
     // Guardrail: keep pass-2 candidates when metadata discusses them as speakers.
     // (Not just mentioned — must have speaker-role context near the name.)
     const rescueFromMetadata = candidateList.filter((n) =>
-      hasSpeakerContextForName(n, videoTitle, videoDescription),
+      hasSpeakerContextForName(n, videoTitle, videoDescription, transcriptSample),
     );
 
     const finalNames = deduplicateAndFormatNames(
