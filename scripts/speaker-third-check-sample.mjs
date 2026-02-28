@@ -108,6 +108,7 @@ const [sample] = await bigQuery.query({
       Channel_Name,
       Video_Description,
       User_Speakers,
+      Extracted_Speakers,
       Speakers_Claude,
       Search_Doc_1
     FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
@@ -120,33 +121,56 @@ const [sample] = await bigQuery.query({
   `,
 });
 
+function toSet(csv = "") {
+  return new Set(
+    dedupCsv(csv)
+      .split(",")
+      .map((n) => n.trim())
+      .filter(Boolean)
+      .map((n) => n.toLowerCase()),
+  );
+}
+
 const results = [];
 for (const r of sample) {
   const third = await thirdCheck(r);
-  const evalNotes = [];
-  if (allTwoWordOrMore(third)) evalNotes.push("format_ok");
-  else evalNotes.push("format_review");
+  const pass1 = dedupCsv(r.Extracted_Speakers || "");
+  const pass2 = dedupCsv(r.Speakers_Claude || "");
 
-  if (!hasPromptArtifacts(third)) evalNotes.push("artifact_clean");
-  else evalNotes.push("artifact_found");
+  const s2 = toSet(pass2);
+  const s3 = toSet(third);
 
-  const deadBefore = containsDeadName(r.Speakers_Claude || "");
-  const deadAfter = containsDeadName(third || "");
-  if (deadBefore && !deadAfter) evalNotes.push("dead_filtered");
-  else if (deadAfter) evalNotes.push("dead_review");
+  const added = [...s3].filter((n) => !s2.has(n));
+  const removed = [...s2].filter((n) => !s3.has(n));
+
+  const reasonCodes = [];
+  if (allTwoWordOrMore(third)) reasonCodes.push("format_ok");
+  else reasonCodes.push("format_review");
+  if (!hasPromptArtifacts(third)) reasonCodes.push("artifact_clean");
+  else reasonCodes.push("artifact_found");
+  if (removed.length > 0) reasonCodes.push("filtered_candidates");
+  if (added.length === 0) reasonCodes.push("no_new_names");
+  const deadBefore = containsDeadName(pass2);
+  const deadAfter = containsDeadName(third);
+  if (deadBefore && !deadAfter) reasonCodes.push("dead_filtered");
+  else if (deadAfter) reasonCodes.push("dead_review");
 
   results.push({
     id: r.ID,
-    title: String(r.Video_Title || "").slice(0, 42),
-    pass2: dedupCsv(r.Speakers_Claude || ""),
+    title: String(r.Video_Title || "").slice(0, 52),
+    youtube: `https://www.youtube.com/watch?v=${r.ID}`,
+    app: `https://flat-creepy-information-cj1si7cp1-ori-nagels-projects.vercel.app/video/${r.ID}`,
+    pass1,
+    pass2,
     pass3: third,
-    evaluation: evalNotes.join(" | "),
+    delta: `${added.length ? `+ ${added.join(", ")}` : "+ none"} / ${removed.length ? `- ${removed.join(", ")}` : "- none"}`,
+    reasons: reasonCodes.join(", "),
   });
 }
 
-console.log("| Video ID | Title | Pass2 (Speakers_Claude) | Pass3 (Speakers_GPT_Third) | Evaluation |");
-console.log("|---|---|---|---|---|");
+console.log("| Video | Links | Pass1 (Extracted) | Pass2 (Claude) | Pass3 (GPT Third) | Delta P2→P3 | Auto reasons | Human score | Notes |");
+console.log("|---|---|---|---|---|---|---|---|---|");
 for (const r of results) {
   const esc = (s) => String(s || "").replace(/\|/g, "\\|").replace(/\n/g, " ");
-  console.log(`| ${esc(r.id)} | ${esc(r.title)} | ${esc(r.pass2)} | ${esc(r.pass3)} | ${esc(r.evaluation)} |`);
+  console.log(`| ${esc(r.id)} — ${esc(r.title)} | <${esc(r.youtube)}> / <${esc(r.app)}> | ${esc(r.pass1)} | ${esc(r.pass2)} | ${esc(r.pass3)} | ${esc(r.delta)} | ${esc(r.reasons)} | ⬜ | |`);
 }
