@@ -55,12 +55,17 @@ function hasPromptArtifacts(s = "") {
   return /\b(the\s+name\s+is|speaker\s*:|return\s+only|output\s*:?)\b/i.test(s);
 }
 
+function isAllowedSingleTokenName(name = "") {
+  const n = name.trim().toLowerCase();
+  return ["will.i.am", "will i am", "william adams"].includes(n);
+}
+
 function allTwoWordOrMore(csv = "") {
   if (!csv.trim()) return true;
   return csv
     .split(",")
     .map((n) => n.trim())
-    .every((n) => n.split(/\s+/).length >= 2);
+    .every((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n));
 }
 
 function containsDeadName(csv = "") {
@@ -85,7 +90,7 @@ async function thirdCheck(row) {
       {
         role: "system",
         content:
-          "You are a strict final QA pass for speaker names. CRITICAL: output must be a subset of candidate list; never add names. Keep only actual speakers. Remove prompt artifacts/fragments and obvious deceased non-participants. Return only CSV names, First Last (middle allowed), deduped.",
+          "You are a strict final QA pass for speaker names. CRITICAL: output must be a subset of candidate list; never add names. Keep only actual speakers. Remove prompt artifacts/fragments and obvious deceased non-participants. Return only deduped CSV names. Prefer First Last; allow valid stage names from candidates such as will.i.am.",
       },
       { role: "user", content: prompt },
     ],
@@ -95,10 +100,12 @@ async function thirdCheck(row) {
   return cleaned
     .split(",")
     .map((n) => n.trim())
-    .filter((n) => n && n.split(/\s+/).length >= 2)
+    .filter((n) => n && (n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n)))
     .filter((n) => candidateSet.has(n.toLowerCase()))
     .join(", ");
 }
+
+const sampleSize = Number(process.argv[2] || 9);
 
 const [sample] = await bigQuery.query({
   query: `
@@ -117,8 +124,9 @@ const [sample] = await bigQuery.query({
       AND Speakers_Claude IS NOT NULL
       AND TRIM(Speakers_Claude) != ''
     ORDER BY RAND()
-    LIMIT 9
+    LIMIT @sampleSize
   `,
+  params: { sampleSize },
 });
 
 function toSet(csv = "") {

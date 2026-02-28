@@ -165,6 +165,12 @@ function stripPromptArtifacts(text: string): string {
     .trim();
 }
 
+function isAllowedSingleTokenName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  // Celebrity/stage-name exceptions that are valid speaker outputs.
+  return ["will.i.am", "will i am", "william adams"].includes(n);
+}
+
 export async function verifyAndCleanSpeakers(
   transcriptText: string,
   videoTitle: string,
@@ -194,7 +200,7 @@ export async function verifyAndCleanSpeakers(
       messages: [
         {
           role: "system",
-          content: `You are a strict final QA pass for speaker names.\n\nCRITICAL CONSTRAINT: You may ONLY keep or remove names from the provided candidate list.\nDo NOT add new names under any circumstance.\n\nYour job:\n1) Keep ONLY people from candidate list who are actually speaking in this video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures clearly discussed but not present in this recording.\n4) Output ONLY names from candidate list in CSV format.\n5) Each kept name must be First Last (middle allowed). No single-word names, no titles, no organizations.\n6) Deduplicate.\n7) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of kept names (subset of candidates).`,
+          content: `You are a strict final QA pass for speaker names.\n\nCRITICAL CONSTRAINT: You may ONLY keep or remove names from the provided candidate list.\nDo NOT add new names under any circumstance.\n\nYour job:\n1) Keep ONLY people from candidate list who are actually speaking in this video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures clearly discussed but not present in this recording.\n4) Output ONLY names from candidate list in CSV format.\n5) Preferred format is First Last (middle allowed).\n6) Single-token/stage names are normally excluded EXCEPT known valid stage names from candidates (e.g., "will.i.am").\n7) No titles or organizations. Deduplicate.\n8) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of kept names (subset of candidates).`,
         },
         {
           role: "user",
@@ -210,7 +216,7 @@ export async function verifyAndCleanSpeakers(
     const finalNames = cleaned
       .split(",")
       .map((n) => n.trim())
-      .filter((n) => n.split(/\s+/).length >= 2)
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
       .filter((n) => candidateSet.has(n.toLowerCase()))
       .join(", ");
 
@@ -219,7 +225,7 @@ export async function verifyAndCleanSpeakers(
     console.error("Error in third-pass speaker verification:", error);
     // Safe fallback: clean pass2 only, never add.
     return candidateList
-      .filter((n) => n.split(/\s+/).length >= 2)
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
       .join(", ");
   }
 }
