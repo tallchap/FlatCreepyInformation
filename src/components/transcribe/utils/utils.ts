@@ -171,6 +171,44 @@ function isAllowedSingleTokenName(name: string): boolean {
   return ["will.i.am", "will i am", "william adams"].includes(n);
 }
 
+function hasSpeakerContextForName(name: string, title: string, description: string): boolean {
+  const n = name.trim().toLowerCase();
+  if (!n) return false;
+
+  const text = `${title || ""} ${description || ""}`.toLowerCase();
+  const idx = text.indexOf(n);
+  if (idx === -1) return false;
+
+  // Take a small context window around the name and look for speaker-role cues.
+  const start = Math.max(0, idx - 80);
+  const end = Math.min(text.length, idx + n.length + 80);
+  const ctx = text.slice(start, end);
+
+  const cues = [
+    "with",
+    "interview",
+    "in conversation",
+    "conversation with",
+    "hosted by",
+    "host",
+    "guest",
+    "featuring",
+    "featuring",
+    "talks with",
+    "fireside",
+    "podcast",
+    "q&a",
+    "debate",
+    "panel",
+    "speaks",
+    "speech",
+    "lecture",
+    "discusses",
+  ];
+
+  return cues.some((c) => ctx.includes(c));
+}
+
 export async function verifyAndCleanSpeakers(
   transcriptText: string,
   videoTitle: string,
@@ -213,21 +251,17 @@ export async function verifyAndCleanSpeakers(
     const cleaned = deduplicateAndFormatNames(stripPromptArtifacts(raw));
 
     // Enforce at least two tokens and enforce strict subset of candidate list.
-    const llTitle = (videoTitle || "").toLowerCase();
-    const llDesc = (videoDescription || "").toLowerCase();
-
     const keptByModel = cleaned
       .split(",")
       .map((n) => n.trim())
       .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
       .filter((n) => candidateSet.has(n.toLowerCase()));
 
-    // Guardrail: if a pass-2 candidate appears in title/description, keep it.
-    // This prevents over-pruning of known participants (e.g., hosts/guests explicitly named in metadata).
-    const rescueFromMetadata = candidateList.filter((n) => {
-      const k = n.toLowerCase();
-      return llTitle.includes(k) || llDesc.includes(k);
-    });
+    // Guardrail: keep pass-2 candidates when metadata discusses them as speakers.
+    // (Not just mentioned — must have speaker-role context near the name.)
+    const rescueFromMetadata = candidateList.filter((n) =>
+      hasSpeakerContextForName(n, videoTitle, videoDescription),
+    );
 
     const finalNames = deduplicateAndFormatNames(
       [...keptByModel, ...rescueFromMetadata].join(", "),
