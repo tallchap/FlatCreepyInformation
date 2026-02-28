@@ -127,11 +127,12 @@ export async function identifySpeakers(
 Given a transcript excerpt, video title, channel name, description, and user-provided speaker names, identify ALL people who are actually SPEAKING in this video.
 
 Rules:
-1. The user-provided speaker field may contain multiple comma-separated names. These are strong candidates who very likely speak in this video — include them in your output UNLESS there is clear evidence they do not actually speak (e.g., the person is deceased, is only discussed as a topic, or is clearly not a participant in this recording). When in doubt, include them.
-2. Analyze the transcript for additional speakers: look for introductions, self-references, conversational cues (e.g., "thank you Sam", host introductions), and back-and-forth dialogue patterns.
-3. For additional speakers beyond the user-provided ones, only include them if you have 90%+ confidence they are actually speaking, not merely mentioned or discussed.
-4. Use full names (first + last) when identifiable. When the transcript uses informal or shortened names (e.g., "Clay and Buck"), cross-reference with the channel name, title, and description to resolve to full names (e.g., "Clay Travis, Buck Sexton").
-5. Return ONLY a comma-separated list of names, nothing else.`,
+1. The user-provided speaker field may contain multiple comma-separated names. These are strong candidates who very likely speak in this video — include them in your output UNLESS there is clear evidence they do not actually speak (e.g., deceased historical figure, clearly discussed-only person).
+2. Analyze the transcript for additional speakers using direct speaking evidence: self-identification ("I am..."), introductions ("welcome X"), interview framing ("I'm here with X"), explicit turn-taking, or clear host/guest dialogue.
+3. DO NOT include people from title/description just because they are mentioned; include them only if transcript evidence indicates they are actually speaking participants.
+4. For additional speakers beyond the user-provided ones, require 90%+ confidence they are speaking (not merely referenced).
+5. Use full names when identifiable; stage names are allowed only when they are clearly the speaking participant.
+6. Return ONLY a comma-separated list of names, nothing else.`,
         },
         {
           role: "user",
@@ -165,10 +166,18 @@ function stripPromptArtifacts(text: string): string {
     .trim();
 }
 
+function normalizeLooseName(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function isAllowedSingleTokenName(name: string): boolean {
-  const n = name.trim().toLowerCase();
+  const n = normalizeLooseName(name);
   // Celebrity/stage-name exceptions that are valid speaker outputs.
-  return ["will.i.am", "will i am", "william adams"].includes(n);
+  return ["will i am", "william adams"].includes(n);
 }
 
 function hasSpeakerContextForName(
@@ -182,6 +191,13 @@ function hasSpeakerContextForName(
 
   const titleDesc = `${title || ""} ${description || ""}`.toLowerCase();
   const transcript = (transcriptFirstPart || "").toLowerCase();
+
+  // Explicit stage-name exception: if known stage name is in metadata, keep it.
+  if (isAllowedSingleTokenName(n)) {
+    const normMeta = normalizeLooseName(titleDesc);
+    const normName = normalizeLooseName(n);
+    if (normMeta.includes(normName)) return true;
+  }
 
   const cueRegex = new RegExp(
     [
