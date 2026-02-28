@@ -7,8 +7,23 @@
 import { BigQuery } from "@google-cloud/bigquery";
 
 /* 1 ▸ initialise BigQuery client (reuse between hot-reloads) */
-const credentials = JSON.parse(
-  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "{}",
+function parseServiceAccount(raw: string | undefined) {
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Handles env payloads where private_key contains literal newlines.
+    const fixed = raw.replace(
+      /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
+      (_m, key) =>
+        `"private_key":"${String(key).replace(/\n/g, "\\n")}","client_email"`,
+    );
+    return JSON.parse(fixed);
+  }
+}
+
+const credentials = parseServiceAccount(
+  process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON,
 );
 
 export const bigQuery =

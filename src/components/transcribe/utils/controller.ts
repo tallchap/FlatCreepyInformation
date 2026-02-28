@@ -522,11 +522,12 @@ export async function addToBigQuery(transcript: any, metadata: any) {
     User_Speakers: metadata.speaker,
     Extracted_Speakers: metadata.extractedNames,
     Speakers_Claude: metadata.speakersClaude || null,
+    Speakers_GPT_Third: metadata.speakersGptThird || null,
     Transcript_Doc_Link: transcript.google_doc_url,
   };
 
   // Insert the row into BigQuery
-  await table.insert(row);
+  await table.insert(row, { ignoreUnknownValues: true });
   console.log("Successfully stored in BigQuery");
 }
 
