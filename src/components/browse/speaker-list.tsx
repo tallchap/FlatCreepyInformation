@@ -102,7 +102,7 @@ export function SpeakerList({
                 <Link
                   key={speaker.name}
                   href={`/browse/${encodeURIComponent(speaker.name)}`}
-                  className="px-4 py-2 hover:bg-blue-50 transition-colors flex items-center justify-between block"
+                  className="px-4 py-2 hover:bg-blue-50 transition-colors flex items-center justify-between"
                 >
                   <span className="text-sm text-gray-800">
                     {speaker.name}
