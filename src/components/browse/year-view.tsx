@@ -1,7 +1,6 @@
 "use client";
 
 import { YearEntry } from "./utils/types";
-import { Card, CardContent } from "@/components/ui/card";
 
 export function YearView({
   speaker,
@@ -21,34 +20,32 @@ export function YearView({
   }
 
   return (
-    <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-gray-700">
-        Years for <span className="text-blue-700">{speaker}</span>
+    <div className="space-y-3">
+      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider px-1">
+        Years for <span className="text-blue-700 normal-case">{speaker}</span>
       </h2>
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+      <div className="border rounded-lg bg-white divide-y divide-gray-100">
         {years.map((entry) => (
-          <Card
+          <div
             key={entry.year}
-            className="cursor-pointer hover:border-blue-300 transition-colors"
+            className="px-4 py-2.5 cursor-pointer hover:bg-blue-50 transition-colors flex items-center justify-between"
             onClick={() => onSelect(entry.year)}
           >
-            <CardContent className="flex flex-col items-center py-4 px-3">
-              <span className="text-xl font-bold text-gray-800">
-                {entry.year}
-              </span>
-              <span className="text-xs text-gray-500 mt-1">
-                {entry.videoCount}{" "}
-                {entry.videoCount === 1 ? "video" : "videos"}
-              </span>
-            </CardContent>
-          </Card>
+            <span className="text-sm font-medium text-gray-800">
+              {entry.year}
+            </span>
+            <span className="text-xs text-gray-400 ml-2">
+              ({entry.videoCount}{" "}
+              {entry.videoCount === 1 ? "video" : "videos"})
+            </span>
+          </div>
         ))}
+        {years.length === 0 && (
+          <p className="text-center text-gray-500 py-4">
+            No years found for this speaker.
+          </p>
+        )}
       </div>
-      {years.length === 0 && (
-        <p className="text-center text-gray-500 py-4">
-          No years found for this speaker.
-        </p>
-      )}
     </div>
   );
 }

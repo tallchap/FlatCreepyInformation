@@ -1,29 +1,20 @@
 "use client";
 
 import { Speaker } from "./utils/types";
-import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight, Search } from "lucide-react";
-import { useState } from "react";
+import { Search } from "lucide-react";
+import { useMemo, useState } from "react";
 
 export function SpeakerList({
   speakers,
-  total,
-  page,
-  onPageChange,
   onSelect,
   isLoading,
 }: {
   speakers: Speaker[];
-  total: number;
-  page: number;
-  onPageChange: (page: number) => void;
   onSelect: (speaker: string) => void;
   isLoading: boolean;
 }) {
   const [filter, setFilter] = useState("");
-  const totalPages = Math.ceil(total / 100);
 
   const filtered = filter
     ? speakers.filter((s) =>
@@ -31,15 +22,31 @@ export function SpeakerList({
       )
     : speakers;
 
+  // Group speakers by first letter
+  const grouped = useMemo(() => {
+    const groups: Record<string, Speaker[]> = {};
+    for (const speaker of filtered) {
+      const firstChar = speaker.name.charAt(0).toUpperCase();
+      const letter = /[A-Z]/.test(firstChar) ? firstChar : "#";
+      if (!groups[letter]) groups[letter] = [];
+      groups[letter].push(speaker);
+    }
+    return Object.entries(groups).sort(([a], [b]) => {
+      if (a === "#") return 1;
+      if (b === "#") return -1;
+      return a.localeCompare(b);
+    });
+  }, [filtered]);
+
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <div className="relative">
         <Search
           className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
           size={16}
         />
         <Input
-          placeholder="Filter speakers on this page..."
+          placeholder="Filter speakers..."
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="pl-9"
@@ -51,59 +58,40 @@ export function SpeakerList({
           Loading speakers...
         </div>
       ) : (
-        <>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-            {filtered.map((speaker) => (
-              <Card
-                key={speaker.name}
-                className="cursor-pointer hover:border-blue-300 transition-colors"
-                onClick={() => onSelect(speaker.name)}
-              >
-                <CardContent className="flex justify-between items-center py-3 px-4">
-                  <span className="font-medium text-sm truncate">
+        <div className="border rounded-lg bg-white divide-y divide-gray-100">
+          {grouped.map(([letter, items]) => (
+            <div key={letter}>
+              {/* Letter header */}
+              <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100">
+                <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
+                  {letter}
+                </span>
+              </div>
+              {/* Speaker rows */}
+              {items.map((speaker) => (
+                <div
+                  key={speaker.name}
+                  className="px-4 py-2 cursor-pointer hover:bg-blue-50 transition-colors flex items-center justify-between"
+                  onClick={() => onSelect(speaker.name)}
+                >
+                  <span className="text-sm text-gray-800">
                     {speaker.name}
                   </span>
-                  <span className="text-xs text-gray-500 whitespace-nowrap ml-2">
-                    {speaker.videoCount}{" "}
-                    {speaker.videoCount === 1 ? "video" : "videos"}
+                  <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
+                    ({speaker.videoCount}{" "}
+                    {speaker.videoCount === 1 ? "video" : "videos"})
                   </span>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                </div>
+              ))}
+            </div>
+          ))}
 
           {filtered.length === 0 && (
             <p className="text-center text-gray-500 py-4">
               No speakers match your filter.
             </p>
           )}
-
-          {totalPages > 1 && (
-            <div className="flex items-center justify-center gap-4 pt-2">
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page <= 1}
-                onClick={() => onPageChange(page - 1)}
-              >
-                <ChevronLeft size={16} />
-                Previous
-              </Button>
-              <span className="text-sm text-gray-600">
-                Page {page} of {totalPages}
-              </span>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={page >= totalPages}
-                onClick={() => onPageChange(page + 1)}
-              >
-                Next
-                <ChevronRight size={16} />
-              </Button>
-            </div>
-          )}
-        </>
+        </div>
       )}
     </div>
   );

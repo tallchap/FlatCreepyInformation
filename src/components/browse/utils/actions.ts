@@ -3,27 +3,21 @@
 import {
   fetchAllSpeakers,
   fetchSpeakerYears,
-  fetchSpeakerYearMonths,
-  fetchSpeakerMonthVideos,
+  fetchSpeakerYearVideos,
 } from "@/lib/bigquery";
 
-export async function getSpeakers(page = 1) {
-  return fetchAllSpeakers(page, 100);
+export async function getSpeakers(page = 1, pageSize = 100) {
+  return fetchAllSpeakers(page, pageSize);
 }
 
 export async function getSpeakerYears(speaker: string) {
   return fetchSpeakerYears(speaker);
 }
 
-export async function getSpeakerYearMonths(speaker: string, year: number) {
-  return fetchSpeakerYearMonths(speaker, year);
-}
-
-export async function getSpeakerMonthVideos(
+export async function getSpeakerYearVideos(
   speaker: string,
   year: number,
-  month: number,
   page = 1,
 ) {
-  return fetchSpeakerMonthVideos(speaker, year, month, page, 100);
+  return fetchSpeakerYearVideos(speaker, year, page, 100);
 }
