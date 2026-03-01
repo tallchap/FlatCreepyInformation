@@ -7,6 +7,10 @@ const links = [
     label: "Search",
   },
   {
+    href: "/browse",
+    label: "Browse",
+  },
+  {
     href: "/transcribe",
     label: "Transcribe",
   },
