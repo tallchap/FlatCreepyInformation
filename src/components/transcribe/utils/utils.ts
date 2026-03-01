@@ -167,6 +167,7 @@ const SPEAKER_NAME_CANONICAL: Record<string, string> = {
   "yann le cun": "Yann LeCun",
   "yann le cunn": "Yann LeCun",
   "yann lecun": "Yann LeCun",
+  "yann lecunn": "Yann LeCun",
 };
 
 /**
@@ -194,21 +195,6 @@ function normalizeLooseName(s: string): string {
     .trim();
 }
 
-function normalizeDenseName(s: string): string {
-  return normalizeLooseName(s).replace(/\s+/g, "");
-}
-
-function canonicalizeSpeakerName(name: string): string {
-  const dense = normalizeDenseName(name);
-
-  // Canonical spellings for known recurring variants.
-  const CANONICAL_BY_DENSE: Record<string, string> = {
-    yannlecun: "Yann Le Cun",
-    yannlecunn: "Yann Le Cun",
-  };
-
-  return CANONICAL_BY_DENSE[dense] || name;
-}
 
 function isAllowedSingleTokenName(name: string): boolean {
   const n = normalizeLooseName(name);
