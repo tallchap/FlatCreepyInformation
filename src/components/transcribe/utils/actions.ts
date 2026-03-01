@@ -8,7 +8,11 @@ import {
   fetchYoutubeMetadata,
   fetchYoutubeTranscript,
 } from "./controller";
-import { identifySpeakers, formatTranscriptAsText } from "./utils";
+import {
+  identifySpeakers,
+  formatTranscriptAsText,
+  verifyAndCleanSpeakers,
+} from "./utils";
 
 const singleExtractSchema = z.object({
   url: z.string().url(),
@@ -62,10 +66,22 @@ export async function singleExtract(prevState: any, formData: FormData) {
       speaker,
       metadata.channelName
     );
-    console.log(`AI-identified speakers: ${(metadata as any).speakersClaude}`);
+
+    (metadata as any).speakersGptThird = await verifyAndCleanSpeakers(
+      transcriptText,
+      metadata.title,
+      metadata.description,
+      speaker,
+      (metadata as any).speakersClaude || "",
+      metadata.channelName
+    );
+
+    console.log(`AI-identified speakers (pass 2): ${(metadata as any).speakersClaude}`);
+    console.log(`AI-identified speakers (pass 3): ${(metadata as any).speakersGptThird}`);
   } catch (error) {
     console.error("Error in AI speaker identification:", error);
     (metadata as any).speakersClaude = null;
+    (metadata as any).speakersGptThird = null;
   }
 
   let googleDocUrl;
