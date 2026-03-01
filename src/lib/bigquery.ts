@@ -46,7 +46,7 @@ export async function fetchVideoMeta(id: string) {
         Published_Date      AS published,          -- DATE
         Video_Length        AS video_length,       -- e.g. "5:52"
         CONCAT('https://youtu.be/', ID) AS youtube_url,
-        Speakers_Claude     AS speakers
+        COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude) AS speakers
       FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
       WHERE ID = @id
       LIMIT 1
