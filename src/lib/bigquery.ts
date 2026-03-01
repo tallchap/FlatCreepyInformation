@@ -233,7 +233,7 @@ export async function fetchSpeakerMonthVideos(
       WHERE TRIM(s) = @speaker
         AND EXTRACT(YEAR FROM Published_Date) = @year
         AND EXTRACT(MONTH FROM Published_Date) = @month
-      ORDER BY Published_Date DESC
+      ORDER BY published DESC
       LIMIT @pageSize OFFSET @offset
     `,
     params: { speaker, year, month, pageSize, offset },
