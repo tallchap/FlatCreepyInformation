@@ -127,11 +127,12 @@ export async function identifySpeakers(
 Given a transcript excerpt, video title, channel name, description, and user-provided speaker names, identify ALL people who are actually SPEAKING in this video.
 
 Rules:
-1. The user-provided speaker field may contain multiple comma-separated names. These are strong candidates who very likely speak in this video — include them in your output UNLESS there is clear evidence they do not actually speak (e.g., the person is deceased, is only discussed as a topic, or is clearly not a participant in this recording). When in doubt, include them.
-2. Analyze the transcript for additional speakers: look for introductions, self-references, conversational cues (e.g., "thank you Sam", host introductions), and back-and-forth dialogue patterns.
-3. For additional speakers beyond the user-provided ones, only include them if you have 90%+ confidence they are actually speaking, not merely mentioned or discussed.
-4. Use full names (first + last) when identifiable. When the transcript uses informal or shortened names (e.g., "Clay and Buck"), cross-reference with the channel name, title, and description to resolve to full names (e.g., "Clay Travis, Buck Sexton").
-5. Return ONLY a comma-separated list of names, nothing else.`,
+1. The user-provided speaker field may contain multiple comma-separated names. These are strong candidates who very likely speak in this video — include them in your output UNLESS there is clear evidence they do not actually speak (e.g., deceased historical figure, clearly discussed-only person).
+2. Analyze the transcript for additional speakers using direct speaking evidence: self-identification ("I am..."), introductions ("welcome X"), interview framing ("I'm here with X"), explicit turn-taking, or clear host/guest dialogue.
+3. DO NOT include people from title/description just because they are mentioned; include them only if transcript evidence indicates they are actually speaking participants.
+4. For additional speakers beyond the user-provided ones, require 90%+ confidence they are speaking (not merely referenced).
+5. Use full names when identifiable; stage names are allowed only when they are clearly the speaking participant.
+6. Return ONLY a comma-separated list of names, nothing else.`,
         },
         {
           role: "user",
@@ -154,6 +155,131 @@ Return ONLY the comma-separated list of confirmed speakers (90%+ confidence):`,
   } catch (error) {
     console.error("Error identifying speakers:", error);
     return userSpeaker;
+  }
+}
+
+function stripPromptArtifacts(text: string): string {
+  if (!text) return "";
+  return text
+    .replace(/\b(the\s+name\s+is|speaker\s*:?|output\s*:?|return\s+only\s*:?)\b/gi, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function normalizeLooseName(s: string): string {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isAllowedSingleTokenName(name: string): boolean {
+  const n = normalizeLooseName(name);
+  // Celebrity/stage-name exceptions that are valid speaker outputs.
+  return ["will i am", "william adams", "destiny", "unknown"].includes(n);
+}
+
+function hasSpeakerContextForName(
+  name: string,
+  title: string,
+  description: string,
+): boolean {
+  const n = name.trim().toLowerCase();
+  if (!n) return false;
+
+  const titleDesc = `${title || ""} ${description || ""}`.toLowerCase();
+
+  // Explicit stage-name exception: if known stage name is in metadata, keep it.
+  if (isAllowedSingleTokenName(n)) {
+    const normMeta = normalizeLooseName(titleDesc);
+    const normName = normalizeLooseName(n);
+    if (normMeta.includes(normName)) return true;
+  }
+
+  const cueRegex = new RegExp(
+    [
+      `(?:interview|conversation|talk|fireside|podcast|debate|panel|q\\&a|q&a|hosted by|host|guest|featuring|with)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
+      `${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(?:interview|conversation|talk|fireside|podcast|debate|panel|guest|speaker)`
+    ].join("|"),
+    "i",
+  );
+
+  // Metadata is strong signal when phrased as speaker/guest/host context.
+  if (cueRegex.test(titleDesc)) return true;
+
+  return false;
+}
+
+export async function verifyAndCleanSpeakers(
+  transcriptText: string,
+  videoTitle: string,
+  videoDescription: string,
+  userSpeaker: string,
+  identifiedSpeakers: string,
+  channelName?: string
+): Promise<string> {
+  const candidateList = deduplicateAndFormatNames(
+    stripPromptArtifacts(identifiedSpeakers || ""),
+  )
+    .split(",")
+    .map((n) => n.trim())
+    .filter((n) => n.length > 0);
+
+  // If pass 2 gave nothing, pass 3 cannot invent speakers.
+  if (candidateList.length === 0) return "";
+
+  const candidateSet = new Set(candidateList.map((n) => n.toLowerCase()));
+
+  try {
+    const client = new OpenAI();
+
+    const response = await client.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: `You are a strict final QA pass for speaker names.\n\nCRITICAL CONSTRAINT: You may ONLY keep or remove names from the provided candidate list.\nDo NOT add new names under any circumstance.\n\nYour job:\n1) Keep ONLY people from candidate list who are actually speaking in this video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures clearly discussed but not present in this recording.\n4) Output ONLY names from candidate list in CSV format.\n5) Preferred format is First Last (middle allowed).\n6) Single-token/stage names are normally excluded EXCEPT known valid stage names from candidates (e.g., "will.i.am").\n7) No titles or organizations. Deduplicate.\n8) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of kept names (subset of candidates).`,
+        },
+        {
+          role: "user",
+          content: `Candidate list (pass 2): ${candidateList.join(", ")}\nUser speaker input: ${userSpeaker}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nReturn ONLY the kept names as CSV (must be a subset of candidate list).`,
+        },
+      ],
+    });
+
+    const raw = response.choices[0].message.content?.trim() || "";
+    const cleaned = deduplicateAndFormatNames(stripPromptArtifacts(raw));
+
+    // Enforce at least two tokens and enforce strict subset of candidate list.
+    const keptByModel = cleaned
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
+      .filter((n) => candidateSet.has(n.toLowerCase()));
+
+    // Guardrail: keep pass-2 candidates when metadata discusses them as speakers.
+    // (Not just mentioned — must have speaker-role context near the name.)
+    const rescueFromMetadata = candidateList.filter((n) =>
+      hasSpeakerContextForName(n, videoTitle, videoDescription),
+    );
+
+    const finalNames = deduplicateAndFormatNames(
+      [...keptByModel, ...rescueFromMetadata].join(", "),
+    )
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
+      .filter((n) => candidateSet.has(n.toLowerCase()))
+      .join(", ");
+
+    return finalNames;
+  } catch (error) {
+    console.error("Error in third-pass speaker verification:", error);
+    // Safe fallback: clean pass2 only, never add.
+    return candidateList
+      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
+      .join(", ");
   }
 }
 
