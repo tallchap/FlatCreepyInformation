@@ -5,22 +5,18 @@ import { Button } from "@/components/ui/button";
 import { ChevronLeft } from "lucide-react";
 import {
   getSpeakers,
-  getSpeakerYears,
-  getSpeakerYearVideos,
+  getSpeakerVideos,
 } from "./utils/actions";
 import type {
   Speaker,
-  YearEntry,
   BrowseVideo,
 } from "./utils/types";
 import { SpeakerList } from "./speaker-list";
-import { YearView } from "./year-view";
 import { VideoList } from "./video-list";
 
 type View =
   | { level: "speakers" }
-  | { level: "years"; speaker: string }
-  | { level: "videos"; speaker: string; year: number };
+  | { level: "videos"; speaker: string };
 
 export function BrowseContainer() {
   const [view, setView] = useState<View>({ level: "speakers" });
@@ -28,9 +24,6 @@ export function BrowseContainer() {
 
   // Speaker list state
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
-
-  // Year view state
-  const [years, setYears] = useState<YearEntry[]>([]);
 
   // Video list state
   const [videos, setVideos] = useState<BrowseVideo[]>([]);
@@ -48,23 +41,12 @@ export function BrowseContainer() {
     }
   }, []);
 
-  // Load years for a speaker
-  const loadYears = useCallback(async (speaker: string) => {
-    setIsLoading(true);
-    try {
-      const data = await getSpeakerYears(speaker);
-      setYears(data);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Load videos for a speaker + year
+  // Load videos for a speaker (20 per page)
   const loadVideos = useCallback(
-    async (speaker: string, year: number, page: number) => {
+    async (speaker: string, page: number) => {
       setIsLoading(true);
       try {
-        const data = await getSpeakerYearVideos(speaker, year, page);
+        const data = await getSpeakerVideos(speaker, page);
         setVideos(data.videos);
         setVideosTotal(data.total);
         setVideoPage(page);
@@ -82,37 +64,21 @@ export function BrowseContainer() {
 
   // Navigation handlers
   const selectSpeaker = (speaker: string) => {
-    setView({ level: "years", speaker });
-    loadYears(speaker);
-  };
-
-  const selectYear = (year: number) => {
-    if (view.level === "years") {
-      setView({ level: "videos", speaker: view.speaker, year });
-      loadVideos(view.speaker, year, 1);
-    }
+    setView({ level: "videos", speaker });
+    loadVideos(speaker, 1);
   };
 
   const goBack = () => {
-    switch (view.level) {
-      case "years":
-        setView({ level: "speakers" });
-        break;
-      case "videos":
-        setView({ level: "years", speaker: view.speaker });
-        loadYears(view.speaker);
-        break;
+    if (view.level === "videos") {
+      setView({ level: "speakers" });
     }
   };
 
   // Breadcrumb
   const breadcrumb = () => {
     const parts: string[] = ["All Speakers"];
-    if (view.level !== "speakers") {
-      parts.push(view.speaker);
-    }
     if (view.level === "videos") {
-      parts.push(String(view.year));
+      parts.push(view.speaker);
     }
     return parts;
   };
@@ -154,25 +120,13 @@ export function BrowseContainer() {
         />
       )}
 
-      {view.level === "years" && (
-        <YearView
-          speaker={view.speaker}
-          years={years}
-          onSelect={selectYear}
-          isLoading={isLoading}
-        />
-      )}
-
       {view.level === "videos" && (
         <VideoList
           speaker={view.speaker}
-          year={view.year}
           videos={videos}
           total={videosTotal}
           page={videoPage}
-          onPageChange={(p) =>
-            loadVideos(view.speaker, view.year, p)
-          }
+          onPageChange={(p) => loadVideos(view.speaker, p)}
           isLoading={isLoading}
         />
       )}

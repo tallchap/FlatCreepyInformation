@@ -254,6 +254,71 @@ export async function fetchSpeakerMonthVideos(
 }
 
 /**
+ * For a given speaker, return paginated video list ordered by date descending.
+ */
+export async function fetchSpeakerVideos(
+  speaker: string,
+  page = 1,
+  pageSize = 20,
+): Promise<{
+  videos: {
+    id: string;
+    title: string;
+    channel: string;
+    published: string;
+    speakers: string;
+    youtubeUrl: string;
+    videoLength: string | null;
+  }[];
+  total: number;
+}> {
+  const offset = (page - 1) * pageSize;
+
+  const [countRows] = await bigQuery.query({
+    query: `
+      SELECT COUNT(DISTINCT ID) AS total
+      FROM ${TABLE},
+      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
+      WHERE TRIM(s) = @speaker
+    `,
+    params: { speaker },
+  });
+  const total = Number(countRows[0]?.total ?? 0);
+
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT DISTINCT
+        ID AS id,
+        Video_Title AS title,
+        Channel_Name AS channel,
+        CAST(Published_Date AS STRING) AS published,
+        ${SPEAKERS_EXPR} AS speakers,
+        CONCAT('https://youtu.be/', ID) AS youtubeUrl,
+        Video_Length AS videoLength
+      FROM ${TABLE},
+      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
+      WHERE TRIM(s) = @speaker
+      ORDER BY published DESC
+      LIMIT @pageSize OFFSET @offset
+    `,
+    params: { speaker, pageSize, offset },
+  });
+
+  return {
+    videos: rows.map((r: Record<string, unknown>) => ({
+      id: String(r.id),
+      title: String(r.title),
+      channel: String(r.channel),
+      published: String(r.published),
+      speakers: String(r.speakers ?? ""),
+      youtubeUrl: String(r.youtubeUrl),
+      videoLength: r.videoLength ? String(r.videoLength) : null,
+    })),
+    total,
+  };
+}
+
+/**
  * For a given speaker + year, return paginated video list (all months).
  */
 export async function fetchSpeakerYearVideos(
