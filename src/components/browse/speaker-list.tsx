@@ -4,14 +4,13 @@ import { Speaker } from "./utils/types";
 import { Input } from "@/components/ui/input";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 
 export function SpeakerList({
   speakers,
-  onSelect,
   isLoading,
 }: {
   speakers: Speaker[];
-  onSelect: (speaker: string) => void;
   isLoading: boolean;
 }) {
   const [filter, setFilter] = useState("");
@@ -38,6 +37,17 @@ export function SpeakerList({
     });
   }, [filtered]);
 
+  // Available letters for jump-to nav
+  const availableLetters = useMemo(
+    () => new Set(grouped.map(([letter]) => letter)),
+    [grouped],
+  );
+
+  const scrollToLetter = (letter: string) => {
+    const el = document.getElementById(`letter-${letter}`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
+
   return (
     <div className="space-y-3">
       <div className="relative">
@@ -53,6 +63,26 @@ export function SpeakerList({
         />
       </div>
 
+      {/* Alphabet jump-to navigation */}
+      {!isLoading && (
+        <div className="flex flex-wrap gap-1 px-1">
+          {Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ#").map((letter) => (
+            <button
+              key={letter}
+              onClick={() => scrollToLetter(letter)}
+              disabled={!availableLetters.has(letter)}
+              className={`w-7 h-7 text-xs font-semibold rounded transition-colors ${
+                availableLetters.has(letter)
+                  ? "text-blue-600 hover:bg-blue-50 cursor-pointer"
+                  : "text-gray-300 cursor-default"
+              }`}
+            >
+              {letter}
+            </button>
+          ))}
+        </div>
+      )}
+
       {isLoading ? (
         <div className="text-center py-8 text-gray-500">
           Loading speakers...
@@ -60,19 +90,19 @@ export function SpeakerList({
       ) : (
         <div className="border rounded-lg bg-white divide-y divide-gray-100">
           {grouped.map(([letter, items]) => (
-            <div key={letter}>
+            <div key={letter} id={`letter-${letter}`}>
               {/* Letter header */}
-              <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100">
+              <div className="px-4 py-1.5 bg-gray-50 border-b border-gray-100 sticky top-0 z-10">
                 <span className="text-xs font-bold text-gray-500 uppercase tracking-wider">
                   {letter}
                 </span>
               </div>
               {/* Speaker rows */}
               {items.map((speaker) => (
-                <div
+                <Link
                   key={speaker.name}
-                  className="px-4 py-2 cursor-pointer hover:bg-blue-50 transition-colors flex items-center justify-between"
-                  onClick={() => onSelect(speaker.name)}
+                  href={`/browse/${encodeURIComponent(speaker.name)}`}
+                  className="px-4 py-2 hover:bg-blue-50 transition-colors flex items-center justify-between block"
                 >
                   <span className="text-sm text-gray-800">
                     {speaker.name}
@@ -81,7 +111,7 @@ export function SpeakerList({
                     ({speaker.videoCount}{" "}
                     {speaker.videoCount === 1 ? "video" : "videos"})
                   </span>
-                </div>
+                </Link>
               ))}
             </div>
           ))}
