@@ -6,25 +6,21 @@ import { ChevronLeft } from "lucide-react";
 import {
   getSpeakers,
   getSpeakerYears,
-  getSpeakerYearMonths,
-  getSpeakerMonthVideos,
+  getSpeakerYearVideos,
 } from "./utils/actions";
 import type {
   Speaker,
   YearEntry,
-  MonthEntry,
   BrowseVideo,
 } from "./utils/types";
 import { SpeakerList } from "./speaker-list";
 import { YearView } from "./year-view";
-import { MonthView } from "./month-view";
 import { VideoList } from "./video-list";
 
 type View =
   | { level: "speakers" }
   | { level: "years"; speaker: string }
-  | { level: "months"; speaker: string; year: number }
-  | { level: "videos"; speaker: string; year: number; month: number };
+  | { level: "videos"; speaker: string; year: number };
 
 export function BrowseContainer() {
   const [view, setView] = useState<View>({ level: "speakers" });
@@ -32,28 +28,21 @@ export function BrowseContainer() {
 
   // Speaker list state
   const [speakers, setSpeakers] = useState<Speaker[]>([]);
-  const [speakersTotal, setSpeakersTotal] = useState(0);
-  const [speakerPage, setSpeakerPage] = useState(1);
 
   // Year view state
   const [years, setYears] = useState<YearEntry[]>([]);
-
-  // Month view state
-  const [months, setMonths] = useState<MonthEntry[]>([]);
 
   // Video list state
   const [videos, setVideos] = useState<BrowseVideo[]>([]);
   const [videosTotal, setVideosTotal] = useState(0);
   const [videoPage, setVideoPage] = useState(1);
 
-  // Load speakers
-  const loadSpeakers = useCallback(async (page: number) => {
+  // Load all speakers (large page to get them all for Finder grouping)
+  const loadSpeakers = useCallback(async () => {
     setIsLoading(true);
     try {
-      const data = await getSpeakers(page);
+      const data = await getSpeakers(1, 5000);
       setSpeakers(data.speakers);
-      setSpeakersTotal(data.total);
-      setSpeakerPage(page);
     } finally {
       setIsLoading(false);
     }
@@ -70,23 +59,12 @@ export function BrowseContainer() {
     }
   }, []);
 
-  // Load months for a speaker + year
-  const loadMonths = useCallback(async (speaker: string, year: number) => {
-    setIsLoading(true);
-    try {
-      const data = await getSpeakerYearMonths(speaker, year);
-      setMonths(data);
-    } finally {
-      setIsLoading(false);
-    }
-  }, []);
-
-  // Load videos for a speaker + year + month
+  // Load videos for a speaker + year
   const loadVideos = useCallback(
-    async (speaker: string, year: number, month: number, page: number) => {
+    async (speaker: string, year: number, page: number) => {
       setIsLoading(true);
       try {
-        const data = await getSpeakerMonthVideos(speaker, year, month, page);
+        const data = await getSpeakerYearVideos(speaker, year, page);
         setVideos(data.videos);
         setVideosTotal(data.total);
         setVideoPage(page);
@@ -99,7 +77,7 @@ export function BrowseContainer() {
 
   // Initial load
   useEffect(() => {
-    loadSpeakers(1);
+    loadSpeakers();
   }, [loadSpeakers]);
 
   // Navigation handlers
@@ -109,21 +87,9 @@ export function BrowseContainer() {
   };
 
   const selectYear = (year: number) => {
-    if (view.level === "years" || view.level === "months") {
-      setView({ level: "months", speaker: view.speaker, year });
-      loadMonths(view.speaker, year);
-    }
-  };
-
-  const selectMonth = (month: number) => {
-    if (view.level === "months") {
-      setView({
-        level: "videos",
-        speaker: view.speaker,
-        year: view.year,
-        month,
-      });
-      loadVideos(view.speaker, view.year, month, 1);
+    if (view.level === "years") {
+      setView({ level: "videos", speaker: view.speaker, year });
+      loadVideos(view.speaker, year, 1);
     }
   };
 
@@ -132,17 +98,9 @@ export function BrowseContainer() {
       case "years":
         setView({ level: "speakers" });
         break;
-      case "months":
+      case "videos":
         setView({ level: "years", speaker: view.speaker });
         loadYears(view.speaker);
-        break;
-      case "videos":
-        setView({
-          level: "months",
-          speaker: view.speaker,
-          year: view.year,
-        });
-        loadMonths(view.speaker, view.year);
         break;
     }
   };
@@ -153,25 +111,8 @@ export function BrowseContainer() {
     if (view.level !== "speakers") {
       parts.push(view.speaker);
     }
-    if (view.level === "months" || view.level === "videos") {
-      parts.push(String(view.year));
-    }
     if (view.level === "videos") {
-      const monthNames = [
-        "Jan",
-        "Feb",
-        "Mar",
-        "Apr",
-        "May",
-        "Jun",
-        "Jul",
-        "Aug",
-        "Sep",
-        "Oct",
-        "Nov",
-        "Dec",
-      ];
-      parts.push(monthNames[view.month - 1]);
+      parts.push(String(view.year));
     }
     return parts;
   };
@@ -208,9 +149,6 @@ export function BrowseContainer() {
       {view.level === "speakers" && (
         <SpeakerList
           speakers={speakers}
-          total={speakersTotal}
-          page={speakerPage}
-          onPageChange={(p) => loadSpeakers(p)}
           onSelect={selectSpeaker}
           isLoading={isLoading}
         />
@@ -225,26 +163,15 @@ export function BrowseContainer() {
         />
       )}
 
-      {view.level === "months" && (
-        <MonthView
-          speaker={view.speaker}
-          year={view.year}
-          months={months}
-          onSelect={selectMonth}
-          isLoading={isLoading}
-        />
-      )}
-
       {view.level === "videos" && (
         <VideoList
           speaker={view.speaker}
           year={view.year}
-          month={view.month}
           videos={videos}
           total={videosTotal}
           page={videoPage}
           onPageChange={(p) =>
-            loadVideos(view.speaker, view.year, view.month, p)
+            loadVideos(view.speaker, view.year, p)
           }
           isLoading={isLoading}
         />
