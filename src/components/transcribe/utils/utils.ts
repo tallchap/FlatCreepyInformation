@@ -174,6 +174,22 @@ function normalizeLooseName(s: string): string {
     .trim();
 }
 
+function normalizeDenseName(s: string): string {
+  return normalizeLooseName(s).replace(/\s+/g, "");
+}
+
+function canonicalizeSpeakerName(name: string): string {
+  const dense = normalizeDenseName(name);
+
+  // Canonical spellings for known recurring variants.
+  const CANONICAL_BY_DENSE: Record<string, string> = {
+    yannlecun: "Yann Le Cun",
+    yannlecunn: "Yann Le Cun",
+  };
+
+  return CANONICAL_BY_DENSE[dense] || name;
+}
+
 function isAllowedSingleTokenName(name: string): boolean {
   const n = normalizeLooseName(name);
   // Celebrity/stage-name exceptions that are valid speaker outputs.
@@ -271,15 +287,19 @@ export async function verifyAndCleanSpeakers(
       .map((n) => n.trim())
       .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
       .filter((n) => candidateSet.has(n.toLowerCase()))
+      .map(canonicalizeSpeakerName)
       .join(", ");
 
     return finalNames;
   } catch (error) {
     console.error("Error in third-pass speaker verification:", error);
     // Safe fallback: clean pass2 only, never add.
-    return candidateList
-      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
-      .join(", ");
+    return deduplicateAndFormatNames(
+      candidateList
+        .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
+        .map(canonicalizeSpeakerName)
+        .join(", "),
+    );
   }
 }
 
