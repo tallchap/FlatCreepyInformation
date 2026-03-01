@@ -2,9 +2,18 @@
 
 import { Speaker } from "./utils/types";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import Link from "next/link";
+
+type SortMode = "popularity" | "alphabetical";
 
 export function SpeakerList({
   speakers,
@@ -13,6 +22,7 @@ export function SpeakerList({
   speakers: Speaker[];
   isLoading: boolean;
 }) {
+  const [sortMode, setSortMode] = useState<SortMode>("popularity");
   const [filter, setFilter] = useState("");
 
   const filtered = filter
@@ -48,23 +58,45 @@ export function SpeakerList({
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
+  // For popularity mode: sort filtered speakers by videoCount descending
+  const popularitySorted = useMemo(
+    () => [...filtered].sort((a, b) => b.videoCount - a.videoCount),
+    [filtered],
+  );
+
   return (
     <div className="space-y-3">
-      <div className="relative">
-        <Search
-          className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
-          size={16}
-        />
-        <Input
-          placeholder="Filter speakers..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-          className="pl-9"
-        />
+      {/* Sort mode selector + filter */}
+      <div className="flex items-center gap-3">
+        <Select
+          value={sortMode}
+          onValueChange={(v) => setSortMode(v as SortMode)}
+        >
+          <SelectTrigger className="w-[160px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="popularity">Popularity</SelectItem>
+            <SelectItem value="alphabetical">Alphabetical</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <div className="relative flex-1">
+          <Search
+            className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+            size={16}
+          />
+          <Input
+            placeholder="Filter speakers..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="pl-9"
+          />
+        </div>
       </div>
 
-      {/* Alphabet jump-to navigation */}
-      {!isLoading && (
+      {/* Alphabet jump-to navigation (only for alphabetical mode) */}
+      {!isLoading && sortMode === "alphabetical" && (
         <div className="flex flex-wrap gap-1 px-1">
           {Array.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ#").map((letter) => (
             <button
@@ -87,7 +119,36 @@ export function SpeakerList({
         <div className="text-center py-8 text-gray-500">
           Loading speakers...
         </div>
+      ) : sortMode === "popularity" ? (
+        /* ── Popularity view: flat ranked list ── */
+        <div className="border rounded-lg bg-white divide-y divide-gray-100">
+          {popularitySorted.map((speaker, idx) => (
+            <Link
+              key={speaker.name}
+              href={`/browse/${encodeURIComponent(speaker.name)}`}
+              className="px-4 py-2 hover:bg-blue-50 transition-colors flex items-center justify-between"
+            >
+              <span className="text-sm text-gray-800">
+                <span className="text-xs text-gray-400 mr-2 font-medium">
+                  {idx + 1}.
+                </span>
+                {speaker.name}
+              </span>
+              <span className="text-xs text-gray-400 ml-2 whitespace-nowrap">
+                ({speaker.videoCount}{" "}
+                {speaker.videoCount === 1 ? "video" : "videos"})
+              </span>
+            </Link>
+          ))}
+
+          {filtered.length === 0 && (
+            <p className="text-center text-gray-500 py-4">
+              No speakers match your filter.
+            </p>
+          )}
+        </div>
       ) : (
+        /* ── Alphabetical view: grouped A-Z ── */
         <div className="border rounded-lg bg-white divide-y divide-gray-100">
           {grouped.map(([letter, items]) => (
             <div key={letter} id={`letter-${letter}`}>
