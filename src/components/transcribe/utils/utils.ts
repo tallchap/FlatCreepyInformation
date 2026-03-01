@@ -177,7 +177,7 @@ function normalizeLooseName(s: string): string {
 function isAllowedSingleTokenName(name: string): boolean {
   const n = normalizeLooseName(name);
   // Celebrity/stage-name exceptions that are valid speaker outputs.
-  return ["will i am", "william adams"].includes(n);
+  return ["will i am", "william adams", "destiny", "unknown"].includes(n);
 }
 
 function hasSpeakerContextForName(
