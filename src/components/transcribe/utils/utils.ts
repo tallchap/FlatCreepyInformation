@@ -184,13 +184,11 @@ function hasSpeakerContextForName(
   name: string,
   title: string,
   description: string,
-  transcriptFirstPart: string,
 ): boolean {
   const n = name.trim().toLowerCase();
   if (!n) return false;
 
   const titleDesc = `${title || ""} ${description || ""}`.toLowerCase();
-  const transcript = (transcriptFirstPart || "").toLowerCase();
 
   // Explicit stage-name exception: if known stage name is in metadata, keep it.
   if (isAllowedSingleTokenName(n)) {
@@ -207,41 +205,8 @@ function hasSpeakerContextForName(
     "i",
   );
 
-  const introRegex = new RegExp(
-    [
-      `(?:i am|i'm|my name is|this is)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-      `(?:welcome|joining us|join me|speaking with)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-    ].join("|"),
-    "i",
-  );
-
   // Metadata is strong signal when phrased as speaker/guest/host context.
   if (cueRegex.test(titleDesc)) return true;
-
-  // Transcript first-part signal for introductions and direct self-identification.
-  if (introRegex.test(transcript)) return true;
-
-  // Fallback windowed context match in transcript for nearby cue words.
-  const idx = transcript.indexOf(n);
-  if (idx !== -1) {
-    const start = Math.max(0, idx - 120);
-    const end = Math.min(transcript.length, idx + n.length + 120);
-    const ctx = transcript.slice(start, end);
-    const cues = [
-      "i am",
-      "i'm",
-      "my name is",
-      "this is",
-      "welcome",
-      "joining us",
-      "interview",
-      "host",
-      "guest",
-      "with",
-      "speaking with",
-    ];
-    if (cues.some((c) => ctx.includes(c))) return true;
-  }
 
   return false;
 }
@@ -268,7 +233,6 @@ export async function verifyAndCleanSpeakers(
 
   try {
     const client = new OpenAI();
-    const transcriptSample = transcriptText.slice(0, 20000);
 
     const response = await client.chat.completions.create({
       model: "gpt-4o",
@@ -279,7 +243,7 @@ export async function verifyAndCleanSpeakers(
         },
         {
           role: "user",
-          content: `Candidate list (pass 2): ${candidateList.join(", ")}\nUser speaker input: ${userSpeaker}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nTranscript excerpt:\n${transcriptSample}\n\nReturn ONLY the kept names as CSV (must be a subset of candidate list).`,
+          content: `Candidate list (pass 2): ${candidateList.join(", ")}\nUser speaker input: ${userSpeaker}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nReturn ONLY the kept names as CSV (must be a subset of candidate list).`,
         },
       ],
     });
@@ -297,7 +261,7 @@ export async function verifyAndCleanSpeakers(
     // Guardrail: keep pass-2 candidates when metadata discusses them as speakers.
     // (Not just mentioned — must have speaker-role context near the name.)
     const rescueFromMetadata = candidateList.filter((n) =>
-      hasSpeakerContextForName(n, videoTitle, videoDescription, transcriptSample),
+      hasSpeakerContextForName(n, videoTitle, videoDescription),
     );
 
     const finalNames = deduplicateAndFormatNames(
