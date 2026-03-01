@@ -1,31 +1,14 @@
 "use client";
 
 import { BrowseVideo } from "./utils/types";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Calendar, ChevronLeft, ChevronRight, Youtube } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import Link from "next/link";
 import Image from "next/image";
-
-const MONTH_NAMES = [
-  "January",
-  "February",
-  "March",
-  "April",
-  "May",
-  "June",
-  "July",
-  "August",
-  "September",
-  "October",
-  "November",
-  "December",
-];
 
 export function VideoList({
   speaker,
   year,
-  month,
   videos,
   total,
   page,
@@ -34,7 +17,6 @@ export function VideoList({
 }: {
   speaker: string;
   year: number;
-  month: number;
   videos: BrowseVideo[];
   total: number;
   page: number;
@@ -51,60 +33,44 @@ export function VideoList({
 
   return (
     <div className="space-y-4">
-      <h2 className="text-lg font-semibold text-gray-700">
-        <span className="text-blue-700">{speaker}</span> &mdash;{" "}
-        {MONTH_NAMES[month - 1]} {year}
-        <span className="text-sm font-normal text-gray-500 ml-2">
+      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider px-1">
+        <span className="text-blue-700 normal-case">{speaker}</span>
+        {" — "}
+        {year}
+        <span className="font-normal text-gray-400 normal-case ml-2">
           ({total} {total === 1 ? "video" : "videos"})
         </span>
       </h2>
 
-      <div className="space-y-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
         {videos.map((video) => (
-          <Card key={video.id} className="hover:border-blue-200 transition-all">
-            <CardContent className="flex flex-col sm:flex-row gap-4 py-4">
-              {/* YouTube thumbnail */}
-              <Link
-                href={`/video/${video.id}`}
-                className="flex-shrink-0 block"
-              >
-                <Image
-                  src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-                  alt={video.title}
-                  width={320}
-                  height={180}
-                  className="rounded-lg w-full sm:w-[200px] object-cover"
-                />
-              </Link>
-
-              {/* Video info */}
-              <div className="flex flex-col gap-1 min-w-0">
-                <Link
-                  href={`/video/${video.id}`}
-                  className="text-base font-medium text-blue-800 hover:underline line-clamp-2"
-                >
+          <Link
+            key={video.id}
+            href={`/video/${video.id}`}
+            className="group block"
+          >
+            <div className="rounded-lg overflow-hidden border border-gray-200 bg-white hover:border-blue-300 hover:shadow-md transition-all">
+              <Image
+                src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+                alt={video.title}
+                width={320}
+                height={180}
+                className="w-full aspect-video object-cover"
+              />
+              <div className="p-2.5">
+                <p className="text-xs font-medium text-gray-800 line-clamp-2 group-hover:text-blue-700 transition-colors">
                   {video.title}
-                </Link>
-                <div className="flex flex-wrap gap-3 text-sm text-gray-500">
-                  <span className="flex items-center gap-1">
-                    <Youtube size={14} />
-                    {video.channel}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Calendar size={14} />
-                    {video.published}
-                  </span>
-                  {video.videoLength && (
-                    <span className="text-gray-400">{video.videoLength}</span>
-                  )}
-                </div>
-                <p className="text-sm text-gray-600 mt-1">
-                  <span className="font-medium">Speakers:</span>{" "}
-                  {video.speakers}
+                </p>
+                <p className="text-[11px] text-gray-400 mt-1 truncate">
+                  {video.channel}
+                </p>
+                <p className="text-[11px] text-gray-400 truncate">
+                  {video.published}
+                  {video.videoLength && ` · ${video.videoLength}`}
                 </p>
               </div>
-            </CardContent>
-          </Card>
+            </div>
+          </Link>
         ))}
       </div>
 
