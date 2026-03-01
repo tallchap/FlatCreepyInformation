@@ -40,10 +40,10 @@ export function extractVideoId(url: string): string | null {
 function deduplicateAndFormatNames(namesString: string): string {
   if (!namesString) return "";
 
-  // Split by commas, clean each name, and filter out empty strings
+  // Split by commas, clean each name, canonicalize, and filter out empty strings
   const namesList = namesString
     .split(",")
-    .map((name) => name.trim())
+    .map((name) => canonicalizeSpeakerName(name))
     .filter((name) => name.length > 0);
 
   // Create a Set to automatically deduplicate (case-insensitive)
@@ -156,6 +156,26 @@ Return ONLY the comma-separated list of confirmed speakers (90%+ confidence):`,
     console.error("Error identifying speakers:", error);
     return userSpeaker;
   }
+}
+
+/**
+ * Canonical spelling map for known speaker name variations.
+ * Keys are lowercase; values are the canonical form.
+ * Add entries here to fix future misspellings automatically.
+ */
+const SPEAKER_NAME_CANONICAL: Record<string, string> = {
+  "yann le cun": "Yann LeCun",
+  "yann le cunn": "Yann LeCun",
+  "yann lecun": "Yann LeCun",
+};
+
+/**
+ * Normalize a single speaker name against the canonical map.
+ * Returns the canonical form if found, otherwise returns the original.
+ */
+function canonicalizeSpeakerName(name: string): string {
+  const key = name.trim().toLowerCase();
+  return SPEAKER_NAME_CANONICAL[key] ?? name.trim();
 }
 
 function stripPromptArtifacts(text: string): string {
