@@ -81,6 +81,35 @@ export async function fetchVideoMeta(id: string) {
 const TABLE = "`youtubetranscripts-429803.reptranscripts.youtube_transcripts`";
 const SPEAKERS_EXPR = `COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude)`;
 
+export async function fetchSpeakerVideosBeforeDate(
+  speaker: string,
+  beforeDate: string,
+  limit = 200,
+): Promise<{ id: string; title: string; publishedAt: string }[]> {
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT
+        ID AS id,
+        Video_Title AS title,
+        CAST(Published_Date AS STRING) AS publishedAt
+      FROM ${TABLE},
+      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
+      WHERE TRIM(s) = @speaker
+        AND Published_Date IS NOT NULL
+        AND Published_Date < DATE(@beforeDate)
+      ORDER BY Published_Date DESC
+      LIMIT @limit
+    `,
+    params: { speaker, beforeDate, limit },
+  });
+
+  return rows.map((r: { id: string; title: string; publishedAt: string }) => ({
+    id: String(r.id),
+    title: String(r.title),
+    publishedAt: String(r.publishedAt),
+  }));
+}
+
 /**
  * Return every distinct speaker (alphabetical) with their video count.
  * Speakers are comma-separated in the source column, so we UNNEST after
