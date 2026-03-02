@@ -119,7 +119,7 @@ export function ChatWindow() {
                   for (const [marker, info] of Object.entries(citationsMap)) {
                     // Include timestamp if available: youtube:VIDEO_ID:SECONDS
                     const ytRef = info.timestamp !== undefined
-                      ? `youtube:${info.videoId}:${info.timestamp}`
+                      ? `youtube:${info.videoId}:${Math.floor(info.timestamp)}`
                       : `youtube:${info.videoId}`;
                     const link = `[${info.title}](${ytRef})`;
                     content = content.split(marker).join(link);
