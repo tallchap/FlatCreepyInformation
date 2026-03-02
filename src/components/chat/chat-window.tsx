@@ -118,7 +118,18 @@ export function ChatWindow() {
               // Replace annotation markers (e.g. 【4:14†source】) with clickable links
               const citationsMap = event.citations as Record<
                 string,
-                { videoId: string; title: string; timestamp?: number }
+                {
+                  videoId: string;
+                  title: string;
+                  timestamp?: number;
+                  metadata?: {
+                    publishedAt?: string;
+                    channel?: string;
+                    speakers?: string[];
+                    durationSec?: number;
+                    viewCount?: number | null;
+                  };
+                }
               >;
               setMessages((prev) => {
                 const updated = [...prev];
@@ -130,7 +141,15 @@ export function ChatWindow() {
                     const ytRef = info.timestamp !== undefined
                       ? `youtube:${info.videoId}:${Math.floor(info.timestamp)}`
                       : `youtube:${info.videoId}`;
-                    const link = `[${info.title}](${ytRef})`;
+                    const metaParts = [
+                      info.metadata?.publishedAt,
+                      info.metadata?.channel,
+                    ].filter(Boolean);
+                    const label =
+                      metaParts.length > 0
+                        ? `${info.title} · ${metaParts.join(" · ")}`
+                        : info.title;
+                    const link = `[${label}](${ytRef})`;
                     content = content.split(marker).join(link);
                   }
                   updated[updated.length - 1] = { ...last, content };

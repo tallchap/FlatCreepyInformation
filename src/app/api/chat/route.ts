@@ -2,13 +2,25 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { getAssistantBySlug } from "@/lib/assistants";
-import { fetchTranscript } from "@/lib/bigquery";
+import { fetchTranscript, fetchVideoMeta } from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Build a flat lookup: file_id → { videoId, title }
-type CitationEntry = { videoId: string; title: string };
+type CitationMetadata = {
+  publishedAt?: string;
+  channel?: string;
+  speakers?: string[];
+  durationSec?: number;
+  viewCount?: number | null;
+};
+
+// Build a flat lookup: file_id → citation entry (+ optional metadata)
+type CitationEntry = {
+  videoId: string;
+  title: string;
+  metadata?: CitationMetadata;
+};
 const FILE_ID_LOOKUP: Record<string, CitationEntry> = {};
 for (const speaker of Object.values(citationMap)) {
   const files = (speaker as { files: Record<string, CitationEntry> }).files;
@@ -21,6 +33,28 @@ for (const speaker of Object.values(citationMap)) {
  * Given a snippet of quoted text and a parsed transcript (segments with timestamps),
  * find the best matching timestamp by searching for overlapping words.
  */
+function parseDurationToSeconds(raw: string | null | undefined): number | undefined {
+  if (!raw) return undefined;
+  const parts = raw
+    .split(":")
+    .map((p) => Number(p.trim()))
+    .filter((n) => Number.isFinite(n));
+  if (parts.length === 0) return undefined;
+  if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
+  if (parts.length === 2) return parts[0] * 60 + parts[1];
+  if (parts.length === 1) return parts[0];
+  return undefined;
+}
+
+function splitSpeakers(raw: string | null | undefined): string[] | undefined {
+  if (!raw) return undefined;
+  const speakers = raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return speakers.length > 0 ? speakers : undefined;
+}
+
 function findTimestampForQuote(
   quote: string,
   segments: { start: number | null; text: string }[],
@@ -137,7 +171,12 @@ export async function POST(req: NextRequest) {
             if (lastMsg && lastMsg.role === "assistant") {
               const citations: Record<
                 string,
-                { videoId: string; title: string; timestamp?: number }
+                {
+                  videoId: string;
+                  title: string;
+                  timestamp?: number;
+                  metadata?: CitationMetadata;
+                }
               > = {};
 
               // First pass: collect citation info and the quoted text before each marker
@@ -146,6 +185,7 @@ export async function POST(req: NextRequest) {
                 videoId: string;
                 title: string;
                 quotedText: string;
+                metadata?: CitationMetadata;
               }[] = [];
 
               for (const block of lastMsg.content) {
@@ -167,6 +207,7 @@ export async function POST(req: NextRequest) {
                           videoId: entry.videoId,
                           title: entry.title,
                           quotedText: textBefore,
+                          metadata: entry.metadata,
                         });
                       }
                     }
@@ -177,6 +218,7 @@ export async function POST(req: NextRequest) {
               // Second pass: fetch transcripts for unique videoIds and find timestamps
               const uniqueVideoIds = [...new Set(pendingCitations.map((c) => c.videoId))];
               const transcriptCache: Record<string, { start: number | null; text: string }[]> = {};
+              const metadataCache: Record<string, CitationMetadata> = {};
 
               await Promise.all(
                 uniqueVideoIds.map(async (videoId) => {
@@ -185,6 +227,25 @@ export async function POST(req: NextRequest) {
                   } catch {
                     transcriptCache[videoId] = [];
                   }
+
+                  try {
+                    const meta = await fetchVideoMeta(videoId);
+                    if (meta) {
+                      metadataCache[videoId] = {
+                        publishedAt:
+                          typeof meta.published === "string"
+                            ? meta.published
+                            : meta.published.toISOString().slice(0, 10),
+                        channel: meta.channel || undefined,
+                        speakers: splitSpeakers(meta.speakers),
+                        durationSec: parseDurationToSeconds(meta.video_length),
+                        // Populated from source map when available; null placeholder otherwise.
+                        viewCount: null,
+                      };
+                    }
+                  } catch {
+                    // leave metadata cache empty for this video
+                  }
                 }),
               );
 
@@ -192,10 +253,18 @@ export async function POST(req: NextRequest) {
               for (const pc of pendingCitations) {
                 const segments = transcriptCache[pc.videoId] || [];
                 const timestamp = findTimestampForQuote(pc.quotedText, segments);
+                const mergedMetadata: CitationMetadata | undefined = {
+                  ...(metadataCache[pc.videoId] || {}),
+                  ...(pc.metadata || {}),
+                };
+
                 citations[pc.marker] = {
                   videoId: pc.videoId,
                   title: pc.title,
                   ...(timestamp !== null && { timestamp: Math.floor(timestamp) }),
+                  ...(Object.keys(mergedMetadata).length > 0 && {
+                    metadata: mergedMetadata,
+                  }),
                 };
               }
 
