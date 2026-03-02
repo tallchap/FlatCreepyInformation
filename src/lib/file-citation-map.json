@@ -1,0 +1,676 @@
+{
+  "yudkowsky": {
+    "vectorStoreId": "vs_69a4f63b41c081919d89517bdcea16b6",
+    "files": {
+      "file-FdK87UEpw4n19o5Pfe7Z1k": {
+        "videoId": "hgnzbIaKSzE",
+        "title": "Did Eliezer Yudkowsky beat Stephen Wolfram? (LZRS Stream #9)"
+      },
+      "file-HED1M9w6qJmm6zMbJiZLXr": {
+        "videoId": "YsgiNQKscyY",
+        "title": "Should we shut down AI? | Eliezer Yudkowsky + Joscha Bach Complete Debate"
+      },
+      "file-UHd6TCZqRELgx8pAt3V5et": {
+        "videoId": "xjH2B_sE_RQ",
+        "title": "YUDKOWSKY + WOLFRAM ON AI RISK."
+      },
+      "file-RnUAEpFhscDWjpRGaSk6dJ": {
+        "videoId": "SbgRD_XmMok",
+        "title": "Eliezer vs Destiny Debate"
+      },
+      "file-LwsdE8ZJtW7yb3MpXPUoEG": {
+        "videoId": "srY8oVj0sbY",
+        "title": "George Hotz vs Eliezer Yudkowsky AI Safety (FULL DEBATE)"
+      },
+      "file-7jdh4NH79eFhTx5B6DiTCM": {
+        "videoId": "6yQEA18C-XI",
+        "title": "George Hotz vs Eliezer Yudkowsky AI Safety Debate"
+      },
+      "file-CZziSvwsoBGawJi3FgH9o4": {
+        "videoId": "xkQSiS8hpZA",
+        "title": "Will AI Destroy Us? - AI Virtual Roundtable"
+      },
+      "file-9DyBRhMjMQXZbcXyVPU2SA": {
+        "videoId": "uX9xkYDSPKA",
+        "title": "Can We Stop the AI Apocalypse? | Eliezer Yudkowsky"
+      },
+      "file-C6XubnsuFTFm4HcYbKphAd": {
+        "videoId": "z0zejgGASDM",
+        "title": "Eliezer Yudkowsky on AI doom & how to stop illegal boats   – The Week in 60 Minutes | SpectatorTV"
+      },
+      "file-47tK3EZTXBeFZPzw5ciNnJ": {
+        "videoId": "Yd0yQ9yxSYY",
+        "title": "Will Superintelligent AI End the World? | Eliezer Yudkowsky | TED"
+      },
+      "file-8mgPaD7DxJP1pNHEYfDQyq": {
+        "videoId": "MCCSgC57ueg",
+        "title": "AI will kill all of us | Eliezer Yudkowsky interview"
+      },
+      "file-7tGfF5BrgZihpFDYcAJN2a": {
+        "videoId": "fZlZQCTqIEo",
+        "title": "Eliezer Yudkowsky on the Dangers of AI 5/8/23"
+      },
+      "file-SUCdfR6FyXnYHAX84F3Shy": {
+        "videoId": "_8q9bjNHeSo",
+        "title": "Eliezer Yudkowsky on if Humanity can Survive AI"
+      },
+      "file-EwxudCNxAk3GjuPeVXsQVy": {
+        "videoId": "hxsAuxswOvM",
+        "title": "Discussion / debate with AI expert Eliezer Yudkowsky"
+      },
+      "file-AxQQGrq9gcTQwLDKRs1Nkw": {
+        "videoId": "3_YX6AgxxYw",
+        "title": "Live: Eliezer Yudkowsky - Is Artificial General Intelligence too Dangerous to Build?"
+      },
+      "file-6PincZaTJte9AH5miP4Vvk": {
+        "videoId": "41SUp-TRVlg",
+        "title": "Eliezer Yudkowsky - Why AI Will Kill Us, Aligning LLMs, Nature of Intelligence, SciFi, & Rationality"
+      },
+      "file-SSTrbyddce6xvryiPebZgN": {
+        "videoId": "AaTRHFaaPG8",
+        "title": "Eliezer Yudkowsky: Dangers of AI and the End of Human Civilization | Lex Fridman Podcast #368"
+      },
+      "file-DxzWvX6S73uEdHokYqR4Tm": {
+        "videoId": "DzPArmnkQeM",
+        "title": "Connor Leahy & Eliezer Yudkowsky - Japan AI Alignment Conference 2023"
+      },
+      "file-1rbKuKPPYAsVft9oZ82NQc": {
+        "videoId": "Mhuf6ZaL3bk",
+        "title": "Connor Leahy & Eliezer Yudkowsky Japan Alignment Conference 2023"
+      },
+      "file-UjAGswhk6zihSAkRH7fVFJ": {
+        "videoId": "gA1sNLL6yg4",
+        "title": "159 - We’re All Gonna Die with Eliezer Yudkowsky"
+      },
+      "file-LNaVp6Af4o8hQR1NUwWRsv": {
+        "videoId": "TB2ftGpFVPU",
+        "title": "Science Saturday: Frontiers of Gerontology | Eliezer Yudkowsky & Aubrey de Grey [Science Saturday]"
+      },
+      "file-Uk22tSyiJFWTpLKJ4ssTSo": {
+        "videoId": "onvAl4SQ5-Q",
+        "title": "Science Saturday: The Great Singularity Debate | Eliezer Yudkowsky & Massimo Pigliucci"
+      },
+      "file-MBtUDJywWCa2bynLD6eKMu": {
+        "videoId": "tUAXCFvvODI",
+        "title": "Science Saturday: Singularity Edition | John Horgan & Eliezer Yudkowsky [Science Saturday]"
+      },
+      "file-Phgywj9d7j7RziTn1LuD3Y": {
+        "videoId": "Kuzfkyaj1oQ",
+        "title": "Percontations: The Nature of Probability | Eliezer Yudkowsky & Andrew Gelman [Percontations]"
+      },
+      "file-RPsVjbAUhFPinNWZGCowkq": {
+        "videoId": "-mXVKLrgBwY",
+        "title": "Percontations: Fear, Power, and Mortality | Robert Greene & Eliezer Yudkowsky [Percontations]"
+      },
+      "file-7cu2KXzKQd3TMfetfAHspD": {
+        "videoId": "LShKHZkc34M",
+        "title": "AI Ethics Panel: Russell, Yudkowsky, Tegmark, Wallach, & Petersen"
+      },
+      "file-RNSf8A6qRPJacjqgmaJQN8": {
+        "videoId": "YicCAgjsky8",
+        "title": "Eliezer Yudkowsky - Difficulties of Artificial General Intelligence Alignment"
+      },
+      "file-PYRrxPDCY44pgvjHR88hW8": {
+        "videoId": "EUjc1WuyPT8",
+        "title": "Eliezer Yudkowsky – AI Alignment: Why It's Hard, and Where to Start"
+      },
+      "file-RazBQoQTZXFcdFNUMUYfnA": {
+        "videoId": "XOWEObcwQJQ",
+        "title": "Eliezer Yudkowsky Röportajı - Singularity Summit 2012"
+      },
+      "file-NfYvxXjdUq1T47GG1vsYSE": {
+        "videoId": "7c1WSwqwMOE",
+        "title": "Eliezer Yudkowsky on Friendly Artificial Intelligence"
+      },
+      "file-XU5YoUbDHFQSxHZZ34VjG1": {
+        "videoId": "0cjGfSXHFmU",
+        "title": "Eliezer Yudkowsky on Open Problems in Friendly Artificial Intelligence"
+      },
+      "file-Ke8wy7S4fn9haXC4eJcs3J": {
+        "videoId": "D6peN9LiTWA",
+        "title": "Eliezer Yudkowsky on Intelligence Explosion"
+      },
+      "file-48srnoNvr1fqcEwg6Y7ZBQ": {
+        "videoId": "qGLhpUTxCdI",
+        "title": "Eliezer Yudkowsky: \"Cognitive Biases and Giant Risks\""
+      },
+      "file-XiDkU5TTbB4B8EH6xLUrwW": {
+        "videoId": "oJDlzvqrPLk",
+        "title": "Panel with Peter Thiel, Aubrey de Grey, Eliezer Yudkowsky"
+      },
+      "file-BeDs6GTigRrVqZ7m6HPJUY": {
+        "videoId": "P6FXqVcLC9Y",
+        "title": "Eliezer Yudkowsky -- Introducing the \"Singularity\": Three Major Schools of Thought"
+      },
+      "file-EjqhPSmBA9MHvpFaqpuyUE": {
+        "videoId": "mEt1Wfl1jvo",
+        "title": "Eliezer Yudkowsky on \"Three Major Singularity Schools\""
+      },
+      "file-TUSHLdsxDpbpYi4b2KRaUF": {
+        "videoId": "hcqZP_3zMnI",
+        "title": "Eliezer Yudkowsky on the Human Importance of the Intelligence Explosion"
+      },
+      "file-QTT9qwgb7zAocYxxGTGMYg": {
+        "videoId": "-4WRqejeIXw",
+        "title": "Panel Discussion and Audience Q&A - part 1"
+      },
+      "file-QiLAjjXRb9d6MvA1cky3CV": {
+        "videoId": "Uoda5BSj_6o",
+        "title": "Eliezer Yudkowsky \"Friendly AI\""
+      },
+      "file-YHjaC6F4NkmyVkJM6mz8VN": {
+        "videoId": "TwqYB1uzcU4",
+        "title": "Heuristics and Biases, Skepticon 4 Eliezer Yudkowsky"
+      },
+      "file-JjxGgT4wUEsqakAxyA22Pj": {
+        "videoId": "MwriJqBZyoM",
+        "title": "Eliezer Yudkowsky on \"Open Problems in Friendly Artificial Intelligence\" at Singularity Summit 2011"
+      },
+      "file-9qETr7vmjkEq83ezUr7na4": {
+        "videoId": "m_R5Z4_khNw",
+        "title": "The AI Foom debate - Yudkowsky vs Hanson on the Intelligence Explosion - Jane Street Debate 2011"
+      },
+      "file-W3JtVtFbF2nYB7FCTLiFWz": {
+        "videoId": "JqbKEbTfUqA",
+        "title": "Book of Job"
+      },
+      "file-9EtPU47Cm3bfNKXJ2kDRTX": {
+        "videoId": "hm-Yq3cHJ9U",
+        "title": "Abandoning religion"
+      }
+    }
+  },
+  "shapira": {
+    "vectorStoreId": "vs_69a4f6b6492c819196e91c0128bf44f2",
+    "files": {
+      "file-DauiN5bDg9Gmb3Jx4FfCBG": {
+        "videoId": "ulZT2eJrBhM",
+        "title": "Q&A: Is Liron too DISMISSIVE of AI Harms? + New Studio, Demis Would #PauseAI, AI Water Use Debate"
+      },
+      "file-EDpTMLQNSnFGvoREH7JVqg": {
+        "videoId": "AwmJ-OnK2I4",
+        "title": "Top Economist Says P(Doom) Is 0.1% — Noah Smith vs. Liron Shapira Debate"
+      },
+      "file-9edWfaJvciANncgTAiunHr": {
+        "videoId": "h4bGet9QLnw",
+        "title": "Liron Debates Beff Jezos and the \"e/acc\" Army — Is AI Doom Retarded?"
+      },
+      "file-3bYMnb4U4GrLtV7kBkLBzj": {
+        "videoId": "1hRO7Y-cArs",
+        "title": "Doom Debates LIVE Call-In Show! Listener Q&A about AGI, evolution vs. engineering, shoggoths & more"
+      },
+      "file-X9uarR2cZJ6W7L2JvuNd7m": {
+        "videoId": "RVpXEJt8i64",
+        "title": "PhD AI Researcher Says P(Doom) is TINY — Debate with Michael Timothy Bennett"
+      },
+      "file-TzugMkRJpvhpmhkUnUo9c8": {
+        "videoId": "xev_RLnWJP8",
+        "title": "DEBATE: Is AGI Really Decades Away? | Ex-MIRI Researcher Tsvi Benson-Tilsen vs. Liron Shapira"
+      },
+      "file-NLU2zRb9yx4hqGqyoYHfSg": {
+        "videoId": "CxsdPxgDZ0g",
+        "title": "Liron Debunks The Most Common “AI Won't Kill Us\" Arguments (Collective Wisdom Podcast)"
+      },
+      "file-TZFYvVLfyZzxVJawMeYkLU": {
+        "videoId": "ZFrHIINLmF8",
+        "title": "50% Chance AI Kills Everyone by 2050 —  Eben Pagan (aka David DeAngelo) Interviews Liron"
+      },
+      "file-WrArno9kT3AK27Ve5poz6b": {
+        "videoId": "fBdbu58QX40",
+        "title": "Former MIRI Researcher Solving AI Alignment by Engineering Smarter Human Babies: Tsvi Benson-Tilsen"
+      },
+      "file-Jgj7EYvEJRrSScpz25gaRd": {
+        "videoId": "xm0UdTIQXeM",
+        "title": "Robert Wright Interrogates the Eliezer Yudkowsky AI Doom Position"
+      },
+      "file-9tTM9Qyw4sYx74Ca7F3nis": {
+        "videoId": "h9OFO_IC3bg",
+        "title": "AI Leaders Admit: We Can’t Stop the Monster We’re Creating | Warning Shots Ep. 14"
+      },
+      "file-QtAMy8fCnLL31TgmSw6anz": {
+        "videoId": "rY_1RmQ_3uo",
+        "title": "Rationalism and AI Doomerism | Robert Wright & Liron Shapira"
+      },
+      "file-SSup1syCSCUtT44WyBjQ3Z": {
+        "videoId": "Tnx57KwH6Xo",
+        "title": "Everyone is Freaking Out About Sora 2 for the WRONG Reasons — Warning Shots EP13"
+      },
+      "file-263w1FWub9U5SMbm3AyAAJ": {
+        "videoId": "zxqxpBURQOM",
+        "title": "The Great Unreality: Is AI Erasing the World We Know? | Warning Shots Ep. 13"
+      },
+      "file-Jphsu89beRgkYpqKyqZDLW": {
+        "videoId": "8nPlVPTe2Wk",
+        "title": "AI Breakthroughs, Robot Hacks & Hollywood’s AI Actress Scandal | Warning Shots Ep. 12"
+      },
+      "file-PydR3XWZjh3J4o7JY13urh": {
+        "videoId": "Mk0WwSjEh-U",
+        "title": "I Asked Regular Americans: Will AI Kill Everyone!?"
+      },
+      "file-9vJbGMyAm2MUTJsM7mdQ6N": {
+        "videoId": "Fy6gz41-6gc",
+        "title": "Wes & Dylan Join Doom Debates — Violent Robots, Eliezer Yudkowsky, & Who Has the HIGHEST P(Doom)?!"
+      },
+      "file-7cShiWFATN3KkLxCWuPXHF": {
+        "videoId": "4WWkGYO1kvk",
+        "title": "The Doom Debates Merch Store Is Open For Business!"
+      },
+      "file-HtDuugEtArBKf9HMN1mwYU": {
+        "videoId": "pYp3IVo4bbI",
+        "title": "AI Takes Over the Economy — Too Big to Stop? | Warning Shots Ep. 11"
+      },
+      "file-LghzXo78Y5r4HJSZ9FQCBW": {
+        "videoId": "5yw8H9lFiAk",
+        "title": "Are We A Circular Firing Squad? — with Holly Elmore, Executive Director of PauseAI US"
+      },
+      "file-FscWfLxe92tQXCLYSCDDka": {
+        "videoId": "q7WlUUojO_g",
+        "title": "Ex-OpenAI CEO Says AI Labs Are Making a HUGE Mistake"
+      },
+      "file-2cMisPyEDvhEmPZDWMB2iV": {
+        "videoId": "cjQ-zuZgMoI",
+        "title": "Donate to Doom Debates — YOU can meaningfully contribute to lowering AI x-risk!"
+      },
+      "file-SKQ6PTMPQaGaMkZRXgcTVo": {
+        "videoId": "EAzPlTFBHhM",
+        "title": "AI Minister? Albania Puts a Chatbot in Charge of Finance | Warning Shots #10"
+      },
+      "file-MAmhMfjjFM5DnbZjhLjBNf": {
+        "videoId": "lRITRf-jH1g",
+        "title": "“If Anyone Builds It, Everyone Dies” Party — Max Tegmark, Rob Miles, Liv Boeree, Gary Marcus & more!"
+      },
+      "file-WX7QHDYFhyG1Tae6t2mJ3W": {
+        "videoId": "ZCkiPC3xAg4",
+        "title": "Max Tegmark Says It's Time To Protest Against AI Companies"
+      },
+      "file-KcdoRYfysaPkxwmBfcfZHL": {
+        "videoId": "lw27rz8uQIM",
+        "title": "ANNOUNCEMENT: Eliezer Yudkowsky interview premieres tomorrow!"
+      },
+      "file-G8rijzXX8rjWohDjJc9xTg": {
+        "videoId": "LixeVi6NlDU",
+        "title": "Eliezer Yudkowsky — If Anyone Builds It, Everyone Dies"
+      },
+      "file-PxrHBXMTYoEu34ceWAy2iJ": {
+        "videoId": "N-KTuwLjHE8",
+        "title": "How AI Kills Everyone on the Planet in 10 Years — Liron on The Jona Ragogna Podcast"
+      },
+      "file-Eh21Zt4mfXZ5WxM6KNxKLg": {
+        "videoId": "MRnGc_40dRg",
+        "title": "Get ready for “If Anyone Builds It, Everyone Dies” by Eliezer Yudkowsky & Nate Soares — Launch Week!"
+      },
+      "file-CsXsj1EdurowW4WSinSC93": {
+        "videoId": "fD1mrS0J9tk",
+        "title": "Parents Worst Nightmare— A Wake-Up Call for AI Safety | Warning Shots EP7"
+      },
+      "file-NDkpyWQ66ocAxQ23P1ee7g": {
+        "videoId": "ICA4pxlxHz4",
+        "title": "Anthropic Gave Claude an Escape Button — And That’s Terrifying | Warning Shots EP6"
+      },
+      "file-GA5XcFFJdp5HQmSfGa4f5U": {
+        "videoId": "rAor1oJtNDs",
+        "title": "AI Knows You Better Than You Do — And That’s Dangerous | Warning Shots EP5"
+      },
+      "file-LLAgK2jspvd2gAxKf7zoFU": {
+        "videoId": "hxlcQzvnmWI",
+        "title": "VITALIK vs. AI DOOMER — Will “d/acc” Protect Humanity from Superintelligent AI?"
+      },
+      "file-FbktqAzy4F4tFzBaBTxqNZ": {
+        "videoId": "hi5VTZcjAqc",
+        "title": "Why I'm Scared GPT-9 Will Murder Me — Liron on Robert Wright’s Nonzero Podcast"
+      },
+      "file-QX8gMBCDowfPwX8jbJKLvK": {
+        "videoId": "utUe4noaflw",
+        "title": "AI Goes Rogue, Decides To Destroy Database | Warning Shots | EP3"
+      },
+      "file-BciZVfBGaWNeChuSCtZkVk": {
+        "videoId": "_ZRUq3VEAc0",
+        "title": "The Man Who Might SOLVE AI Alignment — Dr. Steven Byrnes, AGI Safety Researcher @ Astera Institute"
+      },
+      "file-LAW6ZyCrKtCP2XJtayauP2": {
+        "videoId": "8frVhunaXyU",
+        "title": "We Caught AIs Secretly Changing Each Other's Values | Warning Shots EP2"
+      },
+      "file-7aAhSNSSycdQxNcsNykwQH": {
+        "videoId": "MtMxdIV3sYM",
+        "title": "Top Professor Condemns AGI Development: “It’s Frankly Evil” — Geoffrey Miller"
+      },
+      "file-LQyswMXZ5APu8bjvSvyXeW": {
+        "videoId": "X55fr3xaSjs",
+        "title": "AI Won't Save Your Job — Liron Reacts to Replit CEO Amjad Masad"
+      },
+      "file-3yCcXgw5B8Krq2rApRK7wa": {
+        "videoId": "tXwjO4MiaAg",
+        "title": "Every Student is CHEATING with AI — College in the AGI Era (feat. Sophomore Liam Robins)"
+      },
+      "file-UkrBKAdUSdQDyGSHQDCtw2": {
+        "videoId": "KqRbYZL7gN8",
+        "title": "Richard Hanania vs. Liron Shapira — AI Doom Debate"
+      },
+      "file-HHdt5fJMEDYDvhs4gJoJSH": {
+        "videoId": "Yw1NCLHlxL0",
+        "title": "Will AI Have a Moral Compass? — Debate with Scott Sumner, Author of The Money Illusion"
+      },
+      "file-4RGsD8DvhtSak8ZmTP5i1w": {
+        "videoId": "06KACQ-SLAY",
+        "title": "Searle's Chinese Room is DUMB — It's Just Slow-Motion Intelligence"
+      },
+      "file-HHicKeew7xDLE5ZcdorG1N": {
+        "videoId": "detjIyxWG8M",
+        "title": "Doom Debates Live @ Manifest 2025 — Liron vs. Everyone"
+      },
+      "file-TZ924M1wsDAUo6AzY1zJuX": {
+        "videoId": "Qcf_cZbhSWY",
+        "title": "Poking holes in the AI doom argument — 83 stops where you could get off the “Doom Train”"
+      },
+      "file-7adVfpSowUhUDhfdnQhSdF": {
+        "videoId": "OBMNcgyrFXs",
+        "title": "Doom Debates 5,000 Subscribers Live Q&A"
+      },
+      "file-YKkWmVbeLgpWFyArXKoDT8": {
+        "videoId": "GWHypAa3Ols",
+        "title": "Q&A: Ilya's AGI Doomsday Bunker, Veo 3 is Westworld, Eliezer Yudkowsky, and much more!"
+      },
+      "file-K6SLBWsqQRApuSAbFbwgqN": {
+        "videoId": "StAUBKbPFoE",
+        "title": "Emergency Episode: John Sherman FIRED from Center for AI Safety"
+      },
+      "file-VvMefuZ8tYFGnx1SURqkcD": {
+        "videoId": "v515svJ55PU",
+        "title": "Gary Marcus vs. Liron Shapira — AI Doom Debate"
+      },
+      "file-W8W8pxEE1946hUm8fCXWQQ": {
+        "videoId": "RaDWSPMdM4o",
+        "title": "Mike Israetel vs. Liron Shapira — AI Doom Debate"
+      },
+      "file-WBqMF1pm3Frtscitgkap3Y": {
+        "videoId": "TtPnMIhkqVs",
+        "title": "Doom Scenario: Human-Level AI Can't Control Smarter AI"
+      },
+      "file-RA1fuVj6rUiw7qfRbuvLMW": {
+        "videoId": "FaQjEABZ80g",
+        "title": "The Most Likely AI Doom Scenario — with Jim Babcock, LessWrong Team"
+      },
+      "file-XqN5GEWrkumzLHe7gx8GWK": {
+        "videoId": "-924PGYgYek",
+        "title": "“AI 2027” — Top Superforecaster's Imminent Doom Scenario"
+      },
+      "file-8ypjGVJH4b2QKShXty8v3D": {
+        "videoId": "nJhlqUxTM0U",
+        "title": "Top Economist Sees AI Doom Coming — Dr. Peter Berezin, BCA Research"
+      },
+      "file-SW2aAjZegzjBMHL2k5Mngc": {
+        "videoId": "SsGShgdJdcY",
+        "title": "AI News: GPT-4o Images, Unemployment, Emmett Shear's New Safety Org — with Nathan Labenz"
+      },
+      "file-KDqkbqkvVnWcGN5Lc23qyQ": {
+        "videoId": "D4bbUAaMVTg",
+        "title": "How an AI Doomer Sees The World — Liron on The Human Podcast"
+      },
+      "file-92uQjyWSJ5r5irVziCVdHz": {
+        "videoId": "V3AyCc2Z4co",
+        "title": "Gödel's Theorem Says Intelligence ≠ Power? AI Doom Debate with Alexander Campbell"
+      },
+      "file-YLcgW84s8NYMx6G3Pjkm4b": {
+        "videoId": "AY4jD26RntE",
+        "title": "Alignment is EASY and Roko's Basilisk is GOOD?! AI Doom Debate with Roko Mijic"
+      },
+      "file-Hq5yrY1EXcEh3YhEuXDn5d": {
+        "videoId": "xwvijjZxpwI",
+        "title": "Gödel's Theorem Proves AI Lacks Consciousness?! Liron Reacts to Sir Roger Penrose"
+      },
+      "file-JJ5Xz7HEgyGqd1o68KJtBG": {
+        "videoId": "ml1JdiELQ30",
+        "title": "We Found AI's Preferences — Bombshell New Safety Research — I Explain It Better Than David Shapiro"
+      },
+      "file-XXbSisJrTSQFHApF8588Ts": {
+        "videoId": "72LnKW_jae8",
+        "title": "Does AI Competition = AI Alignment? Debate with Gil Mark"
+      },
+      "file-BPyjsZcyDa3oogb8RMZc8Z": {
+        "videoId": "3IAOTYDvQy4",
+        "title": "Toy Model of the AI Control Problem"
+      },
+      "file-7MfewuL5vwagcbjPke8JVx": {
+        "videoId": "_akB3NTy62A",
+        "title": "Superintelligent AI vs. Real-World Engineering | Liron Reacts to Bryan Cantrill"
+      },
+      "file-9K3hHR6xHSLnpQtAp81yJJ": {
+        "videoId": "y2_DRff-fpk",
+        "title": "DeepSeek, Brain+AI Merging, Jailbreaking, Fearmongering, Consciousness, Utilitarianism — Live Q&A"
+      },
+      "file-7C6tozDUh3w6dTVprD16My": {
+        "videoId": "EGtWrPZBrtw",
+        "title": "Mark Zuckerberg, a16z, Yann LeCun, Eliezer Yudkowsky, Roon, Emmett Shear & More | Twitter Beefs #3"
+      },
+      "file-9MoT3csV2MYJ8pB7EAYfgX": {
+        "videoId": "xyLHb-r0KKA",
+        "title": "Effective Altruism: Amazing or Terrible? EA Debate with Jonas Sota"
+      },
+      "file-GMTwKh5xdiCpxTB6WSTL94": {
+        "videoId": "GdthPZwU1Co",
+        "title": "Debate with a former OpenAI Research Team Lead — Prof. Kenneth Stanley"
+      },
+      "file-WvkK2FxuGTQH97xjAhuCvz": {
+        "videoId": "0n6rF48PaJc",
+        "title": "OpenAI o3 and Claude Alignment Faking — How doomed are we?"
+      },
+      "file-D5vndt3dJN4ZGM6F9Y3RsX": {
+        "videoId": "_sksNkjT-wA",
+        "title": "AI Will Kill Us All — Liron Shapira on The Flares"
+      },
+      "file-R8u3DXGmWEgbTtEbp9RB1X": {
+        "videoId": "GfgKQpevnUE",
+        "title": "Roon vs. Liron: AI Doom Debate"
+      },
+      "file-EMJv5K4RMpDTP3hFg8oDa1": {
+        "videoId": "xsGqWeqKjEg",
+        "title": "Scott Aaronson Makes Me Think OpenAI's “Safety” Is Fake, Clueless, Reckless and Insane"
+      },
+      "file-DrWQJJvvpNhFpiaZjwZHr3": {
+        "videoId": "wXGiV6tVtN0",
+        "title": "Can LLMs Reason? Liron Reacts to Subbarao Kambhampati on Machine Learning Street Talk"
+      },
+      "file-BWnsERHoiRcH5Gvgzpndyp": {
+        "videoId": "Hes10uWGP7Y",
+        "title": "This Yudkowskian Has A 99.999% P(Doom)"
+      },
+      "file-W3rvFbKrAu6CYfc3ceV7my": {
+        "videoId": "mUpfD9ZoNSM",
+        "title": "AI Doom Debate: Vaden Masrani & Ben Chugg vs. Liron Shapira"
+      },
+      "file-HuGT3xfDbKYyyoBdyyHdBm": {
+        "videoId": "opIvVzJF8t0",
+        "title": "Andrew Critch vs. Liron Shapira: Will AI Extinction Be Fast Or Slow?"
+      },
+      "file-6zYKdmADtrMLwV4FFciv5m": {
+        "videoId": "G6lGA7yPaV8",
+        "title": "AI Twitter Beefs #2: Yann LeCun, David Deutsch, Tyler Cowen vs. Eliezer Yudkowsky, Geoffrey Hinton"
+      },
+      "file-LweWBZyzuQXe5X1GG5CMQ7": {
+        "videoId": "zKz-t_l5yHg",
+        "title": "Is P(Doom) Meaningful? Epistemology Debate with Vaden Masrani and Ben Chugg"
+      },
+      "file-H4XZ23s3KzATBitPAhWUbq": {
+        "videoId": "2fg8an1pEaA",
+        "title": "Lee Cronin vs. Liron Shapira: AI Doom Debate and Assembly Theory Questions"
+      },
+      "file-AGUcbaevCN53Moh8jfmc1f": {
+        "videoId": "lyYIK_ATDm4",
+        "title": "“AI Snake Oil” Prof. Arvind Narayanan Can't See AGI Coming | Liron Reacts"
+      },
+      "file-M5KJEBD1psj9GhUngcuTes": {
+        "videoId": "4v-Qh3JQ4Jc",
+        "title": "Dr. Keith Duggar (Machine Learning Street Talk) vs. Liron Shapira — AI Doom Debate"
+      },
+      "file-XxVWfSgpn3d8TiSp9Kv9yW": {
+        "videoId": "F9ytuPTBeBI",
+        "title": "Q&A #1 Part 2: Stock Picking, Creativity, Types of Doomers, Favorite Books"
+      },
+      "file-VcebyQE3xcwCGYiHHC8n2H": {
+        "videoId": "BXg_HEAEf8s",
+        "title": "Q&A #1 Part 1: College, Asperger's, Elon Musk, Double Crux, Liron's IQ"
+      },
+      "file-DCpN4c9ebANNrueEWgCStv": {
+        "videoId": "ueam4fq8k8I",
+        "title": "Arguing \"By Definition\" | Rationality 101"
+      },
+      "file-MzNW5hE7FQCYythbGN56VG": {
+        "videoId": "Ppx8_eZ5yt8",
+        "title": "Doom Tiffs #1: Amjad Masad, Eliezer Yudkowsky, Roon, Lee Cronin, Naval Ravikant, Martin Casado"
+      },
+      "file-9cmFX7Mk2R4hG5yK8Msce1": {
+        "videoId": "tf251Ig1Pas",
+        "title": "Rationality 101: The Bottom Line"
+      },
+      "file-ER6k3CT5aCLeNRRVGG4PcK": {
+        "videoId": "59PTmetkPCY",
+        "title": "Can GPT o1 Reason? | Liron Reacts to Tim Scarfe & Keith Duggar"
+      },
+      "file-EGiHx3S8eHY9vtZ2hPX14w": {
+        "videoId": "rqiunloHu0o",
+        "title": "Yuval Noah Harari's AI Warnings Don't Go Far Enough | Liron Reacts"
+      },
+      "file-A1Q798BgAFqnhYEgeuCMHG": {
+        "videoId": "a3Z3Sc4Hrdg",
+        "title": "AI Doom Debate with Roman Yampolskiy: 50% vs. 99.999% P(Doom) — For Humanity Crosspost"
+      },
+      "file-Sj1KKMQDz2DTJr97t5qhM6": {
+        "videoId": "GbHTLfTrjAs",
+        "title": "Jobst Landgrebe Doesn't Believe In AGI | Liron Reacts"
+      },
+      "file-QHF6QedBpAy54ps2B2SzDK": {
+        "videoId": "lehJlitQvZE",
+        "title": "Arvind Narayanan Makes AI Sound Normal | Liron Reacts"
+      },
+      "file-6v3MnNi3oPUsNArzD1a94p": {
+        "videoId": "xge8PXFQKEE",
+        "title": "Bret Weinstein Bungles It On AI Extinction | Liron Reacts"
+      },
+      "file-LrsWZDnrjLCmJ4wuz9c9AZ": {
+        "videoId": "nYQsL3dYqds",
+        "title": "David Shapiro Part II: Unaligned Superintelligence Is Totally Fine?"
+      },
+      "file-K3cj3a9qiwDy1tZtXZr5p7": {
+        "videoId": "hlvAPAkwq34",
+        "title": "Maciej Ceglowski (Pinboard) Rejects AI Doomerism | Liron Reacts"
+      },
+      "file-AdevHdDsLuiQFZDWfKKpKR": {
+        "videoId": "58T1Ig56EHU",
+        "title": "David Shapiro Doesn't Get PauseAI | Liron Reacts"
+      },
+      "file-WX3Cb8gsACKLzSyz7LnGeT": {
+        "videoId": "A13qgzIU9JA",
+        "title": "David Brooks's Non-Doomer Non-Argument in the NY Times | Liron Reacts"
+      },
+      "file-YFDt1JPRQfJUJ9TFRKXEgf": {
+        "videoId": "SBm19zCk9HY",
+        "title": "Richard Sutton Dismisses AI Extinction Fears with Simplistic Arguments | Liron Reacts"
+      },
+      "file-PDwWWeEbniYKYUbU3FuY8E": {
+        "videoId": "QGYwCv1jwx8",
+        "title": "AI Doom Debate: “Cards Against Humanity” Co-Creator David Pinsof"
+      },
+      "file-JLwL6DCGPngqaWNgYzUQgS": {
+        "videoId": "vV6JKQ6p918",
+        "title": "P(Doom) Estimates Shouldn't Inform Policy?? Liron Reacts to Sayash Kapoor"
+      },
+      "file-CyZaXWPogg623id4agKZNn": {
+        "videoId": "wwnMVGCAeoI",
+        "title": "Liron Reacts to Martin Casado's AI Claims"
+      },
+      "file-TkwreAtTnqQZJuawNXrXSS": {
+        "videoId": "4YWAZEcYeMQ",
+        "title": "AI Doom Debate: Tilek Mamutov vs. Liron Shapira"
+      },
+      "file-TvnE29b4L4T3Fc3pDKR51C": {
+        "videoId": "RpSsuHyi4pg",
+        "title": "Rationality 101: Mysterious Answers to Mysterious Questions"
+      },
+      "file-SmUfEpknTbxYMiWRQv9yoh": {
+        "videoId": "Hp-7gdCyU60",
+        "title": "Liron is Anti-AI on Jubilee's \"Middle Ground\""
+      },
+      "file-1F1DAy6vBEUEAaasduaAWv": {
+        "videoId": "VYB037dXf4M",
+        "title": "Liron Reacts to Mike Israetel's \"Solving the AI Alignment Problem\""
+      },
+      "file-GGjh9GFJzgeyUA62edZLGV": {
+        "videoId": "_i4Liqj4G0g",
+        "title": "Optimization and the Intelligence Explosion"
+      },
+      "file-5b7BVpHSHNi9JjLiHdTQC8": {
+        "videoId": "9iWiA5i1Uy8",
+        "title": "Is our brain's superpower just \"culture\"?"
+      },
+      "file-TAnJZoUZ1tYWDwpuycMwKF": {
+        "videoId": "i0DxeBhjzlY",
+        "title": "Robin Hanson AI Doom Debate Highlights and Post-Debate Analysis"
+      },
+      "file-GHisaXTh3NEVqodmG5BjNG": {
+        "videoId": "dTQb6N3_zu8",
+        "title": "Robin Hanson vs. Liron Shapira: Is Near-Term Extinction From AGI Plausible?"
+      },
+      "file-LfMcCnLn5riMaEVk5B6wbL": {
+        "videoId": "uWL4DPaX8fE",
+        "title": "Are you ready for this?"
+      },
+      "file-FJ4FGsZxY4GofgCXMNXzST": {
+        "videoId": "xo5d_pCDmmo",
+        "title": "Robin Hanson says AGI might be 100+ years away"
+      },
+      "file-Fd8P552van1spirXCtoU7j": {
+        "videoId": "darVPzEhh-I",
+        "title": "Preparing for my AI Doom Debate with Robin Hanson"
+      },
+      "file-MZfCqXngG6pTnN53tfJa5f": {
+        "videoId": "iNnoJnuOXFA",
+        "title": "Robin Hanson debate prep: Liron argues *against* AI doom!"
+      },
+      "file-TaX9sAy2pdvD4pChqas1EG": {
+        "videoId": "08vZT2LLvtA",
+        "title": "AI Doom Q&A with Tony Warner and Liron Shapira"
+      },
+      "file-Cfecs7iVPnyBCv6Hv1ujb4": {
+        "videoId": "FIlUViK5zSY",
+        "title": "AI Doom Debate: Will AGI’s analysis paralysis save humanity?"
+      },
+      "file-Sy5u3m4cGrSffJrnvenFTA": {
+        "videoId": "-tIq6kbrF-4",
+        "title": "Steven Pinker doesn’t get the AI doom argument | Liron Reacts"
+      },
+      "file-9UjWn3jcZaWkKCFipUywj8": {
+        "videoId": "Pjpgx-n78X8",
+        "title": "What this \"Doom Debates\" podcast is about"
+      },
+      "file-BnAzuubCrs8QwjpNiorSZM": {
+        "videoId": "loaT9eAjLv0",
+        "title": "Can Humans Judge AI's Arguments"
+      },
+      "file-QR2zCJLxVHdzqQRGMwEiWm": {
+        "videoId": "cj5rgWbRyMI",
+        "title": "AI Doom Debate: What's a plausible alignment scenario?"
+      },
+      "file-HgdnPMQfrkkKdDt3N4NYMY": {
+        "videoId": "Ahq-EMSrskI",
+        "title": "Q&A: How scary is a superintelligent football coach?"
+      },
+      "file-HoHaoF9AixuJMFuvTarvjE": {
+        "videoId": "5wqVR9NjiII",
+        "title": "Should we gamble on AGI before all 8 billion of us die?"
+      },
+      "file-ENrDyuKQAcfqubjRBDPtwY": {
+        "videoId": "XnoaRtyYOqY",
+        "title": "AI Doom Debate: George Hotz vs. Liron Shapira"
+      },
+      "file-1hSXq73PuSBiCvMjb9sMRs": {
+        "videoId": "ObSPSGRw5LQ",
+        "title": "AI Doom Debate: Liron Shapira vs. Kelvin Santos"
+      },
+      "file-4L8hLuNzNJKaubRUpouoXa": {
+        "videoId": "VihA_-8kBNg",
+        "title": "In Defense of AI Doomerism | Robert Wright & Liron Shapira"
+      }
+    }
+  }
+}
