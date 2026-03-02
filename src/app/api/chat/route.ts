@@ -80,7 +80,18 @@ function buildMetadataGuardrailPrompt(
     .map((v) => `- ${v.id} | ${v.publishedAt} | ${v.title}`)
     .join("\n");
 
-  return `${originalMessage}\n\n[RETRIEVAL_CONSTRAINT]\nThe user asked for videos before ${beforeDate}. You MUST only cite files for videos published before ${beforeDate}.\nIf no relevant clip exists in the allowed set, say so explicitly and do not cite out-of-range videos.\nAllowed videos:\n${allowedList || "- (none found)"}`;
+  return `${originalMessage}\n\n[METADATA_FIRST_STEP]\nFirst step: review metadata constraints before retrieving quotes.\nThe user asked for videos before ${beforeDate}. You MUST only cite files for videos published before ${beforeDate}.\nIf no relevant clip exists in the allowed set, say so explicitly and do not cite out-of-range videos.\nAllowed videos:\n${allowedList || "- (none found)"}`;
+}
+
+function buildRunInstructions(beforeDate?: string | null): string {
+  return [
+    "FIRST STEP (MANDATORY): Apply metadata constraints before selecting any transcript quote.",
+    "Use file_search only after deciding which files satisfy metadata constraints.",
+    beforeDate
+      ? `Hard filter: only videos with publishedAt < ${beforeDate}.`
+      : "If the user provides date/channel/speaker/duration constraints, treat them as hard filters.",
+    "If no files satisfy metadata filters, say no matching files found instead of citing out-of-range files.",
+  ].join("\n");
 }
 
 function findTimestampForQuote(
@@ -181,6 +192,7 @@ export async function POST(req: NextRequest) {
     // Run the assistant and stream the response
     const run = openai.beta.threads.runs.stream(currentThreadId, {
       assistant_id: assistant.assistantId,
+      additional_instructions: buildRunInstructions(beforeDate),
     });
 
     // Create a readable stream that sends the threadId first, then streams text deltas,
