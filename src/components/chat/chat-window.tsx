@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { SPEAKER_ASSISTANTS } from "@/lib/assistants";
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
 
@@ -186,12 +187,8 @@ export function ChatWindow() {
               <p className="text-lg">
                 Chat with{" "}
                 <span className="font-semibold text-gray-600">
-                  {
-                    // Find the speaker name from the slug
-                    speaker === "yudkowsky"
-                      ? "Eliezer Yudkowsky"
-                      : "Liron Shapira"
-                  }
+                  {SPEAKER_ASSISTANTS.find((s) => s.slug === speaker)
+                    ?.name ?? speaker}
                 </span>
                 &apos;s transcript history
               </p>
