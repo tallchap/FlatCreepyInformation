@@ -1,6 +1,7 @@
 // src/lib/assistants.ts
 // ─────────────────────────────────────────────────────────────
 //  OpenAI Assistants configuration for speaker chat
+//  Model: gpt-4.1 (upgraded from gpt-4o)
 // ─────────────────────────────────────────────────────────────
 
 export interface SpeakerAssistant {
