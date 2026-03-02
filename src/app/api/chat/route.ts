@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
                 citations[pc.marker] = {
                   videoId: pc.videoId,
                   title: pc.title,
-                  ...(timestamp !== null && { timestamp }),
+                  ...(timestamp !== null && { timestamp: Math.floor(timestamp) }),
                 };
               }
 
