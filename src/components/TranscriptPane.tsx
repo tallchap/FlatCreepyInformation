@@ -10,6 +10,7 @@ type Props = {
   sentencesPerPara?: number;
   initialTimestamp?: number | null;
   autoScrollToActive?: boolean;
+  playerSyncKey?: string | number;
 };
 
 /** Find the paragraph + line matching a given timestamp. */
@@ -33,6 +34,7 @@ export default function TranscriptPane({
   sentencesPerPara = 4, // Fewer sentences per paragraph
   initialTimestamp = null,
   autoScrollToActive = true,
+  playerSyncKey,
 }: Props) {
   const [paras, setParas] = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
@@ -82,21 +84,35 @@ export default function TranscriptPane({
 
   /* 2 ▸ PLAYER SETUP */
   useEffect(() => {
+    playerReadyRef.current = false;
+
+    if (playerRef.current?.destroy) {
+      try {
+        playerRef.current.destroy();
+      } catch {
+        // no-op
+      }
+    }
+    playerRef.current = null;
+
     const mountPlayer = () => {
       if (playerRef.current) return;
       const el = document.getElementById(`player-${videoId}`) as HTMLIFrameElement | null;
       if (el && (window as any).YT?.Player) {
-        if (el.src && !el.src.includes('origin=')) {
-          const sep = el.src.includes('?') ? '&' : '?';
+        if (el.src && !el.src.includes("origin=")) {
+          const sep = el.src.includes("?") ? "&" : "?";
           el.src = `${el.src}${sep}origin=${encodeURIComponent(window.location.origin)}`;
         }
         playerRef.current = new (window as any).YT.Player(el, {
           events: {
-            onReady: () => { playerReadyRef.current = true; },
+            onReady: () => {
+              playerReadyRef.current = true;
+            },
           },
         });
       }
     };
+
     if ((window as any).YT?.Player) {
       mountPlayer();
     } else {
@@ -105,7 +121,19 @@ export default function TranscriptPane({
       document.body.appendChild(s);
       (window as any).onYouTubeIframeAPIReady = mountPlayer;
     }
-  }, [videoId]);
+
+    return () => {
+      if (playerRef.current?.destroy) {
+        try {
+          playerRef.current.destroy();
+        } catch {
+          // no-op
+        }
+      }
+      playerRef.current = null;
+      playerReadyRef.current = false;
+    };
+  }, [videoId, playerSyncKey]);
 
   /* 3 ▸ SYNC & HIGHLIGHT */
   useEffect(() => {

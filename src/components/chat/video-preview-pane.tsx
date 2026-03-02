@@ -45,6 +45,7 @@ export function VideoPreviewPane({ videoId, startSec, title }: Props) {
           sentencesPerPara={3}
           initialTimestamp={startSec}
           autoScrollToActive={false}
+          playerSyncKey={`${videoId}-${startSec}`}
         />
       </CardContent>
     </Card>
