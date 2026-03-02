@@ -161,16 +161,27 @@ export default function TranscriptPane({
     const lineEl = activeLineRef.current;
     if (!container || !lineEl) return;
 
-    const containerRect = container.getBoundingClientRect();
-    const lineRect = lineEl.getBoundingClientRect();
-    const offsetWithinContainer =
-      lineRect.top - containerRect.top + container.scrollTop;
-    const targetScrollTop = offsetWithinContainer - container.clientHeight / 2;
+    // Keep scrolling constrained to the transcript pane itself.
+    const lineTop = lineEl.offsetTop - container.offsetTop;
+    const lineBottom = lineTop + lineEl.offsetHeight;
+    const viewTop = container.scrollTop;
+    const viewBottom = viewTop + container.clientHeight;
 
-    container.scrollTo({
-      top: Math.max(0, targetScrollTop),
-      behavior: "smooth",
-    });
+    // Only scroll when active line gets near/outside viewport edges to reduce jitter.
+    const edgePadding = Math.max(24, container.clientHeight * 0.22);
+    const tooHigh = lineTop < viewTop + edgePadding;
+    const tooLow = lineBottom > viewBottom - edgePadding;
+
+    if (tooHigh || tooLow) {
+      const targetScrollTop = Math.max(
+        0,
+        lineTop - container.clientHeight * 0.4,
+      );
+      container.scrollTo({
+        top: targetScrollTop,
+        behavior: "smooth",
+      });
+    }
   }, [active, autoScrollToActive]);
 
   /* 3c ▸ KEEP ACTIVE REF IN SYNC */
