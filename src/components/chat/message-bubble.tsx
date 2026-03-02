@@ -6,6 +6,7 @@ interface MessageBubbleProps {
   role: "user" | "assistant";
   content: string;
   isStreaming?: boolean;
+  onVideoLinkClick?: (payload: { videoId: string; startSec: number; title?: string }) => void;
 }
 
 /**
@@ -21,12 +22,12 @@ function formatContent(text: string): string {
       // Bold **text**
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
       // Snippysaurus video links: [Video Title](youtube:VIDEO_ID) or [Video Title](youtube:VIDEO_ID:SECONDS)
-      // Allow one level of nested brackets (e.g. "[Percontations]") but prevent spanning across separate link constructs
       .replace(
         /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(youtube:([\w-]{11})(?::(\d+(?:\.\d+)?))?\)/g,
         (_match, title: string, videoId: string, seconds?: string) => {
-          const href = seconds ? `/video/${videoId}?t=${Math.floor(parseFloat(seconds))}` : `/video/${videoId}`;
-          return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
+          const startSec = seconds ? Math.floor(parseFloat(seconds)) : 0;
+          const href = `/video/${videoId}?t=${startSec}`;
+          return `<a href="${href}" data-video-id="${videoId}" data-start-sec="${startSec}" data-video-title="${encodeURIComponent(title)}" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
         },
       )
       // Regular markdown links [text](url)
@@ -34,10 +35,10 @@ function formatContent(text: string): string {
         /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
         '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
       )
-      // Bare YouTube URLs
+      // Bare youtu.be URLs
       .replace(
         /(https:\/\/youtu\.be\/([\w-]{11}))/g,
-        '<a href="/video/$2" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
+        '<a href="/video/$2" data-video-id="$2" data-start-sec="0" class="underline text-blue-600 hover:text-blue-800">$1</a>',
       )
       // Newlines
       .replace(/\n/g, "<br />")
@@ -48,8 +49,25 @@ export function MessageBubble({
   role,
   content,
   isStreaming,
+  onVideoLinkClick,
 }: MessageBubbleProps) {
   const isUser = role === "user";
+
+  function handleAssistantContentClick(e: React.MouseEvent<HTMLDivElement>) {
+    if (!onVideoLinkClick) return;
+    const target = e.target as HTMLElement;
+    const link = target.closest("a[data-video-id]") as HTMLAnchorElement | null;
+    if (!link) return;
+
+    const videoId = link.dataset.videoId;
+    if (!videoId) return;
+
+    e.preventDefault();
+    const startSec = Number(link.dataset.startSec || "0") || 0;
+    const encodedTitle = link.dataset.videoTitle;
+    const title = encodedTitle ? decodeURIComponent(encodedTitle) : link.textContent || undefined;
+    onVideoLinkClick({ videoId, startSec, title });
+  }
 
   return (
     <div
@@ -69,6 +87,7 @@ export function MessageBubble({
         ) : (
           <div
             className="prose prose-sm max-w-none"
+            onClick={handleAssistantContentClick}
             dangerouslySetInnerHTML={{ __html: formatContent(content) }}
           />
         )}
