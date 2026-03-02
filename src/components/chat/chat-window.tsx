@@ -109,7 +109,7 @@ export function ChatWindow() {
               // Replace annotation markers (e.g. 【4:14†source】) with clickable links
               const citationsMap = event.citations as Record<
                 string,
-                { videoId: string; title: string }
+                { videoId: string; title: string; timestamp?: number }
               >;
               setMessages((prev) => {
                 const updated = [...prev];
@@ -117,7 +117,11 @@ export function ChatWindow() {
                 if (last && last.role === "assistant") {
                   let content = last.content;
                   for (const [marker, info] of Object.entries(citationsMap)) {
-                    const link = `[${info.title}](youtube:${info.videoId})`;
+                    // Include timestamp if available: youtube:VIDEO_ID:SECONDS
+                    const ytRef = info.timestamp !== undefined
+                      ? `youtube:${info.videoId}:${info.timestamp}`
+                      : `youtube:${info.videoId}`;
+                    const link = `[${info.title}](${ytRef})`;
                     content = content.split(marker).join(link);
                   }
                   updated[updated.length - 1] = { ...last, content };
