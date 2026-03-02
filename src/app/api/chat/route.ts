@@ -2,7 +2,11 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { getAssistantBySlug } from "@/lib/assistants";
-import { fetchTranscript, fetchVideoMeta } from "@/lib/bigquery";
+import {
+  fetchTranscript,
+  fetchVideoMeta,
+  fetchSpeakerVideosBeforeDate,
+} from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -53,6 +57,30 @@ function splitSpeakers(raw: string | null | undefined): string[] | undefined {
     .map((s) => s.trim())
     .filter(Boolean);
   return speakers.length > 0 ? speakers : undefined;
+}
+
+function detectBeforeDateConstraint(message: string): string | null {
+  const lower = message.toLowerCase();
+
+  const explicitDate = lower.match(/\bbefore\s+(\d{4}-\d{2}-\d{2})\b/);
+  if (explicitDate) return explicitDate[1];
+
+  const yearOnly = lower.match(/\bbefore\s+(\d{4})\b/);
+  if (yearOnly) return `${yearOnly[1]}-01-01`;
+
+  return null;
+}
+
+function buildMetadataGuardrailPrompt(
+  originalMessage: string,
+  beforeDate: string,
+  allowedVideos: { id: string; title: string; publishedAt: string }[],
+): string {
+  const allowedList = allowedVideos
+    .map((v) => `- ${v.id} | ${v.publishedAt} | ${v.title}`)
+    .join("\n");
+
+  return `${originalMessage}\n\n[RETRIEVAL_CONSTRAINT]\nThe user asked for videos before ${beforeDate}. You MUST only cite files for videos published before ${beforeDate}.\nIf no relevant clip exists in the allowed set, say so explicitly and do not cite out-of-range videos.\nAllowed videos:\n${allowedList || "- (none found)"}`;
 }
 
 function findTimestampForQuote(
@@ -125,10 +153,29 @@ export async function POST(req: NextRequest) {
       currentThreadId = thread.id;
     }
 
-    // Add user message to thread
+    // Add user message to thread (with metadata guardrails when date constraints are detected)
+    let promptForAssistant = message;
+    const beforeDate = detectBeforeDateConstraint(message);
+    if (beforeDate) {
+      try {
+        const allowedVideos = await fetchSpeakerVideosBeforeDate(
+          assistant.name,
+          beforeDate,
+          300,
+        );
+        promptForAssistant = buildMetadataGuardrailPrompt(
+          message,
+          beforeDate,
+          allowedVideos,
+        );
+      } catch (err) {
+        console.error("Failed to build date guardrail prompt:", err);
+      }
+    }
+
     await openai.beta.threads.messages.create(currentThreadId, {
       role: "user",
-      content: message,
+      content: promptForAssistant,
     });
 
     // Run the assistant and stream the response
@@ -257,6 +304,14 @@ export async function POST(req: NextRequest) {
                   ...(metadataCache[pc.videoId] || {}),
                   ...(pc.metadata || {}),
                 };
+
+                if (
+                  beforeDate &&
+                  mergedMetadata.publishedAt &&
+                  mergedMetadata.publishedAt >= beforeDate
+                ) {
+                  continue;
+                }
 
                 citations[pc.marker] = {
                   videoId: pc.videoId,
