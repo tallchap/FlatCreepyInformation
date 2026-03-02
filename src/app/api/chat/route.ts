@@ -211,12 +211,16 @@ export async function POST(req: NextRequest) {
             console.error("Error fetching citations:", err);
           }
 
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "done" })}\n\n`,
-            ),
-          );
-          controller.close();
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "done" })}\n\n`,
+              ),
+            );
+            controller.close();
+          } catch {
+            /* stream already closed/cancelled */
+          }
         });
 
         run.on("error", (error) => {
