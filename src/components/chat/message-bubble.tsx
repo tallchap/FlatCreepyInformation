@@ -9,23 +9,31 @@ interface MessageBubbleProps {
 }
 
 /**
- * Turn markdown-ish YouTube links into clickable anchors and
- * preserve basic formatting (newlines, bold, quotes).
+ * Turn markdown-ish links into clickable anchors, convert
+ * youtube:VIDEO_ID citations into Snippysaurus video links,
+ * strip OpenAI file-search annotations, and preserve formatting.
  */
 function formatContent(text: string): string {
   return (
     text
+      // Remove OpenAI file-search annotation markers like 【4:14†source】
+      .replace(/[\u3010][^\u3011]*[\u3011]/g, "")
       // Bold **text**
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      // Links [text](url)
+      // Snippysaurus video links: [Video Title](youtube:VIDEO_ID)
+      .replace(
+        /\[([^\]]+)\]\(youtube:([\w-]{11})\)/g,
+        '<a href="/video/$2" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>$1</a>',
+      )
+      // Regular markdown links [text](url)
       .replace(
         /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
         '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
       )
       // Bare YouTube URLs
       .replace(
-        /(https:\/\/youtu\.be\/[\w-]+)/g,
-        '<a href="$1" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
+        /(https:\/\/youtu\.be\/([\w-]{11}))/g,
+        '<a href="/video/$2" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
       )
       // Newlines
       .replace(/\n/g, "<br />")
