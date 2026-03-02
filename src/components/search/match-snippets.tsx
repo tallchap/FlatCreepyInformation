@@ -19,9 +19,15 @@ type Props = {
   /** Snippet objects with pre-computed timestamps returned by search. */
   snippets: { text: string; seconds: number | null }[];
   className?: string;
+  onTimestampClick?: (seconds: number, snippetHtml?: string) => void;
 };
 
-export function MatchSnippets({ videoId, snippets, className }: Props) {
+export function MatchSnippets({
+  videoId,
+  snippets,
+  className,
+  onTimestampClick,
+}: Props) {
   return (
     <div className={className}>
       <div className="text-sm text-gray-800 mb-2 font-medium">
@@ -38,12 +44,22 @@ export function MatchSnippets({ videoId, snippets, className }: Props) {
           >
             {/* clickable timestamp */}
             {seconds !== null ? (
-              <Link
-                href={`/video/${videoId}?t=${seconds}`}
-                className="text-blue-600 hover:underline shrink-0"
-              >
-                {fmt(seconds)}
-              </Link>
+              onTimestampClick ? (
+                <button
+                  type="button"
+                  onClick={() => onTimestampClick(seconds, snippet.text)}
+                  className="text-blue-600 hover:underline shrink-0"
+                >
+                  {fmt(seconds)}
+                </button>
+              ) : (
+                <Link
+                  href={`/video/${videoId}?t=${seconds}`}
+                  className="text-blue-600 hover:underline shrink-0"
+                >
+                  {fmt(seconds)}
+                </Link>
+              )
             ) : (
               <span className="text-gray-400 shrink-0">--:--</span>
             )}

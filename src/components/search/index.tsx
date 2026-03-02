@@ -1,16 +1,41 @@
 "use client";
 
 import { Loader } from "@/components/loader";
-import { useActionState, useState } from "react";
+import { useState } from "react";
 import { ErrorMessage } from "../error-message";
 import { SearchForm } from "./search-form";
-import { searchTranscript } from "./utils/actions";
 import { VideoResult } from "./video-result";
 import { VideoResult as VideoResultType } from "./utils/types";
 import { Export } from "./export";
+import { VideoPane } from "./video-pane";
+
+type SelectedClip = {
+  videoId: string;
+  startSec: number;
+  snippetHtml?: string;
+  videoTitle: string;
+  channelName: string;
+};
+
 export function App() {
   const [data, setData] = useState<Record<string, any>>();
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedClip, setSelectedClip] = useState<SelectedClip | null>(null);
+
+  const handleTimestampClick = (
+    video: VideoResultType,
+    seconds: number,
+    snippetHtml?: string,
+  ) => {
+    setSelectedClip({
+      videoId: video.ID,
+      startSec: seconds,
+      snippetHtml,
+      videoTitle: video.Video_Title,
+      channelName: video.Channel_Name,
+    });
+  };
+
   return (
     <>
       <SearchForm
@@ -38,10 +63,26 @@ export function App() {
           </p>
         </div>
       ) : (
-        <div className="space-y-4">
-          {data?.results?.map((video: VideoResultType, index: number) => (
-            <VideoResult video={video} key={`${video.ID}-${index}`} />
-          ))}
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_430px] gap-4 items-start">
+          <div className="space-y-4">
+            {data?.results?.map((video: VideoResultType, index: number) => (
+              <VideoResult
+                video={video}
+                key={`${video.ID}-${index}`}
+                onTimestampClick={handleTimestampClick}
+              />
+            ))}
+          </div>
+
+          {selectedClip && (
+            <VideoPane
+              videoId={selectedClip.videoId}
+              startSec={selectedClip.startSec}
+              snippetHtml={selectedClip.snippetHtml}
+              videoTitle={selectedClip.videoTitle}
+              channelName={selectedClip.channelName}
+            />
+          )}
         </div>
       )}
     </>

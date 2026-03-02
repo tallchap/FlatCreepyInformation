@@ -7,7 +7,16 @@ import { VideoResult as VideoResultType } from "./utils/types";
 import { VideoLength } from "./video-length";
 import { TranscriptDialog } from "./transcript-dialog";
 
-export function VideoResult({ video }: { video: VideoResultType }) {
+type Props = {
+  video: VideoResultType;
+  onTimestampClick?: (
+    video: VideoResultType,
+    seconds: number,
+    snippetHtml?: string,
+  ) => void;
+};
+
+export function VideoResult({ video, onTimestampClick }: Props) {
   return (
     <Card className="hover:border-blue-200 transition-all">
       <CardContent>
@@ -51,12 +60,15 @@ export function VideoResult({ video }: { video: VideoResultType }) {
             <TranscriptDialog video={video} />
           </div>
         </div>
-         {video.MatchSnippets && video.MatchSnippets.length > 0 && (
-           <MatchSnippets
-             videoId={video.ID}            // ← ID is the YouTube id from BigQuery
-             snippets={video.MatchSnippets}
-             className="mt-4"
-           />
+        {video.MatchSnippets && video.MatchSnippets.length > 0 && (
+          <MatchSnippets
+            videoId={video.ID}
+            snippets={video.MatchSnippets}
+            className="mt-4"
+            onTimestampClick={(seconds, snippetHtml) =>
+              onTimestampClick?.(video, seconds, snippetHtml)
+            }
+          />
         )}
       </CardContent>
     </Card>
