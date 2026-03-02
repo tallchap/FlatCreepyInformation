@@ -11,6 +11,10 @@ const links = [
     label: "Browse",
   },
   {
+    href: "/chat",
+    label: "Chat",
+  },
+  {
     href: "/transcribe",
     label: "Transcribe",
   },
