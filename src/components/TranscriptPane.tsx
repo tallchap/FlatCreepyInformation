@@ -40,6 +40,7 @@ export default function TranscriptPane({
   const [active, setActive] = useState<ActivePos>(null);
   const playerRef = useRef<any>(null);
   const activeLineRef = useRef<HTMLSpanElement | null>(null);
+  const containerRef = useRef<HTMLDivElement | null>(null);
   const seekedAtRef = useRef<number>(0);
   const playerReadyRef = useRef<boolean>(false);
   const activeRef = useRef<ActivePos>(null);
@@ -155,9 +156,21 @@ export default function TranscriptPane({
   /* 3b ▸ SCROLL TO ACTIVE LINE */
   useEffect(() => {
     if (!autoScrollToActive) return;
-    if (activeLineRef.current) {
-      activeLineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
-    }
+
+    const container = containerRef.current;
+    const lineEl = activeLineRef.current;
+    if (!container || !lineEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const lineRect = lineEl.getBoundingClientRect();
+    const offsetWithinContainer =
+      lineRect.top - containerRect.top + container.scrollTop;
+    const targetScrollTop = offsetWithinContainer - container.clientHeight / 2;
+
+    container.scrollTo({
+      top: Math.max(0, targetScrollTop),
+      behavior: "smooth",
+    });
   }, [active, autoScrollToActive]);
 
   /* 3c ▸ KEEP ACTIVE REF IN SYNC */
@@ -182,6 +195,7 @@ export default function TranscriptPane({
   /* 5 ▸ RENDER */
   return (
     <div
+      ref={containerRef}
       className="overflow-y-auto text-m leading-tight space-y-2 bg-white dark:bg-gray-800 rounded-lg shadow p-3"
       style={{ maxHeight: height }}
     >
