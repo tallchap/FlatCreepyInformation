@@ -4,7 +4,13 @@ import { useEffect, useRef, useState, useCallback } from "react";
 type Line = { start: number; text: string };
 type Paragraph = { start: number; lines: Line[] };
 type ActivePos = { para: number; line: number } | null;
-type Props = { videoId: string; height?: number; sentencesPerPara?: number; initialTimestamp?: number | null };
+type Props = {
+  videoId: string;
+  height?: number;
+  sentencesPerPara?: number;
+  initialTimestamp?: number | null;
+  autoScrollToActive?: boolean;
+};
 
 /** Find the paragraph + line matching a given timestamp. */
 function findPositionForTime(paras: Paragraph[], t: number): ActivePos {
@@ -26,6 +32,7 @@ export default function TranscriptPane({
   height = 300, // Reduced default height
   sentencesPerPara = 4, // Fewer sentences per paragraph
   initialTimestamp = null,
+  autoScrollToActive = true,
 }: Props) {
   const [paras, setParas] = useState<Paragraph[]>([]);
   const [active, setActive] = useState<ActivePos>(null);
@@ -119,10 +126,11 @@ export default function TranscriptPane({
 
   /* 3b ▸ SCROLL TO ACTIVE LINE */
   useEffect(() => {
+    if (!autoScrollToActive) return;
     if (activeLineRef.current) {
       activeLineRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
     }
-  }, [active]);
+  }, [active, autoScrollToActive]);
 
   /* 3c ▸ KEEP ACTIVE REF IN SYNC */
   useEffect(() => {

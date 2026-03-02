@@ -6,11 +6,18 @@ import { Button } from "@/components/ui/button";
 import { SPEAKER_ASSISTANTS } from "@/lib/assistants";
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
+import { VideoPreviewPane } from "./video-preview-pane";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
 }
+
+type SelectedVideo = {
+  videoId: string;
+  startSec: number;
+  title?: string;
+} | null;
 
 export function ChatWindow() {
   const [speaker, setSpeaker] = useState("");
@@ -18,6 +25,7 @@ export function ChatWindow() {
   const [input, setInput] = useState("");
   const [threadId, setThreadId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedVideo, setSelectedVideo] = useState<SelectedVideo>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -34,6 +42,7 @@ export function ChatWindow() {
     setThreadId(null);
     setInput("");
     setIsLoading(false);
+    setSelectedVideo(null);
   }
 
   function handleSpeakerChange(value: string) {
@@ -174,98 +183,109 @@ export function ChatWindow() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-160px)] max-w-4xl mx-auto">
-      {/* Header */}
-      <div className="flex items-center justify-between gap-4 pb-4 border-b border-gray-200">
-        <div className="flex items-center gap-3">
-          <SpeakerSelect
-            value={speaker}
-            onValueChange={handleSpeakerChange}
-            disabled={isLoading}
-          />
-          {messages.length > 0 && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={handleNewConversation}
-              disabled={isLoading}
-            >
-              <RotateCcw className="h-4 w-4 mr-1" />
-              New Chat
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Messages area */}
-      <div className="flex-1 overflow-y-auto py-4 space-y-4">
-        {!speaker && (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            <p className="text-lg">Select a speaker to start chatting</p>
-          </div>
-        )}
-
-        {speaker && messages.length === 0 && (
-          <div className="flex items-center justify-center h-full text-gray-400">
-            <div className="text-center space-y-2">
-              <p className="text-lg">
-                Chat with{" "}
-                <span className="font-semibold text-gray-600">
-                  {SPEAKER_ASSISTANTS.find((s) => s.slug === speaker)
-                    ?.name ?? speaker}
-                </span>
-                &apos;s transcript history
-              </p>
-              <p className="text-sm">
-                Ask about their views, find specific quotes, or explore topics
-                they&apos;ve discussed.
-              </p>
-            </div>
-          </div>
-        )}
-
-        {messages.map((msg, i) => (
-          <MessageBubble
-            key={i}
-            role={msg.role}
-            content={msg.content}
-            isStreaming={
-              isLoading &&
-              i === messages.length - 1 &&
-              msg.role === "assistant"
-            }
-          />
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input area */}
-      {speaker && (
-        <div className="border-t border-gray-200 pt-4">
-          <div className="flex items-end gap-2">
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask about their views, find quotes, explore topics..."
-              className="flex-1 resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent min-h-[48px] max-h-[120px]"
-              rows={1}
+    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4 items-start">
+      <div className="flex flex-col h-[calc(100vh-160px)] min-w-0">
+        {/* Header */}
+        <div className="flex items-center justify-between gap-4 pb-4 border-b border-gray-200">
+          <div className="flex items-center gap-3">
+            <SpeakerSelect
+              value={speaker}
+              onValueChange={handleSpeakerChange}
               disabled={isLoading}
             />
-            <Button
-              onClick={handleSend}
-              disabled={!input.trim() || isLoading}
-              className="bg-[#99cc66] hover:bg-[#88bb55] text-white rounded-xl h-[48px] w-[48px] p-0"
-            >
-              <Send className="h-5 w-5" />
-            </Button>
+            {messages.length > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleNewConversation}
+                disabled={isLoading}
+              >
+                <RotateCcw className="h-4 w-4 mr-1" />
+                New Chat
+              </Button>
+            )}
           </div>
-          <p className="text-xs text-gray-400 mt-2 text-center">
-            Responses are based on video transcript data. Always verify quotes
-            against the original videos.
-          </p>
         </div>
+
+        {/* Messages area */}
+        <div className="flex-1 overflow-y-auto py-4 space-y-4">
+          {!speaker && (
+            <div className="flex items-center justify-center h-full text-gray-400">
+              <p className="text-lg">Select a speaker to start chatting</p>
+            </div>
+          )}
+
+          {speaker && messages.length === 0 && (
+            <div className="flex items-center justify-center h-full text-gray-400">
+              <div className="text-center space-y-2">
+                <p className="text-lg">
+                  Chat with{" "}
+                  <span className="font-semibold text-gray-600">
+                    {SPEAKER_ASSISTANTS.find((s) => s.slug === speaker)
+                      ?.name ?? speaker}
+                  </span>
+                  &apos;s transcript history
+                </p>
+                <p className="text-sm">
+                  Ask about their views, find specific quotes, or explore topics
+                  they&apos;ve discussed.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {messages.map((msg, i) => (
+            <MessageBubble
+              key={i}
+              role={msg.role}
+              content={msg.content}
+              isStreaming={
+                isLoading &&
+                i === messages.length - 1 &&
+                msg.role === "assistant"
+              }
+              onVideoLinkClick={(payload) => setSelectedVideo(payload)}
+            />
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input area */}
+        {speaker && (
+          <div className="border-t border-gray-200 pt-4">
+            <div className="flex items-end gap-2">
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Ask about their views, find quotes, explore topics..."
+                className="flex-1 resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent min-h-[48px] max-h-[120px]"
+                rows={1}
+                disabled={isLoading}
+              />
+              <Button
+                onClick={handleSend}
+                disabled={!input.trim() || isLoading}
+                className="bg-[#99cc66] hover:bg-[#88bb55] text-white rounded-xl h-[48px] w-[48px] p-0"
+              >
+                <Send className="h-5 w-5" />
+              </Button>
+            </div>
+            <p className="text-xs text-gray-400 mt-2 text-center">
+              Responses are based on video transcript data. Always verify quotes
+              against the original videos.
+            </p>
+          </div>
+        )}
+      </div>
+
+      {selectedVideo && (
+        <VideoPreviewPane
+          videoId={selectedVideo.videoId}
+          startSec={selectedVideo.startSec}
+          title={selectedVideo.title}
+        />
       )}
     </div>
   );
