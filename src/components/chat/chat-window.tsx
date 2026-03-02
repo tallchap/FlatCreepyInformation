@@ -104,6 +104,30 @@ export function ChatWindow() {
                 }
                 return updated;
               });
+            } else if (event.type === "citations") {
+              // Server resolved file citations to real video IDs
+              // Replace annotation markers (e.g. 【4:14†source】) with clickable links
+              const citationsMap = event.citations as Record<
+                string,
+                { videoId: string; title: string; timestamp?: number }
+              >;
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === "assistant") {
+                  let content = last.content;
+                  for (const [marker, info] of Object.entries(citationsMap)) {
+                    // Include timestamp if available: youtube:VIDEO_ID:SECONDS
+                    const ytRef = info.timestamp !== undefined
+                      ? `youtube:${info.videoId}:${info.timestamp}`
+                      : `youtube:${info.videoId}`;
+                    const link = `[${info.title}](${ytRef})`;
+                    content = content.split(marker).join(link);
+                  }
+                  updated[updated.length - 1] = { ...last, content };
+                }
+                return updated;
+              });
             } else if (event.type === "error") {
               setMessages((prev) => {
                 const updated = [...prev];

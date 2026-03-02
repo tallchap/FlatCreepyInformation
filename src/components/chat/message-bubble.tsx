@@ -20,10 +20,14 @@ function formatContent(text: string): string {
       .replace(/[\u3010][^\u3011]*[\u3011]/g, "")
       // Bold **text**
       .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      // Snippysaurus video links: [Video Title](youtube:VIDEO_ID)
+      // Snippysaurus video links: [Video Title](youtube:VIDEO_ID) or [Video Title](youtube:VIDEO_ID:SECONDS)
+      // Allow one level of nested brackets (e.g. "[Percontations]") but prevent spanning across separate link constructs
       .replace(
-        /\[([^\]]+)\]\(youtube:([\w-]{11})\)/g,
-        '<a href="/video/$2" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>$1</a>',
+        /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(youtube:([\w-]{11})(?::(\d+))?\)/g,
+        (_match, title: string, videoId: string, seconds?: string) => {
+          const href = seconds ? `/video/${videoId}?t=${seconds}` : `/video/${videoId}`;
+          return `<a href="${href}" target="_blank" rel="noopener noreferrer" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
+        },
       )
       // Regular markdown links [text](url)
       .replace(
