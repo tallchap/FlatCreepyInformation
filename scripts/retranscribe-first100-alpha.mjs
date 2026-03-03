@@ -4,9 +4,9 @@ import axios from "axios";
 import fs from "node:fs";
 import path from "node:path";
 
-const MAX_ATTEMPTS = 3;
-const ATTEMPT_DELAY_MS = 10000;
-const VIDEO_DELAY_MS = 5000;
+const MAX_ATTEMPTS = 2;
+const ATTEMPT_DELAY_MS = 30000;
+const VIDEO_DELAY_MS = 30000;
 const MIN_SEGMENTS_PER_MIN = 1;
 
 function loadEnvLocal() {
