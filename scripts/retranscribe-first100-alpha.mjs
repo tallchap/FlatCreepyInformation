@@ -4,10 +4,10 @@ import axios from "axios";
 import fs from "node:fs";
 import path from "node:path";
 
-const MAX_ATTEMPTS = 5;
-const MIN_START_THRESHOLD_SEC = 2;
-const MIN_ENDSTATE_MAX_START_SEC = 300;
-const MIN_ENDSTATE_SEGMENT_COUNT = 200;
+const MAX_ATTEMPTS = 3;
+const ATTEMPT_DELAY_MS = 10000;
+const VIDEO_DELAY_MS = 5000;
+const MIN_SEGMENTS_PER_MIN = 1;
 
 function loadEnvLocal() {
   const envPath = path.resolve(process.cwd(), ".env.local");
@@ -83,12 +83,13 @@ function shapeTranscript(videoId, transcriptData) {
   };
 }
 
-function passesCheckpoint({ segmentCount, minStart, maxStart }) {
-  const minStartPass = Number.isFinite(minStart) && minStart <= MIN_START_THRESHOLD_SEC;
-  const endStatePass =
-    (Number.isFinite(maxStart) && maxStart >= MIN_ENDSTATE_MAX_START_SEC) ||
-    segmentCount >= MIN_ENDSTATE_SEGMENT_COUNT;
-  return minStartPass && endStatePass;
+function passesCheckpoint({ segmentCount, maxStart }) {
+  const minutes = Number.isFinite(maxStart) && maxStart > 0 ? maxStart / 60 : 0;
+  const segmentsPerMin = minutes > 0 ? segmentCount / minutes : 0;
+  return {
+    pass: segmentsPerMin >= MIN_SEGMENTS_PER_MIN,
+    segmentsPerMin,
+  };
 }
 
 async function fetchTranscript(url) {
@@ -176,7 +177,8 @@ async function main() {
       try {
         const data = await fetchTranscript(url);
         const shaped = shapeTranscript(videoId, data?.transcript_data);
-        const ok = passesCheckpoint(shaped);
+        const gate = passesCheckpoint(shaped);
+        const ok = gate.pass;
 
         attemptLogs.push({
           attempt,
@@ -184,10 +186,14 @@ async function main() {
           segmentCount: shaped.segmentCount,
           minStart: shaped.minStart,
           maxStart: shaped.maxStart,
+          segmentsPerMin: gate.segmentsPerMin,
           reason: ok ? "pass" : "checkpoint_fail",
         });
 
-        if (!ok) continue;
+        if (!ok) {
+          if (attempt < MAX_ATTEMPTS) await new Promise((r) => setTimeout(r, ATTEMPT_DELAY_MS));
+          continue;
+        }
 
         const now = new Date().toISOString();
 
@@ -220,6 +226,9 @@ async function main() {
           reason: "request_error",
           error: err?.message || String(err),
         });
+        if (attempt < MAX_ATTEMPTS) {
+          await new Promise((r) => setTimeout(r, ATTEMPT_DELAY_MS));
+        }
       }
     }
 
@@ -231,7 +240,7 @@ async function main() {
       attempts: attemptLogs,
     });
 
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, VIDEO_DELAY_MS));
   }
 
   const success = results.filter((r) => r.status === "success").length;

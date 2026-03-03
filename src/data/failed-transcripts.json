@@ -1,0 +1,47 @@
+{
+  "generatedAt": "2026-03-03T07:38:07.390Z",
+  "source": "scripts/retranscribe-48-failures-delay.results.json",
+  "count": 5,
+  "items": [
+    {
+      "id": "-0BQwHiEPOA",
+      "youtubeLink": "https://www.youtube.com/watch?v=-0BQwHiEPOA",
+      "failureCode": "request_error",
+      "lastReason": "request_error",
+      "lastError": "Request failed with status code 500",
+      "attempts": 3
+    },
+    {
+      "id": "-LR0NdW4J1M",
+      "youtubeLink": "https://www.youtube.com/watch?v=-LR0NdW4J1M",
+      "failureCode": "request_error",
+      "lastReason": "request_error",
+      "lastError": "Request failed with status code 500",
+      "attempts": 3
+    },
+    {
+      "id": "0BZz9SFTdvo",
+      "youtubeLink": "https://www.youtube.com/watch?v=0BZz9SFTdvo",
+      "failureCode": "request_error",
+      "lastReason": "request_error",
+      "lastError": "Request failed with status code 500",
+      "attempts": 3
+    },
+    {
+      "id": "0UoefNE9-pM",
+      "youtubeLink": "https://www.youtube.com/watch?v=0UoefNE9-pM",
+      "failureCode": "request_error",
+      "lastReason": "request_error",
+      "lastError": "Request failed with status code 500",
+      "attempts": 3
+    },
+    {
+      "id": "0VL9LqRrQug",
+      "youtubeLink": "https://www.youtube.com/watch?v=0VL9LqRrQug",
+      "failureCode": "request_error",
+      "lastReason": "request_error",
+      "lastError": "Request failed with status code 500",
+      "attempts": 3
+    }
+  ]
+}
