@@ -149,7 +149,7 @@ async function main() {
         AND TRIM(s.ID) != ''
         AND d.id IS NULL
       ORDER BY s.ID ASC
-      LIMIT 100
+      LIMIT 1000
     `,
   });
 
