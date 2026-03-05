@@ -36,39 +36,55 @@ export function MatchSnippets({
 
       {snippets.map((snippet, i) => {
         const seconds = snippet.seconds;
+        const isClickable = seconds !== null;
 
-        return (
-          <div
-            key={i}
-            className="bg-gray-50 p-3 rounded text-sm mb-2 flex gap-2 items-start"
-          >
-            {/* clickable timestamp */}
-            {seconds !== null ? (
-              onTimestampClick ? (
-                <button
-                  type="button"
-                  onClick={() => onTimestampClick(seconds, snippet.text)}
-                  className="text-blue-600 hover:underline shrink-0"
-                >
-                  {fmt(seconds)}
-                </button>
-              ) : (
-                <Link
-                  href={`/video/${videoId}?t=${seconds}`}
-                  className="text-blue-600 hover:underline shrink-0"
-                >
-                  {fmt(seconds)}
-                </Link>
-              )
-            ) : (
-              <span className="text-gray-400 shrink-0">--:--</span>
-            )}
+        const content = (
+          <>
+            <span
+              className={isClickable ? "text-blue-600 hover:underline shrink-0" : "text-gray-400 shrink-0"}
+            >
+              {isClickable ? fmt(seconds) : "--:--"}
+            </span>
 
             {/* snippet text with <mark>…</mark> highlights preserved */}
             <span
               className="grow"
               dangerouslySetInnerHTML={{ __html: snippet.text }}
             />
+          </>
+        );
+
+        if (isClickable && onTimestampClick) {
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => onTimestampClick(seconds, snippet.text)}
+              className="bg-gray-50 p-3 rounded text-sm mb-2 flex gap-2 items-start w-full text-left"
+            >
+              {content}
+            </button>
+          );
+        }
+
+        if (isClickable) {
+          return (
+            <Link
+              key={i}
+              href={`/video/${videoId}?t=${seconds}`}
+              className="bg-gray-50 p-3 rounded text-sm mb-2 flex gap-2 items-start"
+            >
+              {content}
+            </Link>
+          );
+        }
+
+        return (
+          <div
+            key={i}
+            className="bg-gray-50 p-3 rounded text-sm mb-2 flex gap-2 items-start"
+          >
+            {content}
           </div>
         );
       })}
