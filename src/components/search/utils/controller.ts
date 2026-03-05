@@ -240,19 +240,27 @@ function buildTimestampIndex(transcript: string): { pos: number; sec: number }[]
 
 function findNearestTimestamp(index: { pos: number; sec: number }[], matchPos: number): number | null {
   if (index.length === 0) return null;
+
   let lo = 0;
   let hi = index.length - 1;
-  let best = -1;
+  let bestBefore = -1;
+
   while (lo <= hi) {
     const mid = (lo + hi) >>> 1;
     if (index[mid].pos <= matchPos) {
-      best = mid;
+      bestBefore = mid;
       lo = mid + 1;
     } else {
       hi = mid - 1;
     }
   }
-  return best >= 0 ? index[best].sec : null;
+
+  // Primary: nearest timestamp at or before the match.
+  if (bestBefore >= 0) return index[bestBefore].sec;
+
+  // Fallback: if match appears before first parsed timestamp, use first timestamp after.
+  // Final guard: 0 keeps the snippet playable/openable even when parsing is sparse.
+  return index[0]?.sec ?? 0;
 }
 
 export async function getTranscriptByVideoId(videoId: string): Promise<string> {
