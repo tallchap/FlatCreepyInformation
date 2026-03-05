@@ -1,18 +1,12 @@
 // src/lib/bigquery.ts
-// ─────────────────────────────────────────────────────────────
-//  BigQuery helpers for Snippysaurus
-//  • fetchVideoMeta(id)      → high-level video metadata
-//  • fetchTranscript(id)     → [{ start: seconds, text: string }, …]
-// ─────────────────────────────────────────────────────────────
 import { BigQuery } from "@google-cloud/bigquery";
+import { TABLE_REFS, useNewTranscriptTables } from "@/lib/bigquery-schema";
 
-/* 1 ▸ initialise BigQuery client (reuse between hot-reloads) */
 function parseServiceAccount(raw: string | undefined) {
   if (!raw) return {};
   try {
     return JSON.parse(raw);
   } catch {
-    // Handles env payloads where private_key contains literal newlines.
     const fixed = raw.replace(
       /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
       (_m, key) =>
@@ -34,20 +28,76 @@ if (process.env.NODE_ENV !== "production") {
   (global as any).bigQuery = bigQuery;
 }
 
-/*─────────────────────────────────────────────────────────────*/
-/*  VIDEO-LEVEL METADATA                                       */
-/*─────────────────────────────────────────────────────────────*/
+const LEGACY_TABLE = TABLE_REFS.legacyTranscripts;
+const VIDEOS_TABLE = TABLE_REFS.videos;
+const SEGMENTS_TABLE = TABLE_REFS.transcriptSegments;
+
+const LEGACY_SPEAKERS_EXPR = `COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude)`;
+
+function parseLegacyTranscript(raw: string): { start: number | null; text: string }[] {
+  const out: { start: number | null; text: string }[] = [];
+
+  raw
+    .trim()
+    .split(/\n+/)
+    .forEach((ln) => {
+      let m = ln.match(/^\[(\d+):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
+      if (m) {
+        const [, a, b, c, txt] = m;
+        const sec = c ? +a * 3600 + +b * 60 + +c : +a * 60 + +b;
+        out.push({ start: sec, text: txt });
+        return;
+      }
+
+      m = ln.match(/^(\d+(?:\.\d+)?):\s*(.*)$/);
+      if (m) {
+        out.push({ start: parseFloat(m[1]), text: m[2] });
+        return;
+      }
+
+      if (ln.trim()) out.push({ start: null, text: ln.trim() });
+    });
+
+  out.sort((a, b) => {
+    if (a.start === null) return 1;
+    if (b.start === null) return -1;
+    return a.start - b.start;
+  });
+
+  return out;
+}
+
 export async function fetchVideoMeta(id: string) {
+  if (useNewTranscriptTables()) {
+    const [rows] = await bigQuery.query({
+      query: `
+        SELECT
+          video_title AS title,
+          channel_name AS channel,
+          published_date AS published,
+          video_length AS video_length,
+          youtube_link AS youtube_url,
+          speaker_source AS speakers
+        FROM ${VIDEOS_TABLE}
+        WHERE video_id = @id
+        LIMIT 1
+      `,
+      params: { id },
+    });
+
+    if (rows[0]) return rows[0] as any;
+  }
+
   const [rows] = await bigQuery.query({
     query: `
       SELECT
-        Video_Title         AS title,
-        Channel_Name        AS channel,
-        Published_Date      AS published,          -- DATE
-        Video_Length        AS video_length,       -- e.g. "5:52"
+        Video_Title AS title,
+        Channel_Name AS channel,
+        Published_Date AS published,
+        Video_Length AS video_length,
         CONCAT('https://youtu.be/', ID) AS youtube_url,
-        COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude) AS speakers
-      FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
+        ${LEGACY_SPEAKERS_EXPR} AS speakers
+      FROM ${LEGACY_TABLE}
       WHERE ID = @id
       LIMIT 1
     `,
@@ -66,34 +116,40 @@ export async function fetchVideoMeta(id: string) {
     | undefined;
 }
 
-/*─────────────────────────────────────────────────────────────*/
-/*  TRANSCRIPT PARSER                                          */
-/*─────────────────────────────────────────────────────────────*/
-/**
- * Convert Search_Doc_1 lines like “[00:42] some text” (or “[01:02:05] …”)
- * into an array sorted by `start` seconds:
- *   [{ start: 42, text: "some text" }, …]
- */
-/*─────────────────────────────────────────────────────────────*/
-/*  BROWSE HELPERS                                              */
-/*─────────────────────────────────────────────────────────────*/
-
-const TABLE = "`youtubetranscripts-429803.reptranscripts.youtube_transcripts`";
-const SPEAKERS_EXPR = `COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude)`;
-
 export async function fetchSpeakerVideosBeforeDate(
   speaker: string,
   beforeDate: string,
   limit = 200,
 ): Promise<{ id: string; title: string; publishedAt: string }[]> {
+  if (useNewTranscriptTables()) {
+    const [rows] = await bigQuery.query({
+      query: `
+        SELECT
+          video_id AS id,
+          video_title AS title,
+          CAST(published_date AS STRING) AS publishedAt
+        FROM ${VIDEOS_TABLE}
+        WHERE speaker_source IS NOT NULL
+          AND LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%')
+          AND published_date IS NOT NULL
+          AND published_date < DATE(@beforeDate)
+        ORDER BY published_date DESC
+        LIMIT @limit
+      `,
+      params: { speaker, beforeDate, limit },
+    });
+
+    return rows.map((r: any) => ({
+      id: String(r.id),
+      title: String(r.title),
+      publishedAt: String(r.publishedAt),
+    }));
+  }
+
   const [rows] = await bigQuery.query({
     query: `
-      SELECT
-        ID AS id,
-        Video_Title AS title,
-        CAST(Published_Date AS STRING) AS publishedAt
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
+      SELECT ID AS id, Video_Title AS title, CAST(Published_Date AS STRING) AS publishedAt
+      FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s
       WHERE TRIM(s) = @speaker
         AND Published_Date IS NOT NULL
         AND Published_Date < DATE(@beforeDate)
@@ -103,43 +159,51 @@ export async function fetchSpeakerVideosBeforeDate(
     params: { speaker, beforeDate, limit },
   });
 
-  return rows.map((r: { id: string; title: string; publishedAt: string }) => ({
+  return rows.map((r: any) => ({
     id: String(r.id),
     title: String(r.title),
     publishedAt: String(r.publishedAt),
   }));
 }
 
-/**
- * Return every distinct speaker (alphabetical) with their video count.
- * Speakers are comma-separated in the source column, so we UNNEST after
- * splitting and trim each name.
- */
-export async function fetchAllSpeakers(
-  page = 1,
-  pageSize = 100,
-): Promise<{ speakers: { name: string; videoCount: number }[]; total: number }> {
+async function speakerCountQuery(query: string, params: Record<string, unknown> = {}) {
+  const [rows] = await bigQuery.query({ query, params });
+  return rows;
+}
+
+export async function fetchAllSpeakers(page = 1, pageSize = 100) {
   const offset = (page - 1) * pageSize;
 
-  // Count query
+  if (useNewTranscriptTables()) {
+    const [countRows] = await bigQuery.query({
+      query: `SELECT COUNT(DISTINCT TRIM(speaker)) AS total FROM ${VIDEOS_TABLE}, UNNEST(SPLIT(speaker_source, ',')) AS speaker WHERE TRIM(speaker) != ''`,
+    });
+    const total = Number(countRows[0]?.total ?? 0);
+
+    const [rows] = await bigQuery.query({
+      query: `
+        SELECT TRIM(speaker) AS name, COUNT(DISTINCT video_id) AS videoCount
+        FROM ${VIDEOS_TABLE}, UNNEST(SPLIT(speaker_source, ',')) AS speaker
+        WHERE TRIM(speaker) != ''
+        GROUP BY name
+        ORDER BY name ASC
+        LIMIT @pageSize OFFSET @offset
+      `,
+      params: { pageSize, offset },
+    });
+
+    return { speakers: rows.map((r: any) => ({ name: r.name, videoCount: Number(r.videoCount) })), total };
+  }
+
   const [countRows] = await bigQuery.query({
-    query: `
-      SELECT COUNT(DISTINCT TRIM(speaker)) AS total
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS speaker
-      WHERE TRIM(speaker) != ''
-    `,
+    query: `SELECT COUNT(DISTINCT TRIM(speaker)) AS total FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS speaker WHERE TRIM(speaker) != ''`,
   });
   const total = Number(countRows[0]?.total ?? 0);
 
-  // Data query
   const [rows] = await bigQuery.query({
     query: `
-      SELECT
-        TRIM(speaker) AS name,
-        COUNT(DISTINCT ID) AS videoCount
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS speaker
+      SELECT TRIM(speaker) AS name, COUNT(DISTINCT ID) AS videoCount
+      FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS speaker
       WHERE TRIM(speaker) != ''
       GROUP BY name
       ORDER BY name ASC
@@ -148,323 +212,110 @@ export async function fetchAllSpeakers(
     params: { pageSize, offset },
   });
 
-  return {
-    speakers: rows.map((r: { name: string; videoCount: number }) => ({
-      name: r.name,
-      videoCount: Number(r.videoCount),
-    })),
-    total,
-  };
+  return { speakers: rows.map((r: any) => ({ name: r.name, videoCount: Number(r.videoCount) })), total };
 }
 
-/**
- * For a given speaker, return every year they appear in + video count per year.
- */
-export async function fetchSpeakerYears(
-  speaker: string,
-): Promise<{ year: number; videoCount: number }[]> {
-  const [rows] = await bigQuery.query({
-    query: `
-      SELECT
-        EXTRACT(YEAR FROM Published_Date) AS year,
-        COUNT(DISTINCT ID) AS videoCount
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-      GROUP BY year
-      ORDER BY year DESC
-    `,
-    params: { speaker },
-  });
+export async function fetchSpeakerYears(speaker: string) {
+  const query = useNewTranscriptTables()
+    ? `SELECT EXTRACT(YEAR FROM published_date) AS year, COUNT(DISTINCT video_id) AS videoCount FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') GROUP BY year ORDER BY year DESC`
+    : `SELECT EXTRACT(YEAR FROM Published_Date) AS year, COUNT(DISTINCT ID) AS videoCount FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s) = @speaker GROUP BY year ORDER BY year DESC`;
 
-  return rows.map((r: { year: number; videoCount: number }) => ({
-    year: Number(r.year),
-    videoCount: Number(r.videoCount),
+  const rows = await speakerCountQuery(query, { speaker });
+  return rows.map((r: any) => ({ year: Number(r.year), videoCount: Number(r.videoCount) }));
+}
+
+export async function fetchSpeakerYearMonths(speaker: string, year: number) {
+  const query = useNewTranscriptTables()
+    ? `SELECT EXTRACT(MONTH FROM published_date) AS month, COUNT(DISTINCT video_id) AS videoCount FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') AND EXTRACT(YEAR FROM published_date) = @year GROUP BY month ORDER BY month ASC`
+    : `SELECT EXTRACT(MONTH FROM Published_Date) AS month, COUNT(DISTINCT ID) AS videoCount FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s) = @speaker AND EXTRACT(YEAR FROM Published_Date) = @year GROUP BY month ORDER BY month ASC`;
+
+  const rows = await speakerCountQuery(query, { speaker, year });
+  return rows.map((r: any) => ({ month: Number(r.month), videoCount: Number(r.videoCount) }));
+}
+
+function mapSpeakerVideos(rows: any[]) {
+  return rows.map((r: any) => ({
+    id: String(r.id),
+    title: String(r.title),
+    channel: String(r.channel),
+    published: String(r.published),
+    speakers: String(r.speakers ?? ""),
+    youtubeUrl: String(r.youtubeUrl),
+    videoLength: r.videoLength ? String(r.videoLength) : null,
   }));
 }
 
-/**
- * For a given speaker + year, return months with video counts.
- */
-export async function fetchSpeakerYearMonths(
-  speaker: string,
-  year: number,
-): Promise<{ month: number; videoCount: number }[]> {
-  const [rows] = await bigQuery.query({
-    query: `
-      SELECT
-        EXTRACT(MONTH FROM Published_Date) AS month,
-        COUNT(DISTINCT ID) AS videoCount
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-        AND EXTRACT(YEAR FROM Published_Date) = @year
-      GROUP BY month
-      ORDER BY month ASC
-    `,
-    params: { speaker, year },
-  });
-
-  return rows.map((r: { month: number; videoCount: number }) => ({
-    month: Number(r.month),
-    videoCount: Number(r.videoCount),
-  }));
-}
-
-/**
- * For a given speaker + year + month, return paginated video list.
- */
-export async function fetchSpeakerMonthVideos(
-  speaker: string,
-  year: number,
-  month: number,
-  page = 1,
-  pageSize = 100,
-): Promise<{
-  videos: {
-    id: string;
-    title: string;
-    channel: string;
-    published: string;
-    speakers: string;
-    youtubeUrl: string;
-    videoLength: string | null;
-  }[];
-  total: number;
-}> {
+export async function fetchSpeakerMonthVideos(speaker: string, year: number, month: number, page = 1, pageSize = 100) {
   const offset = (page - 1) * pageSize;
 
-  const [countRows] = await bigQuery.query({
-    query: `
-      SELECT COUNT(DISTINCT ID) AS total
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-        AND EXTRACT(YEAR FROM Published_Date) = @year
-        AND EXTRACT(MONTH FROM Published_Date) = @month
-    `,
-    params: { speaker, year, month },
-  });
-  const total = Number(countRows[0]?.total ?? 0);
+  const countQuery = useNewTranscriptTables()
+    ? `SELECT COUNT(DISTINCT video_id) AS total FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') AND EXTRACT(YEAR FROM published_date)=@year AND EXTRACT(MONTH FROM published_date)=@month`
+    : `SELECT COUNT(DISTINCT ID) AS total FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker AND EXTRACT(YEAR FROM Published_Date)=@year AND EXTRACT(MONTH FROM Published_Date)=@month`;
 
-  const [rows] = await bigQuery.query({
-    query: `
-      SELECT DISTINCT
-        ID AS id,
-        Video_Title AS title,
-        Channel_Name AS channel,
-        CAST(Published_Date AS STRING) AS published,
-        ${SPEAKERS_EXPR} AS speakers,
-        CONCAT('https://youtu.be/', ID) AS youtubeUrl,
-        Video_Length AS videoLength
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-        AND EXTRACT(YEAR FROM Published_Date) = @year
-        AND EXTRACT(MONTH FROM Published_Date) = @month
-      ORDER BY published DESC
-      LIMIT @pageSize OFFSET @offset
-    `,
-    params: { speaker, year, month, pageSize, offset },
-  });
+  const dataQuery = useNewTranscriptTables()
+    ? `SELECT DISTINCT video_id AS id, video_title AS title, channel_name AS channel, CAST(published_date AS STRING) AS published, speaker_source AS speakers, youtube_link AS youtubeUrl, video_length AS videoLength FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') AND EXTRACT(YEAR FROM published_date)=@year AND EXTRACT(MONTH FROM published_date)=@month ORDER BY published DESC LIMIT @pageSize OFFSET @offset`
+    : `SELECT DISTINCT ID AS id, Video_Title AS title, Channel_Name AS channel, CAST(Published_Date AS STRING) AS published, ${LEGACY_SPEAKERS_EXPR} AS speakers, CONCAT('https://youtu.be/', ID) AS youtubeUrl, Video_Length AS videoLength FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker AND EXTRACT(YEAR FROM Published_Date)=@year AND EXTRACT(MONTH FROM Published_Date)=@month ORDER BY published DESC LIMIT @pageSize OFFSET @offset`;
 
-  return {
-    videos: rows.map((r: Record<string, unknown>) => ({
-      id: String(r.id),
-      title: String(r.title),
-      channel: String(r.channel),
-      published: String(r.published),
-      speakers: String(r.speakers ?? ""),
-      youtubeUrl: String(r.youtubeUrl),
-      videoLength: r.videoLength ? String(r.videoLength) : null,
-    })),
-    total,
-  };
+  const [countRows] = await bigQuery.query({ query: countQuery, params: { speaker, year, month } });
+  const [rows] = await bigQuery.query({ query: dataQuery, params: { speaker, year, month, pageSize, offset } });
+
+  return { videos: mapSpeakerVideos(rows), total: Number(countRows[0]?.total ?? 0) };
 }
 
-/**
- * For a given speaker, return paginated video list ordered by date descending.
- */
-export async function fetchSpeakerVideos(
-  speaker: string,
-  page = 1,
-  pageSize = 20,
-): Promise<{
-  videos: {
-    id: string;
-    title: string;
-    channel: string;
-    published: string;
-    speakers: string;
-    youtubeUrl: string;
-    videoLength: string | null;
-  }[];
-  total: number;
-}> {
+export async function fetchSpeakerVideos(speaker: string, page = 1, pageSize = 20) {
   const offset = (page - 1) * pageSize;
+  const countQuery = useNewTranscriptTables()
+    ? `SELECT COUNT(DISTINCT video_id) AS total FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%')`
+    : `SELECT COUNT(DISTINCT ID) AS total FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker`;
+  const dataQuery = useNewTranscriptTables()
+    ? `SELECT DISTINCT video_id AS id, video_title AS title, channel_name AS channel, CAST(published_date AS STRING) AS published, speaker_source AS speakers, youtube_link AS youtubeUrl, video_length AS videoLength FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') ORDER BY published DESC LIMIT @pageSize OFFSET @offset`
+    : `SELECT DISTINCT ID AS id, Video_Title AS title, Channel_Name AS channel, CAST(Published_Date AS STRING) AS published, ${LEGACY_SPEAKERS_EXPR} AS speakers, CONCAT('https://youtu.be/', ID) AS youtubeUrl, Video_Length AS videoLength FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker ORDER BY published DESC LIMIT @pageSize OFFSET @offset`;
 
-  const [countRows] = await bigQuery.query({
-    query: `
-      SELECT COUNT(DISTINCT ID) AS total
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-    `,
-    params: { speaker },
-  });
-  const total = Number(countRows[0]?.total ?? 0);
-
-  const [rows] = await bigQuery.query({
-    query: `
-      SELECT DISTINCT
-        ID AS id,
-        Video_Title AS title,
-        Channel_Name AS channel,
-        CAST(Published_Date AS STRING) AS published,
-        ${SPEAKERS_EXPR} AS speakers,
-        CONCAT('https://youtu.be/', ID) AS youtubeUrl,
-        Video_Length AS videoLength
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-      ORDER BY published DESC
-      LIMIT @pageSize OFFSET @offset
-    `,
-    params: { speaker, pageSize, offset },
-  });
-
-  return {
-    videos: rows.map((r: Record<string, unknown>) => ({
-      id: String(r.id),
-      title: String(r.title),
-      channel: String(r.channel),
-      published: String(r.published),
-      speakers: String(r.speakers ?? ""),
-      youtubeUrl: String(r.youtubeUrl),
-      videoLength: r.videoLength ? String(r.videoLength) : null,
-    })),
-    total,
-  };
+  const [countRows] = await bigQuery.query({ query: countQuery, params: { speaker } });
+  const [rows] = await bigQuery.query({ query: dataQuery, params: { speaker, pageSize, offset } });
+  return { videos: mapSpeakerVideos(rows), total: Number(countRows[0]?.total ?? 0) };
 }
 
-/**
- * For a given speaker + year, return paginated video list (all months).
- */
-export async function fetchSpeakerYearVideos(
-  speaker: string,
-  year: number,
-  page = 1,
-  pageSize = 100,
-): Promise<{
-  videos: {
-    id: string;
-    title: string;
-    channel: string;
-    published: string;
-    speakers: string;
-    youtubeUrl: string;
-    videoLength: string | null;
-  }[];
-  total: number;
-}> {
+export async function fetchSpeakerYearVideos(speaker: string, year: number, page = 1, pageSize = 100) {
   const offset = (page - 1) * pageSize;
+  const countQuery = useNewTranscriptTables()
+    ? `SELECT COUNT(DISTINCT video_id) AS total FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') AND EXTRACT(YEAR FROM published_date)=@year`
+    : `SELECT COUNT(DISTINCT ID) AS total FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker AND EXTRACT(YEAR FROM Published_Date)=@year`;
+  const dataQuery = useNewTranscriptTables()
+    ? `SELECT DISTINCT video_id AS id, video_title AS title, channel_name AS channel, CAST(published_date AS STRING) AS published, speaker_source AS speakers, youtube_link AS youtubeUrl, video_length AS videoLength FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE CONCAT('%', LOWER(@speaker), '%') AND EXTRACT(YEAR FROM published_date)=@year ORDER BY published DESC LIMIT @pageSize OFFSET @offset`
+    : `SELECT DISTINCT ID AS id, Video_Title AS title, Channel_Name AS channel, CAST(Published_Date AS STRING) AS published, ${LEGACY_SPEAKERS_EXPR} AS speakers, CONCAT('https://youtu.be/', ID) AS youtubeUrl, Video_Length AS videoLength FROM ${LEGACY_TABLE}, UNNEST(SPLIT(${LEGACY_SPEAKERS_EXPR}, ',')) AS s WHERE TRIM(s)=@speaker AND EXTRACT(YEAR FROM Published_Date)=@year ORDER BY published DESC LIMIT @pageSize OFFSET @offset`;
 
-  const [countRows] = await bigQuery.query({
-    query: `
-      SELECT COUNT(DISTINCT ID) AS total
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-        AND EXTRACT(YEAR FROM Published_Date) = @year
-    `,
-    params: { speaker, year },
-  });
-  const total = Number(countRows[0]?.total ?? 0);
+  const [countRows] = await bigQuery.query({ query: countQuery, params: { speaker, year } });
+  const [rows] = await bigQuery.query({ query: dataQuery, params: { speaker, year, pageSize, offset } });
 
-  const [rows] = await bigQuery.query({
-    query: `
-      SELECT DISTINCT
-        ID AS id,
-        Video_Title AS title,
-        Channel_Name AS channel,
-        CAST(Published_Date AS STRING) AS published,
-        ${SPEAKERS_EXPR} AS speakers,
-        CONCAT('https://youtu.be/', ID) AS youtubeUrl,
-        Video_Length AS videoLength
-      FROM ${TABLE},
-      UNNEST(SPLIT(${SPEAKERS_EXPR}, ',')) AS s
-      WHERE TRIM(s) = @speaker
-        AND EXTRACT(YEAR FROM Published_Date) = @year
-      ORDER BY published DESC
-      LIMIT @pageSize OFFSET @offset
-    `,
-    params: { speaker, year, pageSize, offset },
-  });
-
-  return {
-    videos: rows.map((r: Record<string, unknown>) => ({
-      id: String(r.id),
-      title: String(r.title),
-      channel: String(r.channel),
-      published: String(r.published),
-      speakers: String(r.speakers ?? ""),
-      youtubeUrl: String(r.youtubeUrl),
-      videoLength: r.videoLength ? String(r.videoLength) : null,
-    })),
-    total,
-  };
+  return { videos: mapSpeakerVideos(rows), total: Number(countRows[0]?.total ?? 0) };
 }
-
-/*─────────────────────────────────────────────────────────────*/
-/*  TRANSCRIPT PARSER                                          */
-/*─────────────────────────────────────────────────────────────*/
 
 export async function fetchTranscript(id: string) {
-  /* Grab the raw Search_Doc_1 field */
+  if (useNewTranscriptTables()) {
+    const [rows] = await bigQuery.query({
+      query: `
+        SELECT start_sec, text
+        FROM ${SEGMENTS_TABLE}
+        WHERE video_id = @id
+        ORDER BY COALESCE(start_sec, 1e12), segment_index
+      `,
+      params: { id },
+    });
+
+    if (rows?.length) {
+      return rows.map((r: any) => ({
+        start: r.start_sec === null || r.start_sec === undefined ? null : Number(r.start_sec),
+        text: String(r.text ?? ""),
+      }));
+    }
+  }
+
   const [rows] = await bigQuery.query({
-    query: `
-      SELECT Search_Doc_1
-      FROM   \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
-      WHERE  ID = @id
-      LIMIT 1
-    `,
+    query: `SELECT Search_Doc_1 FROM ${LEGACY_TABLE} WHERE ID = @id LIMIT 1`,
     params: { id },
   });
 
   if (!rows?.length || !rows[0].Search_Doc_1) return [];
-
-  const raw: string = rows[0].Search_Doc_1 as string;
-
-  /* 2 ▸ parse lines */
-  const out: { start: number | null; text: string }[] = [];
-
-  raw.trim().split(/\n+/).forEach((ln) => {
-    // [hh:mm:ss]  or [mm:ss]
-    let m = ln.match(/^\[(\d+):(\d{2})(?::(\d{2}))?]\s*(.*)$/);
-    if (m) {
-      const [, a, b, c, txt] = m;
-      const sec = (c ? +a * 3600 + +b * 60 + +c : +a * 60 + +b);
-      out.push({ start: sec, text: txt });
-      return;
-    }
-
-    // seconds.fraction:  (e.g. 12.64: text)
-    m = ln.match(/^(\d+(?:\.\d+)?):\s*(.*)$/);
-    if (m) {
-      out.push({ start: parseFloat(m[1]), text: m[2] });
-      return;
-    }
-
-    // plain line with NO timing – keep it, but mark start=null
-    if (ln.trim()) out.push({ start: null, text: ln.trim() });
-  });
-
-  /* sort only lines that have real timestamps */
-  out.sort((a, b) => {
-    if (a.start === null) return 1;
-    if (b.start === null) return -1;
-    return a.start - b.start;
-  });
-
-  return out;
+  return parseLegacyTranscript(rows[0].Search_Doc_1 as string);
 }

@@ -11,6 +11,7 @@ import {
 } from "./utils";
 import { google, sheets_v4 } from "googleapis";
 import { bigQuery } from "@/lib/bigquery";
+import { enableTranscriptDualWrite, useNewTranscriptTables } from "@/lib/bigquery-schema";
 
 export async function fetchYoutubeMetadata(url: string, speaker: string) {
   const videoId = extractVideoId(url);
@@ -501,15 +502,16 @@ export async function createTranscriptDoc(
 }
 
 export async function addToBigQuery(transcript: any, metadata: any) {
-  // Initialize BigQuery client;
   const dataset = bigQuery.dataset("reptranscripts");
-  const table = dataset.table("youtube_transcripts");
-  const row = {
+  const nowIso = new Date().toISOString();
+  const speakerSource = metadata.speakersGptThird || metadata.speakersClaude || metadata.speaker || null;
+
+  const legacyRow = {
     ID: metadata.videoId,
     Language: transcript.language,
     Language_Code: transcript.language_code,
     Is_Generated: transcript.is_generated,
-    Created_Time: new Date().toISOString(),
+    Created_Time: nowIso,
     Search_Doc_1: formatTranscriptAsText(transcript),
     Youtube_Link: metadata.cleanUrl,
     Video_Title: metadata.title,
@@ -526,8 +528,61 @@ export async function addToBigQuery(transcript: any, metadata: any) {
     Transcript_Doc_Link: transcript.google_doc_url,
   };
 
-  // Insert the row into BigQuery
-  await table.insert(row, { ignoreUnknownValues: true });
+  const shouldUseNewTables = useNewTranscriptTables();
+  const shouldDualWrite = enableTranscriptDualWrite();
+
+  if (!shouldUseNewTables || shouldDualWrite) {
+    await dataset.table("youtube_transcripts").insert(legacyRow, { ignoreUnknownValues: true });
+  }
+
+  if (shouldUseNewTables) {
+    const videoRow = {
+      video_id: metadata.videoId,
+      video_title: metadata.title || null,
+      channel_name: metadata.channelName || null,
+      published_date: new Date(metadata.publishedAt).toISOString().split("T")[0],
+      youtube_link: metadata.cleanUrl || null,
+      video_length: metadata.duration || null,
+      speaker_source: speakerSource,
+      created_time: nowIso,
+    };
+
+    await bigQuery.query({
+      query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\` WHERE video_id = @videoId`,
+      params: { videoId: metadata.videoId },
+    });
+    await bigQuery.query({
+      query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\` WHERE video_id = @videoId`,
+      params: { videoId: metadata.videoId },
+    });
+
+    await dataset.table("youtube_videos").insert(videoRow, { ignoreUnknownValues: true });
+
+    const transcriptData = transcript.transcript_data || transcript.Transcript_Data || [];
+    const segmentRows = transcriptData.map((segment: any, idx: number) => {
+      const startSec = Number(segment.start ?? segment.Start ?? 0);
+      const text = String(segment.text ?? segment.Text ?? "");
+      const next = transcriptData[idx + 1];
+      const nextStart = next ? Number(next.start ?? next.Start) : null;
+      return {
+        video_id: metadata.videoId,
+        segment_id: `${metadata.videoId}:${String(idx).padStart(5, "0")}`,
+        segment_index: idx,
+        line_index: idx,
+        start_sec: Number.isFinite(startSec) ? startSec : null,
+        end_sec: Number.isFinite(nextStart) ? nextStart : null,
+        text,
+        created_at: nowIso,
+      };
+    });
+
+    if (segmentRows.length > 0) {
+      await dataset.table("youtube_transcript_segments").insert(segmentRows, {
+        ignoreUnknownValues: true,
+      });
+    }
+  }
+
   console.log("Successfully stored in BigQuery");
 }
 
