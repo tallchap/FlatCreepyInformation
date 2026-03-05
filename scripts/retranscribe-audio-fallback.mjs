@@ -9,6 +9,8 @@ const DEFAULT_LIMIT = Number(process.env.LIMIT || 10);
 const MAX_RETRIES = Number(process.env.MAX_RETRIES || 2);
 const CONCURRENCY = Number(process.env.CONCURRENCY || 1);
 const KEEP_AUDIO = String(process.env.KEEP_AUDIO || "0") === "1";
+const MAX_UPLOAD_BYTES = Number(process.env.MAX_UPLOAD_BYTES || 24 * 1024 * 1024);
+const TARGET_CHUNK_BYTES = Number(process.env.TARGET_CHUNK_BYTES || 20 * 1024 * 1024);
 
 function loadEnvLocal() {
   const envPath = path.resolve(process.cwd(), ".env.local");
@@ -66,9 +68,23 @@ function runCmd(cmd, args, opts = {}) {
   });
 }
 
+async function ffprobeDurationSeconds(filePath) {
+  const { stdout } = await runCmd("ffprobe", [
+    "-v",
+    "error",
+    "-show_entries",
+    "format=duration",
+    "-of",
+    "default=noprint_wrappers=1:nokey=1",
+    filePath,
+  ]);
+  const n = Number(String(stdout || "").trim());
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
 async function downloadAudio(videoId, outDir) {
   const outTemplate = path.join(outDir, `${videoId}.%(ext)s`);
-  await runCmd("yt-dlp", [
+  await runCmd("/Users/orilaptop/.pyenv/shims/yt-dlp", [
     "-f",
     "bestaudio/best",
     "--no-playlist",
@@ -86,22 +102,111 @@ async function downloadAudio(videoId, outDir) {
   return path.join(outDir, candidate);
 }
 
-async function transcribeAudio(openai, filePath) {
+async function normalizeAudioForAsr(inputPath, outDir, videoId) {
+  const normalizedPath = path.join(outDir, `${videoId}.asr.mp3`);
+  await runCmd("ffmpeg", [
+    "-y",
+    "-i",
+    inputPath,
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-b:a",
+    "48k",
+    normalizedPath,
+  ]);
+  return normalizedPath;
+}
+
+async function splitAudioIfNeeded(audioPath, outDir, videoId) {
+  const size = fs.statSync(audioPath).size;
+  if (size <= MAX_UPLOAD_BYTES) {
+    return [{ path: audioPath, offsetSec: 0 }];
+  }
+
+  const durationSec = await ffprobeDurationSeconds(audioPath);
+  if (!durationSec) throw new Error("Could not determine audio duration for chunking");
+
+  const parts = Math.max(2, Math.ceil(size / TARGET_CHUNK_BYTES));
+  const segmentTime = Math.max(60, Math.ceil(durationSec / parts));
+
+  const chunkDir = path.join(outDir, `${videoId}.chunks`);
+  fs.mkdirSync(chunkDir, { recursive: true });
+
+  await runCmd("ffmpeg", [
+    "-y",
+    "-i",
+    audioPath,
+    "-f",
+    "segment",
+    "-segment_time",
+    String(segmentTime),
+    "-c:a",
+    "libmp3lame",
+    "-b:a",
+    "48k",
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    path.join(chunkDir, `${videoId}.part-%03d.mp3`),
+  ]);
+
+  const files = fs
+    .readdirSync(chunkDir)
+    .filter((f) => f.endsWith(".mp3"))
+    .sort()
+    .map((f) => path.join(chunkDir, f));
+
+  if (!files.length) throw new Error("Chunking produced no files");
+
+  const chunks = [];
+  let offset = 0;
+  for (const f of files) {
+    const chunkSize = fs.statSync(f).size;
+    if (chunkSize > MAX_UPLOAD_BYTES) {
+      throw new Error(`Chunk still exceeds max upload size: ${path.basename(f)} (${chunkSize} bytes)`);
+    }
+    chunks.push({ path: f, offsetSec: offset });
+    const d = (await ffprobeDurationSeconds(f)) || segmentTime;
+    offset += d;
+  }
+  return chunks;
+}
+
+async function transcribeAudioFile(openai, filePath) {
   const resp = await openai.audio.transcriptions.create({
     file: fs.createReadStream(filePath),
     model: process.env.ASR_MODEL || "whisper-1",
     response_format: "verbose_json",
     timestamp_granularities: ["segment"],
   });
-  const segments = Array.isArray(resp?.segments)
-    ? resp.segments.map((s, idx) => ({
-        idx,
+
+  return Array.isArray(resp?.segments)
+    ? resp.segments.map((s) => ({
         start: Number(s.start),
         end: Number(s.end),
         text: String(s.text || "").trim(),
       }))
     : [];
-  return { text: resp?.text || "", segments };
+}
+
+async function transcribeAudio(openai, audioPath, outDir, videoId) {
+  const chunks = await splitAudioIfNeeded(audioPath, outDir, videoId);
+  const merged = [];
+  for (const chunk of chunks) {
+    const segs = await transcribeAudioFile(openai, chunk.path);
+    for (const s of segs) {
+      merged.push({
+        start: Number.isFinite(s.start) ? s.start + chunk.offsetSec : null,
+        end: Number.isFinite(s.end) ? s.end + chunk.offsetSec : null,
+        text: s.text,
+      });
+    }
+  }
+
+  return merged.map((s, idx) => ({ idx, start: s.start, end: s.end, text: s.text }));
 }
 
 async function main() {
@@ -173,10 +278,11 @@ async function main() {
         try {
           process.stdout.write(`[${videoId}] attempt ${attempt}/${MAX_RETRIES}... `);
 
-          audioPath = await downloadAudio(videoId, audioDir);
-          const tr = await transcribeAudio(openai, audioPath);
+          const downloadedPath = await downloadAudio(videoId, audioDir);
+          audioPath = await normalizeAudioForAsr(downloadedPath, audioDir, videoId);
+          const segments = await transcribeAudio(openai, audioPath, audioDir, videoId);
 
-          if (!tr.segments.length) throw new Error("ASR returned 0 segments");
+          if (!segments.length) throw new Error("ASR returned 0 segments");
 
           const now = new Date().toISOString();
 
@@ -189,22 +295,25 @@ async function main() {
             params: { videoId },
           });
 
-          await videosTable.insert([
-            {
-              video_id: String(videoId),
-              video_title: meta.Video_Title || null,
-              channel_name: meta.Channel_Name || null,
-              published_date: normalizeDate(meta.Published_Date),
-              youtube_link: youtubeLink,
-              video_length: meta.Video_Length || null,
-              speaker_source: meta.speaker_source || null,
-              created_time: now,
-              transcript_source: "audio_fallback_asr",
-              fallback_reason: "primary_failed",
-            },
-          ], { ignoreUnknownValues: true });
+          await videosTable.insert(
+            [
+              {
+                video_id: String(videoId),
+                video_title: meta.Video_Title || null,
+                channel_name: meta.Channel_Name || null,
+                published_date: normalizeDate(meta.Published_Date),
+                youtube_link: youtubeLink,
+                video_length: meta.Video_Length || null,
+                speaker_source: meta.speaker_source || null,
+                created_time: now,
+                transcript_source: "audio_fallback_asr",
+                fallback_reason: "primary_failed",
+              },
+            ],
+            { ignoreUnknownValues: true },
+          );
 
-          const segRows = tr.segments.map((s) => ({
+          const segRows = segments.map((s) => ({
             video_id: String(videoId),
             segment_id: `${videoId}:${String(s.idx).padStart(5, "0")}`,
             segment_index: s.idx,
@@ -225,11 +334,11 @@ async function main() {
             videoId,
             status: "success",
             attempts: attempt,
-            segments: tr.segments.length,
+            segments: segments.length,
             audioPath,
           });
           succeeded = true;
-          process.stdout.write(`PASS (${tr.segments.length} segs)\n`);
+          process.stdout.write(`PASS (${segments.length} segs)\n`);
         } catch (err) {
           lastError = err?.message || String(err);
           process.stdout.write(`FAIL (${lastError})\n`);
