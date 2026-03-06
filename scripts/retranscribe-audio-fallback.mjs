@@ -84,17 +84,28 @@ async function ffprobeDurationSeconds(filePath) {
 
 async function downloadAudio(videoId, outDir) {
   const outTemplate = path.join(outDir, `${videoId}.%(ext)s`);
-  await runCmd("/Users/orilaptop/.pyenv/shims/yt-dlp", [
+  const args = [
     "-f",
     "bestaudio/best",
     "--no-playlist",
     "--extract-audio",
     "--audio-format",
     "mp3",
-    "-o",
-    outTemplate,
-    `https://www.youtube.com/watch?v=${videoId}`,
-  ]);
+  ];
+
+  // Optional auth for private/age-gated videos.
+  // Example:
+  //   YTDLP_COOKIES_FROM_BROWSER=chrome
+  //   YTDLP_COOKIES_FILE=/path/to/cookies.txt
+  if (process.env.YTDLP_COOKIES_FROM_BROWSER) {
+    args.push("--cookies-from-browser", String(process.env.YTDLP_COOKIES_FROM_BROWSER));
+  } else if (process.env.YTDLP_COOKIES_FILE) {
+    args.push("--cookies", String(process.env.YTDLP_COOKIES_FILE));
+  }
+
+  args.push("-o", outTemplate, `https://www.youtube.com/watch?v=${videoId}`);
+
+  await runCmd("/Users/orilaptop/.pyenv/shims/yt-dlp", args);
   const exact = path.join(outDir, `${videoId}.mp3`);
   if (fs.existsSync(exact)) return exact;
   const candidate = fs.readdirSync(outDir).find((f) => f.startsWith(`${videoId}.`));
