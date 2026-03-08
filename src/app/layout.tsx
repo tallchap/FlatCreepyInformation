@@ -51,6 +51,9 @@ export default function RootLayout({
 
         <Navbar />
         <main className="p-4">{children}</main>
+        <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
+          v{process.env.BUILD_VERSION || "dev"}
+        </footer>
         <Toaster />
       </body>
     </html>
