@@ -402,29 +402,7 @@ async function resolveCitations(
     });
   }
 
-  // Debug: send visible info about what we found
-  const uniqueEvents = [...new Set(eventTypes)];
-  const outputTypes = (response.output || []).map((o: any) => o.type);
-  const rawSample = streamAnnotations.slice(0, 2).map((a: any) => JSON.stringify(a).slice(0, 200));
-  // Also check response.output for annotations
-  let respAnnCount = 0;
-  let respAnnSample = "";
-  for (const oi of response.output || []) {
-    if (oi.type !== "message") continue;
-    for (const bl of oi.content || []) {
-      if (bl.type !== "output_text") continue;
-      respAnnCount += (bl.annotations || []).length;
-      if (!respAnnSample && bl.annotations?.length > 0) {
-        respAnnSample = JSON.stringify(bl.annotations[0]).slice(0, 200);
-      }
-    }
-  }
-  const debugMsg = `\n\n---\n_Debug: ${annotations.length} anns matched | stream_raw: ${streamAnnotations.length} | resp_anns: ${respAnnCount} | sample_stream: ${rawSample[0] || "none"} | sample_resp: ${respAnnSample || "none"} | output_types: ${outputTypes.join(",")}_`;
-  controller.enqueue(
-    encoder.encode(
-      `data: ${JSON.stringify({ type: "text_delta", text: debugMsg })}\n\n`,
-    ),
-  );
+  // Debug removed — citations confirmed working
 
   if (annotations.length === 0) return;
 
@@ -443,19 +421,32 @@ async function resolveCitations(
       try {
         const meta = await fetchVideoMeta(videoId);
         if (meta) {
+          let publishedStr: string | undefined;
+          try {
+            const pub = meta.published;
+            if (pub) {
+              if (typeof pub === "string") {
+                publishedStr = pub;
+              } else if (pub instanceof Date) {
+                publishedStr = pub.toISOString().slice(0, 10);
+              } else if (typeof pub === "object" && pub.value) {
+                publishedStr = String(pub.value);
+              } else {
+                publishedStr = String(pub);
+              }
+            }
+          } catch { /* ignore */ }
+
           metadataCache[videoId] = {
-            publishedAt:
-              typeof meta.published === "string"
-                ? meta.published
-                : meta.published.toISOString().slice(0, 10),
+            publishedAt: publishedStr,
             channel: meta.channel || undefined,
             speakers: splitSpeakers(meta.speakers),
             durationSec: parseDurationToSeconds(meta.video_length),
             viewCount: null,
           };
         }
-      } catch {
-        // leave empty
+      } catch (err) {
+        console.error(`fetchVideoMeta failed for ${videoId}:`, err);
       }
     }),
   );
@@ -475,19 +466,27 @@ async function resolveCitations(
       ? `youtube:${ann.videoId}:${Math.floor(timestamp)}`
       : `youtube:${ann.videoId}`;
 
+    // Prefer file_search attributes, fall back to BigQuery metadata
+    const attrs = findFileSearchResults(response, ann.fileId)?.attributes;
     const meta = metadataCache[ann.videoId];
+
+    const title = (attrs?.title as string) || ann.title || meta?.channel || "";
+    const channel = (attrs?.channel as string) || meta?.channel || "";
+    const rawDate = (attrs?.published_date as string) || meta?.publishedAt || "";
+
     // Format date as MM/DD/YYYY
     let formattedDate = "";
-    if (meta?.publishedAt) {
-      const d = new Date(meta.publishedAt);
+    if (rawDate) {
+      const d = new Date(rawDate);
       if (!isNaN(d.getTime())) {
         formattedDate = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
       }
     }
-    const metaParts = [meta?.channel, formattedDate].filter(Boolean);
+
+    const metaParts = [channel, formattedDate].filter(Boolean);
     const label = metaParts.length > 0
-      ? `${ann.title} · ${metaParts.join(" · ")}`
-      : ann.title;
+      ? `${title} · ${metaParts.join(" · ")}`
+      : title;
 
     const link = ` [${label}](${ytRef})`;
 
