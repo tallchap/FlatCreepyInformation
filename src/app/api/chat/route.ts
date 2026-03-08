@@ -244,6 +244,27 @@ export async function POST(req: NextRequest) {
 
             // Response complete — resolve citations
             if (event.type === "response.completed") {
+              // Debug: send annotation info to client
+              const debugOutput = (event.response?.output || []).map((item: any) => ({
+                type: item.type,
+                contentTypes: item.content?.map((c: any) => c.type),
+                annotationCount: item.content?.reduce((n: number, c: any) => n + (c.annotations?.length || 0), 0),
+                annotationSample: item.content?.flatMap((c: any) =>
+                  (c.annotations || []).slice(0, 2).map((a: any) => ({
+                    type: a.type,
+                    file_id: a.file_id?.slice(0, 20),
+                    text: a.text?.slice(0, 40),
+                    start_index: a.start_index,
+                    end_index: a.end_index,
+                  }))
+                ),
+              }));
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "debug", outputItems: debugOutput, fullTextLength: fullResponseText.length })}\n\n`,
+                ),
+              );
+
               try {
                 await resolveCitations(
                   event.response,
