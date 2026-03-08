@@ -476,7 +476,15 @@ async function resolveCitations(
       : `youtube:${ann.videoId}`;
 
     const meta = metadataCache[ann.videoId];
-    const metaParts = [meta?.publishedAt, meta?.channel].filter(Boolean);
+    // Format date as MM/DD/YYYY
+    let formattedDate = "";
+    if (meta?.publishedAt) {
+      const d = new Date(meta.publishedAt);
+      if (!isNaN(d.getTime())) {
+        formattedDate = `${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")}/${d.getFullYear()}`;
+      }
+    }
+    const metaParts = [meta?.channel, formattedDate].filter(Boolean);
     const label = metaParts.length > 0
       ? `${ann.title} · ${metaParts.join(" · ")}`
       : ann.title;
