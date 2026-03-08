@@ -247,7 +247,7 @@ export function ChatWindow() {
 
           {speaker && messages.length === 0 && (
             <div className="flex items-center justify-center h-full text-gray-400">
-              <div className="text-center space-y-2">
+              <div className="text-center space-y-4">
                 <p className="text-lg">
                   Chat with{" "}
                   <span className="font-semibold text-gray-600">
@@ -260,6 +260,29 @@ export function ChatWindow() {
                   Ask about their views, find specific quotes, or explore topics
                   they&apos;ve discussed.
                 </p>
+                <div className="flex flex-wrap justify-center gap-2 pt-2">
+                  {[
+                    "Find me quotes about AI safety",
+                    "What are their views on consciousness?",
+                    "Summarize their key ideas",
+                  ].map((q) => (
+                    <button
+                      key={q}
+                      disabled={isLoading}
+                      onClick={() => {
+                        setInput(q);
+                        // Trigger send on next tick after state updates
+                        requestAnimationFrame(() => {
+                          const sendBtn = document.getElementById("chat-send-btn") as HTMLButtonElement;
+                          sendBtn?.click();
+                        });
+                      }}
+                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-full text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
+                    >
+                      {q}
+                    </button>
+                  ))}
+                </div>
               </div>
             </div>
           )}
@@ -295,6 +318,7 @@ export function ChatWindow() {
                 disabled={isLoading}
               />
               <Button
+                id="chat-send-btn"
                 onClick={handleSend}
                 disabled={!input.trim() || isLoading}
                 className="bg-[#99cc66] hover:bg-[#88bb55] text-white rounded-xl h-[48px] w-[48px] p-0"
