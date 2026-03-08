@@ -84,7 +84,7 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
 
 export async function fetchYoutubeTranscript(url: string) {
   const response = await axios.post(
-    "https://youtube-transcript-data.replit.app/transcript",
+    "https://afraid-sparkling-planes.vercel.app/transcript",
     {
       url,
     }

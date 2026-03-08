@@ -93,7 +93,7 @@ function passesCheckpoint({ segmentCount, minStart, maxStart }) {
 
 async function fetchTranscript(url) {
   const { data } = await axios.post(
-    "https://youtube-transcript-data.replit.app/transcript",
+    "https://afraid-sparkling-planes.vercel.app/transcript",
     { url },
     { timeout: 60000 },
   );
