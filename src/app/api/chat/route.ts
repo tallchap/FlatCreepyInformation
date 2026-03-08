@@ -220,10 +220,17 @@ export async function POST(req: NextRequest) {
     let fullResponseText = "";
     let responseId = "";
 
+    // Collected annotations from streaming events
+    const collectedAnnotations: any[] = [];
+    const collectedBlockTexts: string[] = [];
+    const eventTypes: string[] = [];
+
     const readable = new ReadableStream({
       async start(controller) {
         try {
           for await (const event of stream) {
+            eventTypes.push(event.type);
+
             // Capture response ID
             if (event.type === "response.created") {
               responseId = event.response.id;
@@ -242,17 +249,47 @@ export async function POST(req: NextRequest) {
               );
             }
 
+            // Capture annotations when a text block is complete
+            if (event.type === "response.output_text.done") {
+              const evt = event as any;
+              if (evt.annotations && evt.annotations.length > 0) {
+                collectedAnnotations.push(...evt.annotations);
+              }
+              if (evt.text) {
+                collectedBlockTexts.push(evt.text);
+              }
+            }
+
+            // Also try content_part.done
+            if (event.type === "response.content_part.done") {
+              const part = (event as any).part;
+              if (part?.annotations && part.annotations.length > 0) {
+                collectedAnnotations.push(...part.annotations);
+              }
+              if (part?.text) {
+                collectedBlockTexts.push(part.text);
+              }
+            }
+
             // Response complete — resolve citations
             if (event.type === "response.completed") {
               try {
                 await resolveCitations(
                   event.response,
                   fullResponseText,
+                  collectedAnnotations,
                   controller,
                   encoder,
+                  eventTypes,
                 );
               } catch (err) {
                 console.error("Error resolving citations:", err);
+                // Send error as visible debug
+                controller.enqueue(
+                  encoder.encode(
+                    `data: ${JSON.stringify({ type: "text_delta", text: `\n\n[Debug: citation error: ${err}]` })}\n\n`,
+                  ),
+                );
               }
             }
           }
@@ -307,55 +344,94 @@ interface AnnotationInfo {
 async function resolveCitations(
   response: any,
   fullText: string,
+  streamAnnotations: any[],
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
+  eventTypes: string[],
 ) {
-  // Step 1: Collect all file_citation annotations with position info
+  // Step 1: Collect file_citation annotations
+  // Try from streaming events first (more reliable), fallback to response.output
   const annotations: AnnotationInfo[] = [];
 
-  for (const outputItem of response.output || []) {
-    if (outputItem.type !== "message") continue;
+  // Source A: annotations collected during streaming
+  for (const ann of streamAnnotations) {
+    if (ann.type !== "file_citation") continue;
+    const fileId = ann.file_id;
+    if (!fileId) continue;
+    if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
 
-    for (const block of outputItem.content || []) {
-      if (block.type !== "output_text") continue;
+    let videoId: string | undefined;
+    let title: string | undefined;
 
-      for (const ann of block.annotations || []) {
-        if (ann.type !== "file_citation") continue;
+    const searchResult = findFileSearchResults(response, fileId);
+    if (searchResult?.attributes) {
+      videoId = searchResult.attributes.video_id as string;
+      title = searchResult.attributes.title as string;
+    }
+    if (!videoId) {
+      const entry = FILE_ID_LOOKUP[fileId];
+      if (entry) { videoId = entry.videoId; title = entry.title; }
+    }
+    if (!videoId) continue;
 
-        const fileId = ann.file_id;
-        if (!fileId) continue;
-        if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
+    annotations.push({
+      startIndex: ann.start_index,
+      endIndex: ann.end_index,
+      fileId,
+      videoId,
+      title: title || "",
+    });
+  }
 
-        // Resolve file ID → video ID + title
-        let videoId: string | undefined;
-        let title: string | undefined;
+  // Source B: fallback to response.output if streaming didn't capture any
+  if (annotations.length === 0) {
+    for (const outputItem of response.output || []) {
+      if (outputItem.type !== "message") continue;
 
-        const searchResult = findFileSearchResults(response, fileId);
-        if (searchResult?.attributes) {
-          videoId = searchResult.attributes.video_id as string;
-          title = searchResult.attributes.title as string;
-        }
+      for (const block of outputItem.content || []) {
+        if (block.type !== "output_text") continue;
 
-        if (!videoId) {
-          const entry = FILE_ID_LOOKUP[fileId];
-          if (entry) {
-            videoId = entry.videoId;
-            title = entry.title;
+        for (const ann of block.annotations || []) {
+          if (ann.type !== "file_citation") continue;
+          const fileId = ann.file_id;
+          if (!fileId) continue;
+          if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
+
+          let videoId: string | undefined;
+          let title: string | undefined;
+
+          const searchResult = findFileSearchResults(response, fileId);
+          if (searchResult?.attributes) {
+            videoId = searchResult.attributes.video_id as string;
+            title = searchResult.attributes.title as string;
           }
+          if (!videoId) {
+            const entry = FILE_ID_LOOKUP[fileId];
+            if (entry) { videoId = entry.videoId; title = entry.title; }
+          }
+          if (!videoId) continue;
+
+          annotations.push({
+            startIndex: ann.start_index,
+            endIndex: ann.end_index,
+            fileId,
+            videoId,
+            title: title || "",
+          });
         }
-
-        if (!videoId) continue;
-
-        annotations.push({
-          startIndex: ann.start_index,
-          endIndex: ann.end_index,
-          fileId,
-          videoId,
-          title: title || "",
-        });
       }
     }
   }
+
+  // Debug: send visible info about what we found
+  const uniqueEvents = [...new Set(eventTypes)];
+  const outputTypes = (response.output || []).map((o: any) => o.type);
+  const debugMsg = `\n\n---\n_Debug: ${annotations.length} annotations found | stream_anns: ${streamAnnotations.length} | events: ${uniqueEvents.join(",")} | output_types: ${outputTypes.join(",")} | text_len: ${fullText.length}_`;
+  controller.enqueue(
+    encoder.encode(
+      `data: ${JSON.stringify({ type: "text_delta", text: debugMsg })}\n\n`,
+    ),
+  );
 
   if (annotations.length === 0) return;
 
