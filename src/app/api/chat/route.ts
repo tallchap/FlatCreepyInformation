@@ -326,18 +326,35 @@ async function resolveCitations(
     for (const block of outputItem.content || []) {
       if (block.type !== "output_text") continue;
 
+      const blockText: string = block.text || "";
+
       for (const ann of block.annotations || []) {
         if (ann.type !== "file_citation") continue;
 
         const fileId = ann.file_id;
         if (!fileId) continue;
 
+        // Build the marker text — prefer start_index/end_index, fall back to ann.text
+        let annText = "";
+        if (
+          typeof ann.start_index === "number" &&
+          typeof ann.end_index === "number" &&
+          blockText
+        ) {
+          annText = blockText.substring(ann.start_index, ann.end_index);
+        }
+        if (!annText) {
+          annText = ann.text || "";
+        }
+
+        // Skip annotations with empty markers — would cause split("") to break every character
+        if (!annText) continue;
+
         // Try to get video info from file attributes (preferred) or fallback to citation map
         let videoId: string | undefined;
         let title: string | undefined;
 
         // Check file attributes first (set during migration)
-        // Attributes come from the file_search results in the response
         const fileSearchResults = findFileSearchResults(response, fileId);
         if (fileSearchResults?.attributes) {
           videoId = fileSearchResults.attributes.video_id as string;
@@ -356,13 +373,11 @@ async function resolveCitations(
         if (!videoId) continue;
 
         // Extract text before annotation for timestamp matching
-        const annText = ann.text || "";
-        const textBefore = fullText
-          .substring(
-            Math.max(0, fullText.indexOf(annText) - 200),
-            fullText.indexOf(annText),
-          )
-          .trim();
+        const markerPos = fullText.indexOf(annText);
+        const textBefore =
+          markerPos > 0
+            ? fullText.substring(Math.max(0, markerPos - 200), markerPos).trim()
+            : "";
 
         pendingCitations.push({
           marker: annText,
