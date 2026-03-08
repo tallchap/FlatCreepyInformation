@@ -114,6 +114,16 @@ export function ChatWindow() {
                 }
                 return updated;
               });
+            } else if (event.type === "rewrite") {
+              // Server rebuilt the text with citation links injected at annotation positions
+              setMessages((prev) => {
+                const updated = [...prev];
+                const last = updated[updated.length - 1];
+                if (last && last.role === "assistant") {
+                  updated[updated.length - 1] = { ...last, content: event.content };
+                }
+                return updated;
+              });
             } else if (event.type === "citations") {
               // Server resolved file citations to real video IDs
               // Replace annotation markers (e.g. 【4:14†source】) with clickable links

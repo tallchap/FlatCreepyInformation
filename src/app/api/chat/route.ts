@@ -244,27 +244,6 @@ export async function POST(req: NextRequest) {
 
             // Response complete — resolve citations
             if (event.type === "response.completed") {
-              // Debug: send annotation info to client
-              const debugOutput = (event.response?.output || []).map((item: any) => ({
-                type: item.type,
-                contentTypes: item.content?.map((c: any) => c.type),
-                annotationCount: item.content?.reduce((n: number, c: any) => n + (c.annotations?.length || 0), 0),
-                annotationSample: item.content?.flatMap((c: any) =>
-                  (c.annotations || []).slice(0, 2).map((a: any) => ({
-                    type: a.type,
-                    file_id: a.file_id?.slice(0, 20),
-                    text: a.text?.slice(0, 40),
-                    start_index: a.start_index,
-                    end_index: a.end_index,
-                  }))
-                ),
-              }));
-              controller.enqueue(
-                encoder.encode(
-                  `data: ${JSON.stringify({ type: "debug", outputItems: debugOutput, fullTextLength: fullResponseText.length })}\n\n`,
-                ),
-              );
-
               try {
                 await resolveCitations(
                   event.response,
@@ -317,29 +296,22 @@ export async function POST(req: NextRequest) {
 
 // ── Citation resolution ─────────────────────────────────────────────────
 
+interface AnnotationInfo {
+  startIndex: number;
+  endIndex: number;
+  fileId: string;
+  videoId: string;
+  title: string;
+}
+
 async function resolveCitations(
   response: any,
   fullText: string,
   controller: ReadableStreamDefaultController,
   encoder: TextEncoder,
 ) {
-  const citations: Record<
-    string,
-    {
-      videoId: string;
-      title: string;
-      timestamp?: number;
-      metadata?: CitationMetadata;
-    }
-  > = {};
-
-  // Collect annotations from the response output
-  const pendingCitations: {
-    marker: string;
-    videoId: string;
-    title: string;
-    quotedText: string;
-  }[] = [];
+  // Step 1: Collect all file_citation annotations with position info
+  const annotations: AnnotationInfo[] = [];
 
   for (const outputItem of response.output || []) {
     if (outputItem.type !== "message") continue;
@@ -347,42 +319,23 @@ async function resolveCitations(
     for (const block of outputItem.content || []) {
       if (block.type !== "output_text") continue;
 
-      const blockText: string = block.text || "";
-
       for (const ann of block.annotations || []) {
         if (ann.type !== "file_citation") continue;
 
         const fileId = ann.file_id;
         if (!fileId) continue;
+        if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
 
-        // Build the marker text — prefer start_index/end_index, fall back to ann.text
-        let annText = "";
-        if (
-          typeof ann.start_index === "number" &&
-          typeof ann.end_index === "number" &&
-          blockText
-        ) {
-          annText = blockText.substring(ann.start_index, ann.end_index);
-        }
-        if (!annText) {
-          annText = ann.text || "";
-        }
-
-        // Skip annotations with empty markers — would cause split("") to break every character
-        if (!annText) continue;
-
-        // Try to get video info from file attributes (preferred) or fallback to citation map
+        // Resolve file ID → video ID + title
         let videoId: string | undefined;
         let title: string | undefined;
 
-        // Check file attributes first (set during migration)
-        const fileSearchResults = findFileSearchResults(response, fileId);
-        if (fileSearchResults?.attributes) {
-          videoId = fileSearchResults.attributes.video_id as string;
-          title = fileSearchResults.attributes.title as string;
+        const searchResult = findFileSearchResults(response, fileId);
+        if (searchResult?.attributes) {
+          videoId = searchResult.attributes.video_id as string;
+          title = searchResult.attributes.title as string;
         }
 
-        // Fallback to legacy citation map
         if (!videoId) {
           const entry = FILE_ID_LOOKUP[fileId];
           if (entry) {
@@ -393,27 +346,21 @@ async function resolveCitations(
 
         if (!videoId) continue;
 
-        // Extract text before annotation for timestamp matching
-        const markerPos = fullText.indexOf(annText);
-        const textBefore =
-          markerPos > 0
-            ? fullText.substring(Math.max(0, markerPos - 200), markerPos).trim()
-            : "";
-
-        pendingCitations.push({
-          marker: annText,
+        annotations.push({
+          startIndex: ann.start_index,
+          endIndex: ann.end_index,
+          fileId,
           videoId,
           title: title || "",
-          quotedText: textBefore,
         });
       }
     }
   }
 
-  if (pendingCitations.length === 0) return;
+  if (annotations.length === 0) return;
 
-  // Fetch transcripts for unique video IDs and resolve timestamps
-  const uniqueVideoIds = [...new Set(pendingCitations.map((c) => c.videoId))];
+  // Step 2: Fetch transcripts to find timestamps
+  const uniqueVideoIds = [...new Set(annotations.map((a) => a.videoId))];
   const transcriptCache: Record<string, { start: number | null; text: string }[]> = {};
   const metadataCache: Record<string, CitationMetadata> = {};
 
@@ -424,7 +371,6 @@ async function resolveCitations(
       } catch {
         transcriptCache[videoId] = [];
       }
-
       try {
         const meta = await fetchVideoMeta(videoId);
         if (meta) {
@@ -445,29 +391,43 @@ async function resolveCitations(
     }),
   );
 
-  // Build citations with timestamps
-  for (const pc of pendingCitations) {
-    const segments = transcriptCache[pc.videoId] || [];
-    const timestamp = findTimestampForQuote(pc.quotedText, segments);
+  // Step 3: Rebuild text with citation links injected at annotation positions
+  // Sort by startIndex descending so replacements don't shift earlier positions
+  const sorted = [...annotations].sort((a, b) => b.startIndex - a.startIndex);
 
-    citations[pc.marker] = {
-      videoId: pc.videoId,
-      title: pc.title,
-      ...(timestamp !== null && { timestamp: Math.floor(timestamp) }),
-      ...(metadataCache[pc.videoId] && { metadata: metadataCache[pc.videoId] }),
-    };
+  let rewrittenText = fullText;
+
+  for (const ann of sorted) {
+    const textBefore = fullText.substring(Math.max(0, ann.startIndex - 300), ann.startIndex);
+    const segments = transcriptCache[ann.videoId] || [];
+    const timestamp = findTimestampForQuote(textBefore, segments);
+
+    const ytRef = timestamp !== null
+      ? `youtube:${ann.videoId}:${Math.floor(timestamp)}`
+      : `youtube:${ann.videoId}`;
+
+    const meta = metadataCache[ann.videoId];
+    const metaParts = [meta?.publishedAt, meta?.channel].filter(Boolean);
+    const label = metaParts.length > 0
+      ? `${ann.title} · ${metaParts.join(" · ")}`
+      : ann.title;
+
+    const link = ` [${label}](${ytRef})`;
+
+    rewrittenText =
+      rewrittenText.substring(0, ann.startIndex) +
+      link +
+      rewrittenText.substring(ann.endIndex);
   }
 
-  if (Object.keys(citations).length > 0) {
-    controller.enqueue(
-      encoder.encode(
-        `data: ${JSON.stringify({ type: "citations", citations })}\n\n`,
-      ),
-    );
-  }
+  // Step 4: Send rewrite event — client replaces the entire message content
+  controller.enqueue(
+    encoder.encode(
+      `data: ${JSON.stringify({ type: "rewrite", content: rewrittenText })}\n\n`,
+    ),
+  );
 }
 
-// Helper to find file_search results for a given file ID in the response
 function findFileSearchResults(
   response: any,
   fileId: string,
