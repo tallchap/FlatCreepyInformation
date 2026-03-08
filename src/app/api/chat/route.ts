@@ -350,77 +350,56 @@ async function resolveCitations(
   eventTypes: string[],
 ) {
   // Step 1: Collect file_citation annotations
-  // Try from streaming events first (more reliable), fallback to response.output
+  // Use streaming annotations first, fallback to response.output
+  const rawAnns = streamAnnotations.length > 0
+    ? streamAnnotations
+    : extractResponseAnnotations(response);
+
   const annotations: AnnotationInfo[] = [];
 
-  // Source A: annotations collected during streaming
-  for (const ann of streamAnnotations) {
+  for (const ann of rawAnns) {
     if (ann.type !== "file_citation") continue;
-    const fileId = ann.file_id;
-    if (!fileId) continue;
-    if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
+    if (typeof ann.index !== "number") continue;
 
+    // Extract video ID from filename (e.g. "transcript_-mXVKLrgBwY.txt" → "-mXVKLrgBwY")
     let videoId: string | undefined;
     let title: string | undefined;
 
-    const searchResult = findFileSearchResults(response, fileId);
-    if (searchResult?.attributes) {
-      videoId = searchResult.attributes.video_id as string;
-      title = searchResult.attributes.title as string;
+    if (ann.filename) {
+      const match = ann.filename.match(/^transcript_(.+)\.txt$/);
+      if (match) videoId = match[1];
     }
-    if (!videoId) {
-      const entry = FILE_ID_LOOKUP[fileId];
+
+    // Try file attributes
+    if (ann.file_id) {
+      const searchResult = findFileSearchResults(response, ann.file_id);
+      if (searchResult?.attributes) {
+        if (!videoId) videoId = searchResult.attributes.video_id as string;
+        title = searchResult.attributes.title as string;
+      }
+    }
+
+    // Fallback to legacy citation map
+    if (!videoId && ann.file_id) {
+      const entry = FILE_ID_LOOKUP[ann.file_id];
       if (entry) { videoId = entry.videoId; title = entry.title; }
     }
+
     if (!videoId) continue;
 
+    // Look up title from citation map if we only got it from filename
+    if (!title && ann.file_id) {
+      const entry = FILE_ID_LOOKUP[ann.file_id];
+      if (entry) title = entry.title;
+    }
+
     annotations.push({
-      startIndex: ann.start_index,
-      endIndex: ann.end_index,
-      fileId,
+      startIndex: ann.index,
+      endIndex: ann.index, // single position — link is inserted here
+      fileId: ann.file_id || "",
       videoId,
       title: title || "",
     });
-  }
-
-  // Source B: fallback to response.output if streaming didn't capture any
-  if (annotations.length === 0) {
-    for (const outputItem of response.output || []) {
-      if (outputItem.type !== "message") continue;
-
-      for (const block of outputItem.content || []) {
-        if (block.type !== "output_text") continue;
-
-        for (const ann of block.annotations || []) {
-          if (ann.type !== "file_citation") continue;
-          const fileId = ann.file_id;
-          if (!fileId) continue;
-          if (typeof ann.start_index !== "number" || typeof ann.end_index !== "number") continue;
-
-          let videoId: string | undefined;
-          let title: string | undefined;
-
-          const searchResult = findFileSearchResults(response, fileId);
-          if (searchResult?.attributes) {
-            videoId = searchResult.attributes.video_id as string;
-            title = searchResult.attributes.title as string;
-          }
-          if (!videoId) {
-            const entry = FILE_ID_LOOKUP[fileId];
-            if (entry) { videoId = entry.videoId; title = entry.title; }
-          }
-          if (!videoId) continue;
-
-          annotations.push({
-            startIndex: ann.start_index,
-            endIndex: ann.end_index,
-            fileId,
-            videoId,
-            title: title || "",
-          });
-        }
-      }
-    }
   }
 
   // Debug: send visible info about what we found
@@ -516,6 +495,18 @@ async function resolveCitations(
       `data: ${JSON.stringify({ type: "rewrite", content: rewrittenText })}\n\n`,
     ),
   );
+}
+
+function extractResponseAnnotations(response: any): any[] {
+  const result: any[] = [];
+  for (const outputItem of response.output || []) {
+    if (outputItem.type !== "message") continue;
+    for (const block of outputItem.content || []) {
+      if (block.type !== "output_text") continue;
+      result.push(...(block.annotations || []));
+    }
+  }
+  return result;
 }
 
 function findFileSearchResults(
