@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, RotateCcw } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SPEAKER_ASSISTANTS } from "@/lib/assistants";
+import { SPEAKERS } from "@/lib/speakers";
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
 import { VideoPreviewPane } from "./video-preview-pane";
@@ -23,7 +23,7 @@ export function ChatWindow() {
   const [speaker, setSpeaker] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
-  const [threadId, setThreadId] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<SelectedVideo>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -39,7 +39,6 @@ export function ChatWindow() {
 
   function handleNewConversation() {
     setMessages([]);
-    setThreadId(null);
     setInput("");
     setIsLoading(false);
     setSelectedVideo(null);
@@ -63,13 +62,15 @@ export function ChatWindow() {
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
+      // Send full conversation history — Responses API uses client-managed state
+      const currentMessages = [...messages.slice(0, -1), userMessage]; // exclude placeholder
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           speaker,
           message: trimmed,
-          threadId,
+          messages: currentMessages,
         }),
       });
 
@@ -100,7 +101,7 @@ export function ChatWindow() {
             const event = JSON.parse(jsonStr);
 
             if (event.type === "thread_id") {
-              setThreadId(event.threadId);
+              // Legacy — no-op for Responses API
             } else if (event.type === "text_delta") {
               setMessages((prev) => {
                 const updated = [...prev];
@@ -240,7 +241,7 @@ export function ChatWindow() {
                 <p className="text-lg">
                   Chat with{" "}
                   <span className="font-semibold text-gray-600">
-                    {SPEAKER_ASSISTANTS.find((s) => s.slug === speaker)
+                    {SPEAKERS.find((s) => s.slug === speaker)
                       ?.name ?? speaker}
                   </span>
                   &apos;s transcript history

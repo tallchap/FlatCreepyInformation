@@ -7,7 +7,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { SPEAKER_ASSISTANTS } from "@/lib/assistants";
+import { SPEAKERS } from "@/lib/speakers";
 
 interface SpeakerSelectProps {
   value: string;
@@ -26,7 +26,7 @@ export function SpeakerSelect({
         <SelectValue placeholder="Choose a speaker..." />
       </SelectTrigger>
       <SelectContent>
-        {SPEAKER_ASSISTANTS.map((speaker) => (
+        {SPEAKERS.map((speaker) => (
           <SelectItem key={speaker.slug} value={speaker.slug}>
             {speaker.name} ({speaker.videoCount} videos)
           </SelectItem>
