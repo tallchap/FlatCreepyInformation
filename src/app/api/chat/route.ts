@@ -426,7 +426,21 @@ async function resolveCitations(
   // Debug: send visible info about what we found
   const uniqueEvents = [...new Set(eventTypes)];
   const outputTypes = (response.output || []).map((o: any) => o.type);
-  const debugMsg = `\n\n---\n_Debug: ${annotations.length} annotations found | stream_anns: ${streamAnnotations.length} | events: ${uniqueEvents.join(",")} | output_types: ${outputTypes.join(",")} | text_len: ${fullText.length}_`;
+  const rawSample = streamAnnotations.slice(0, 2).map((a: any) => JSON.stringify(a).slice(0, 200));
+  // Also check response.output for annotations
+  let respAnnCount = 0;
+  let respAnnSample = "";
+  for (const oi of response.output || []) {
+    if (oi.type !== "message") continue;
+    for (const bl of oi.content || []) {
+      if (bl.type !== "output_text") continue;
+      respAnnCount += (bl.annotations || []).length;
+      if (!respAnnSample && bl.annotations?.length > 0) {
+        respAnnSample = JSON.stringify(bl.annotations[0]).slice(0, 200);
+      }
+    }
+  }
+  const debugMsg = `\n\n---\n_Debug: ${annotations.length} anns matched | stream_raw: ${streamAnnotations.length} | resp_anns: ${respAnnCount} | sample_stream: ${rawSample[0] || "none"} | sample_resp: ${respAnnSample || "none"} | output_types: ${outputTypes.join(",")}_`;
   controller.enqueue(
     encoder.encode(
       `data: ${JSON.stringify({ type: "text_delta", text: debugMsg })}\n\n`,
