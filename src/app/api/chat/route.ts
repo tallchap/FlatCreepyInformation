@@ -485,7 +485,7 @@ async function resolveCitations(
 
     const metaParts = [channel, formattedDate].filter(Boolean);
     const label = metaParts.length > 0
-      ? `${title} · ${metaParts.join(" · ")}`
+      ? `${title} (${metaParts.join(" | ")})`
       : title;
 
     const link = ` [${label}](${ytRef})`;
