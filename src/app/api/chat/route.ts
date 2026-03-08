@@ -488,8 +488,10 @@ async function resolveCitations(
     }
 
     // Fallback: use the last 300 characters if no quotes found
+    let matchMethod = "quotes";
     if (!quotedText) {
       quotedText = textWindow.slice(-300);
+      matchMethod = "300chars";
     }
 
     const segments = transcriptCache[ann.videoId] || [];
@@ -516,7 +518,7 @@ async function resolveCitations(
       }
     }
 
-    const metaParts = [channel, formattedDate].filter(Boolean);
+    const metaParts = [channel, formattedDate, matchMethod].filter(Boolean);
     const label = metaParts.length > 0
       ? `${title} (${metaParts.join(" | ")})`
       : title;
