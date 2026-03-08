@@ -1,36 +1,31 @@
+"use client";
+
 import Link from "next/link";
-import { Button } from "./ui/button";
+import { usePathname } from "next/navigation";
 
 const links = [
-  {
-    href: "/",
-    label: "Search",
-  },
-  {
-    href: "/browse",
-    label: "Browse",
-  },
-  {
-    href: "/chat",
-    label: "Chat",
-  },
-  {
-    href: "/transcribe",
-    label: "Transcribe",
-  },
-  {
-    href: "/about",
-    label: "About",
-  },
+  { href: "/", label: "Search" },
+  { href: "/browse", label: "Browse" },
+  { href: "/chat", label: "Chat" },
+  { href: "/transcribe", label: "Transcribe" },
+  { href: "/about", label: "About" },
 ];
 
 export function NavLinks() {
+  const pathname = usePathname();
+
   return (
     <div className="flex items-center justify-center gap-2">
       {links.map((link) => (
-        <Button variant="link" asChild key={link.href} className="text-xl">
-          <Link href={link.href}>{link.label}</Link>
-        </Button>
+        <Link
+          key={link.href}
+          href={link.href}
+          className={`inline-flex items-center justify-center rounded-md font-medium text-xl px-4 py-2 transition-all underline-offset-4 hover:underline text-primary ${
+            pathname === link.href ? "underline" : ""
+          }`}
+        >
+          {link.label}
+        </Link>
       ))}
     </div>
   );
