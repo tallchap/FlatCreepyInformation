@@ -10,7 +10,7 @@ import { fetchTranscript, fetchVideoMeta } from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-const MODEL = process.env.CHAT_MODEL || "gpt-4.1";
+const MODEL = process.env.CHAT_MODEL || "gpt-5.4";
 
 // ── Citation helpers ────────────────────────────────────────────────────
 
