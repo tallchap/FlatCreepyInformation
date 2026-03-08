@@ -458,9 +458,42 @@ async function resolveCitations(
   let rewrittenText = fullText;
 
   for (const ann of sorted) {
-    const textBefore = fullText.substring(Math.max(0, ann.startIndex - 300), ann.startIndex);
+    // Smart quote extraction: find the quoted text nearest the citation position
+    // Look backward from the annotation index for the closing quote, then the opening quote
+    const textWindow = fullText.substring(Math.max(0, ann.startIndex - 500), ann.startIndex);
+    let quotedText = "";
+
+    // Try to find text between quote marks (supports "" and "")
+    const quoteChars = ['"', '\u201c', '\u201d'];
+    // Find the last closing quote in the window (nearest to citation)
+    let closeIdx = -1;
+    for (let i = textWindow.length - 1; i >= 0; i--) {
+      if (quoteChars.includes(textWindow[i])) {
+        closeIdx = i;
+        break;
+      }
+    }
+    if (closeIdx > 0) {
+      // Find the opening quote before the closing quote
+      let openIdx = -1;
+      for (let i = closeIdx - 1; i >= 0; i--) {
+        if (quoteChars.includes(textWindow[i])) {
+          openIdx = i;
+          break;
+        }
+      }
+      if (openIdx >= 0 && openIdx < closeIdx) {
+        quotedText = textWindow.substring(openIdx + 1, closeIdx);
+      }
+    }
+
+    // Fallback: use the last 300 characters if no quotes found
+    if (!quotedText) {
+      quotedText = textWindow.slice(-300);
+    }
+
     const segments = transcriptCache[ann.videoId] || [];
-    const timestamp = findTimestampForQuote(textBefore, segments);
+    const timestamp = findTimestampForQuote(quotedText, segments);
 
     const ytRef = timestamp !== null
       ? `youtube:${ann.videoId}:${Math.floor(timestamp)}`
