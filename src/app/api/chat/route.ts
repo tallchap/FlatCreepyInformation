@@ -106,15 +106,16 @@ function buildFilters(speakerName: string, message: string): FileSearchFilter | 
 function findTimestampForQuote(
   quote: string,
   segments: { start: number | null; text: string }[],
-): number | null {
-  if (!quote || segments.length === 0) return null;
+): { timestamp: number | null; method: string } {
+  if (!quote || segments.length === 0) return { timestamp: null, method: "none" };
 
   const normalizedQuote = quote.toLowerCase().replace(/\s+/g, " ").trim();
   const quoteWords = normalizedQuote.split(" ").filter((w) => w.length > 3);
-  if (quoteWords.length === 0) return null;
+  if (quoteWords.length === 0) return { timestamp: null, method: "none" };
 
   let bestScore = 0;
   let bestTimestamp: number | null = null;
+  let bestIdx = 0;
 
   for (let i = 0; i < segments.length; i++) {
     const seg = segments[i];
@@ -134,10 +135,27 @@ function findTimestampForQuote(
     if (score > bestScore) {
       bestScore = score;
       bestTimestamp = seg.start;
+      bestIdx = i;
     }
   }
 
-  return bestScore >= quoteWords.length * 0.3 ? bestTimestamp : null;
+  if (bestScore < quoteWords.length * 0.3) return { timestamp: null, method: "none" };
+
+  // Refinement: cascade 3→2→1 word exact match within winning 5-segment window
+  const allWords = normalizedQuote.split(" ");
+  const winnerSegs = segments.slice(bestIdx, bestIdx + 5);
+
+  for (let n = 3; n >= 1; n--) {
+    if (allWords.length < n) continue;
+    const phrase = allWords.slice(0, n).join(" ");
+    for (const seg of winnerSegs) {
+      if (seg.start !== null && seg.text.toLowerCase().includes(phrase)) {
+        return { timestamp: seg.start, method: `quote-${n}` };
+      }
+    }
+  }
+
+  return { timestamp: bestTimestamp, method: "quote-segment" };
 }
 
 // ── System prompt ───────────────────────────────────────────────────────
@@ -488,14 +506,16 @@ async function resolveCitations(
     }
 
     // Fallback: use the last 300 characters if no quotes found
-    let matchMethod = "quotes";
+    const usedQuotes = !!quotedText;
     if (!quotedText) {
       quotedText = textWindow.slice(-300);
-      matchMethod = "300chars";
     }
 
     const segments = transcriptCache[ann.videoId] || [];
-    const timestamp = findTimestampForQuote(quotedText, segments);
+    const { timestamp, method: tsMethod } = findTimestampForQuote(quotedText, segments);
+
+    // Log match method: quote-3, quote-2, quote-1, quote-segment (or 300chars- variants)
+    const matchMethod = usedQuotes ? tsMethod : tsMethod.replace("quote", "300chars");
 
     const ytRef = timestamp !== null
       ? `youtube:${ann.videoId}:${Math.floor(timestamp)}`
