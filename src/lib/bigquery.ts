@@ -291,6 +291,46 @@ export async function fetchSpeakerYearVideos(speaker: string, year: number, page
   return { videos: mapSpeakerVideos(rows), total: Number(countRows[0]?.total ?? 0) };
 }
 
+// ── Speaker filter context (cached per speaker for GPT pre-pass) ──────
+
+export interface SpeakerFilterContext {
+  channels: string[];
+  coSpeakers: string[];
+  years: number[];
+}
+
+const filterContextCache = new Map<string, SpeakerFilterContext>();
+
+export async function fetchSpeakerFilterContext(speakerName: string): Promise<SpeakerFilterContext> {
+  if (filterContextCache.has(speakerName)) return filterContextCache.get(speakerName)!;
+
+  const speakerLike = `%${speakerName}%`;
+
+  const [channelRows, speakerRows, yearRows] = await Promise.all([
+    bigQuery.query({
+      query: `SELECT DISTINCT channel_name FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE LOWER(@speakerLike) AND channel_name IS NOT NULL`,
+      params: { speakerLike },
+    }),
+    bigQuery.query({
+      query: `SELECT DISTINCT TRIM(s) AS name FROM ${VIDEOS_TABLE}, UNNEST(SPLIT(speaker_source, ',')) AS s WHERE LOWER(speaker_source) LIKE LOWER(@speakerLike) AND TRIM(s) != ''`,
+      params: { speakerLike },
+    }),
+    bigQuery.query({
+      query: `SELECT DISTINCT EXTRACT(YEAR FROM published_date) AS y FROM ${VIDEOS_TABLE} WHERE LOWER(speaker_source) LIKE LOWER(@speakerLike) AND published_date IS NOT NULL ORDER BY y`,
+      params: { speakerLike },
+    }),
+  ]);
+
+  const ctx: SpeakerFilterContext = {
+    channels: channelRows[0].map((r: any) => String(r.channel_name)).filter(Boolean),
+    coSpeakers: speakerRows[0].map((r: any) => String(r.name)).filter(Boolean),
+    years: yearRows[0].map((r: any) => Number(r.y)).filter(Boolean),
+  };
+
+  filterContextCache.set(speakerName, ctx);
+  return ctx;
+}
+
 export async function fetchTranscript(id: string) {
   if (useNewTranscriptTables()) {
     const [rows] = await bigQuery.query({

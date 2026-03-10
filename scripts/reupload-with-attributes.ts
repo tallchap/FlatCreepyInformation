@@ -65,6 +65,7 @@ interface VideoMeta {
     published_date: string | null;
     published_year: number | null;
     duration_sec: number | null;
+    speakers: string | null;
 }
 
 async function fetchVideoMetadata(videoId: string): Promise<VideoMeta | null> {
@@ -75,7 +76,8 @@ async function fetchVideoMetadata(videoId: string): Promise<VideoMeta | null> {
         channel_name AS channel,
         CAST(published_date AS STRING) AS published_date,
         EXTRACT(YEAR FROM published_date) AS published_year,
-        video_length
+        video_length,
+        speaker_source AS speakers
       FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\`
       WHERE video_id = @videoId
       LIMIT 1
@@ -90,6 +92,7 @@ async function fetchVideoMetadata(videoId: string): Promise<VideoMeta | null> {
             published_date: r.published_date || null,
             published_year: r.published_year ? Number(r.published_year) : null,
             duration_sec: parseDuration(r.video_length),
+            speakers: r.speakers || null,
         };
     }
 
@@ -100,7 +103,8 @@ async function fetchVideoMetadata(videoId: string): Promise<VideoMeta | null> {
         Channel_Name AS channel,
         CAST(Published_Date AS STRING) AS published_date,
         EXTRACT(YEAR FROM Published_Date) AS published_year,
-        Video_Length AS video_length
+        Video_Length AS video_length,
+        COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude) AS speakers
       FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcripts\`
       WHERE ID = @videoId
       LIMIT 1
@@ -115,6 +119,7 @@ async function fetchVideoMetadata(videoId: string): Promise<VideoMeta | null> {
             published_date: r.published_date || null,
             published_year: r.published_year ? Number(r.published_year) : null,
             duration_sec: parseDuration(r.video_length),
+            speakers: r.speakers || null,
         };
     }
 
@@ -167,6 +172,14 @@ async function migrateFile(
         if (meta?.published_date) attributes.published_date = meta.published_date;
         if (meta?.published_year) attributes.published_year = meta.published_year;
         if (meta?.duration_sec) attributes.duration_sec = meta.duration_sec;
+
+        // Add individual speaker attributes (speaker_1 through speaker_5)
+        if (meta?.speakers) {
+            const speakerList = meta.speakers.split(",").map(s => s.trim()).filter(Boolean);
+            for (let i = 0; i < Math.min(speakerList.length, 5); i++) {
+                attributes[`speaker_${i + 1}`] = speakerList[i].slice(0, 512);
+            }
+        }
 
         base.attributes = attributes;
 

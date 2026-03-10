@@ -6,7 +6,7 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { getSpeakerBySlug } from "@/lib/speakers";
-import { fetchTranscript, fetchVideoMeta } from "@/lib/bigquery";
+import { fetchTranscript, fetchVideoMeta, fetchSpeakerFilterContext } from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -70,32 +70,86 @@ type CompoundFilter = {
 
 type FileSearchFilter = ComparisonFilter | CompoundFilter;
 
-function detectBeforeYear(message: string): number | null {
-  const lower = message.toLowerCase();
-  const match = lower.match(/\bbefore\s+(\d{4})\b/);
-  return match ? parseInt(match[1], 10) : null;
+// ── GPT pre-pass filter detection ─────────────────────────────────────
+
+interface DetectedFilters {
+  channel: string | null;
+  coSpeaker: string | null;
+  yearBefore: number | null;
+  yearAfter: number | null;
 }
 
-function detectAfterYear(message: string): number | null {
-  const lower = message.toLowerCase();
-  const match = lower.match(/\bafter\s+(\d{4})\b/);
-  return match ? parseInt(match[1], 10) : null;
+async function detectFilters(
+  message: string,
+  speakerName: string,
+): Promise<DetectedFilters> {
+  const defaults: DetectedFilters = { channel: null, coSpeaker: null, yearBefore: null, yearAfter: null };
+
+  try {
+    const ctx = await fetchSpeakerFilterContext(speakerName);
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: `Extract search filters from the user's message about ${speakerName}'s videos.
+
+Available channels: ${ctx.channels.map(c => `"${c}"`).join(", ")}
+Available co-speakers: ${ctx.coSpeakers.map(s => `"${s}"`).join(", ")}
+Available years: ${ctx.years.join(", ")}
+
+Return JSON with these fields (null if not mentioned):
+- channel: exact channel name from the list above, or null
+- coSpeaker: exact speaker name from the list above, or null
+- yearBefore: filter videos published before this year, or null
+- yearAfter: filter videos published after this year, or null
+
+Only set a field if the user clearly indicates a filter. Do not guess.`,
+        },
+        { role: "user", content: message },
+      ],
+      response_format: { type: "json_object" },
+      temperature: 0,
+    });
+
+    const parsed = JSON.parse(response.choices[0].message.content || "{}");
+    return {
+      channel: parsed.channel || null,
+      coSpeaker: parsed.coSpeaker || null,
+      yearBefore: parsed.yearBefore ? Number(parsed.yearBefore) : null,
+      yearAfter: parsed.yearAfter ? Number(parsed.yearAfter) : null,
+    };
+  } catch (err) {
+    console.error("Filter detection failed, proceeding unfiltered:", err);
+    return defaults;
+  }
 }
 
-function buildFilters(speakerName: string, message: string): FileSearchFilter | undefined {
-  const conditions: ComparisonFilter[] = [];
+function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter | undefined {
+  const conditions: (ComparisonFilter | CompoundFilter)[] = [];
 
-  const beforeYear = detectBeforeYear(message);
-  if (beforeYear) {
-    conditions.push({ type: "lt", key: "published_year", value: beforeYear });
+  if (detected.yearBefore) {
+    conditions.push({ type: "lt", key: "published_year", value: detected.yearBefore });
+  }
+  if (detected.yearAfter) {
+    conditions.push({ type: "gt", key: "published_year", value: detected.yearAfter });
+  }
+  if (detected.channel) {
+    conditions.push({ type: "eq", key: "channel", value: detected.channel });
+  }
+  if (detected.coSpeaker) {
+    // OR across speaker_1..speaker_5 since we don't know which slot the speaker is in
+    conditions.push({
+      type: "or",
+      filters: [1, 2, 3, 4, 5].map(i => ({
+        type: "eq" as const,
+        key: `speaker_${i}`,
+        value: detected.coSpeaker!,
+      })),
+    });
   }
 
-  const afterYear = detectAfterYear(message);
-  if (afterYear) {
-    conditions.push({ type: "gt", key: "published_year", value: afterYear });
-  }
-
-  // No date constraints detected — return undefined (unfiltered search)
   if (conditions.length === 0) return undefined;
   if (conditions.length === 1) return conditions[0];
   return { type: "and", filters: conditions };
@@ -215,8 +269,9 @@ export async function POST(req: NextRequest) {
     // Current user message
     input.push({ role: "user", content: message });
 
-    // Build metadata filters
-    const filters = buildFilters(speakerConfig.name, message);
+    // GPT pre-pass: detect filters from natural language (~200-400ms)
+    const detected = await detectFilters(message, speakerConfig.name);
+    const filters = buildFiltersFromDetected(detected);
 
     // Call Responses API with file_search
     const stream = await openai.responses.create({
