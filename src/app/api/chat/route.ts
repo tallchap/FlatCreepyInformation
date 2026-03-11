@@ -79,21 +79,22 @@ interface DetectedFilters {
   yearAfter: number | null;
 }
 
+interface DetectFiltersResult {
+  filters: DetectedFilters;
+  debugSystemPrompt: string;
+  debugUserMessage: string;
+}
+
 async function detectFilters(
   message: string,
   speakerName: string,
-): Promise<DetectedFilters> {
+): Promise<DetectFiltersResult> {
   const defaults: DetectedFilters = { channel: null, coSpeaker: null, yearBefore: null, yearAfter: null };
 
   try {
     const ctx = await fetchSpeakerFilterContext(speakerName);
 
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: [
-        {
-          role: "system",
-          content: `Extract search filters from the user's message about ${speakerName}'s videos.
+    const systemPrompt = `Extract search filters from the user's message about ${speakerName}'s videos.
 
 Available channels: ${ctx.channels.map(c => `"${c}"`).join(", ")}
 Available co-speakers: ${ctx.coSpeakers.map(s => `"${s}"`).join(", ")}
@@ -105,8 +106,12 @@ Return JSON with these fields (null if not mentioned):
 - yearBefore: filter videos published before this year, or null
 - yearAfter: filter videos published after this year, or null
 
-Only set a field if the user clearly indicates a filter. Do not guess.`,
-        },
+Only set a field if the user clearly indicates a filter. Do not guess.`;
+
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        { role: "system", content: systemPrompt },
         { role: "user", content: message },
       ],
       response_format: { type: "json_object" },
@@ -115,14 +120,18 @@ Only set a field if the user clearly indicates a filter. Do not guess.`,
 
     const parsed = JSON.parse(response.choices[0].message.content || "{}");
     return {
-      channel: parsed.channel || null,
-      coSpeaker: parsed.coSpeaker || null,
-      yearBefore: parsed.yearBefore ? Number(parsed.yearBefore) : null,
-      yearAfter: parsed.yearAfter ? Number(parsed.yearAfter) : null,
+      filters: {
+        channel: parsed.channel || null,
+        coSpeaker: parsed.coSpeaker || null,
+        yearBefore: parsed.yearBefore ? Number(parsed.yearBefore) : null,
+        yearAfter: parsed.yearAfter ? Number(parsed.yearAfter) : null,
+      },
+      debugSystemPrompt: systemPrompt,
+      debugUserMessage: message,
     };
   } catch (err) {
     console.error("Filter detection failed, proceeding unfiltered:", err);
-    return defaults;
+    return { filters: defaults, debugSystemPrompt: "(failed)", debugUserMessage: message };
   }
 }
 
@@ -270,21 +279,39 @@ export async function POST(req: NextRequest) {
     input.push({ role: "user", content: message });
 
     // GPT pre-pass: detect filters from natural language (~200-400ms)
-    const detected = await detectFilters(message, speakerConfig.name);
+    const detectResult = await detectFilters(message, speakerConfig.name);
+    const detected = detectResult.filters;
     const filters = buildFiltersFromDetected(detected);
+
+    // Build tools payload for Responses API
+    const toolsPayload = [
+      {
+        type: "file_search" as const,
+        vector_store_ids: [speakerConfig.vectorStoreId],
+        max_num_results: 20,
+        ...(filters ? { filters } : {}),
+      },
+    ];
+
+    // Debug payloads for client inspection
+    const debugFilterCall = {
+      systemPrompt: detectResult.debugSystemPrompt,
+      userMessage: detectResult.debugUserMessage,
+      detectedFilters: detected,
+      builtFilters: filters || null,
+    };
+
+    const debugMainCall = {
+      model: MODEL,
+      input,
+      tools: toolsPayload,
+    };
 
     // Call Responses API with file_search
     const stream = await openai.responses.create({
       model: MODEL,
       input,
-      tools: [
-        {
-          type: "file_search" as const,
-          vector_store_ids: [speakerConfig.vectorStoreId],
-          max_num_results: 20,
-          ...(filters ? { filters } : {}),
-        },
-      ],
+      tools: toolsPayload,
       stream: true,
     });
 
@@ -300,6 +327,18 @@ export async function POST(req: NextRequest) {
 
     const readable = new ReadableStream({
       async start(controller) {
+        // Emit debug events before streaming the response
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "debug_filter_call", ...debugFilterCall })}\n\n`,
+          ),
+        );
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "debug_main_call", ...debugMainCall })}\n\n`,
+          ),
+        );
+
         try {
           for await (const event of stream) {
             eventTypes.push(event.type);

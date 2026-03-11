@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Send, RotateCcw } from "lucide-react";
+import { Send, RotateCcw, Bug, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SPEAKERS } from "@/lib/speakers";
 import { SpeakerSelect } from "./speaker-select";
@@ -26,6 +26,11 @@ export function ChatWindow() {
 
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<SelectedVideo>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [debugFilterCall, setDebugFilterCall] = useState<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [debugMainCall, setDebugMainCall] = useState<any>(null);
+  const [debugModal, setDebugModal] = useState<"filter" | "main" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -100,7 +105,11 @@ export function ChatWindow() {
           try {
             const event = JSON.parse(jsonStr);
 
-            if (event.type === "thread_id") {
+            if (event.type === "debug_filter_call") {
+              setDebugFilterCall(event);
+            } else if (event.type === "debug_main_call") {
+              setDebugMainCall(event);
+            } else if (event.type === "thread_id") {
               // Legacy — no-op for Responses API
             } else if (event.type === "text_delta") {
               setMessages((prev) => {
@@ -330,6 +339,28 @@ export function ChatWindow() {
               Responses are based on video transcript data. Always verify quotes
               against the original videos.
             </p>
+            {(debugFilterCall || debugMainCall) && (
+              <div className="flex justify-center gap-2 mt-2">
+                {debugFilterCall && (
+                  <button
+                    onClick={() => setDebugModal("filter")}
+                    className="text-[10px] px-2 py-0.5 rounded border border-orange-300 text-orange-500 hover:bg-orange-50"
+                  >
+                    <Bug className="h-3 w-3 inline mr-0.5" />
+                    Filter API Call
+                  </button>
+                )}
+                {debugMainCall && (
+                  <button
+                    onClick={() => setDebugModal("main")}
+                    className="text-[10px] px-2 py-0.5 rounded border border-blue-300 text-blue-500 hover:bg-blue-50"
+                  >
+                    <Bug className="h-3 w-3 inline mr-0.5" />
+                    Main API Call
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -340,6 +371,31 @@ export function ChatWindow() {
           startSec={selectedVideo.startSec}
           title={selectedVideo.title}
         />
+      )}
+
+      {/* Debug modal */}
+      {debugModal && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
+              <h3 className="font-semibold text-sm">
+                {debugModal === "filter" ? "GPT-4o-mini Filter Detection Call" : "OpenAI Responses API Call"}
+              </h3>
+              <button onClick={() => setDebugModal(null)} className="text-gray-400 hover:text-gray-600">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="overflow-auto p-4">
+              <pre className="text-xs whitespace-pre-wrap break-words font-mono text-gray-800">
+                {JSON.stringify(
+                  debugModal === "filter" ? debugFilterCall : debugMainCall,
+                  null,
+                  2,
+                )}
+              </pre>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
