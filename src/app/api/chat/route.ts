@@ -75,6 +75,8 @@ type FileSearchFilter = ComparisonFilter | CompoundFilter;
 interface DetectedFilters {
   channel: string | null;
   coSpeaker: string | null;
+  excludeChannel: string | null;
+  excludeCoSpeaker: string | null;
   yearBefore: number | null;
   yearAfter: number | null;
 }
@@ -89,7 +91,7 @@ async function detectFilters(
   message: string,
   speakerName: string,
 ): Promise<DetectFiltersResult> {
-  const defaults: DetectedFilters = { channel: null, coSpeaker: null, yearBefore: null, yearAfter: null };
+  const defaults: DetectedFilters = { channel: null, coSpeaker: null, excludeChannel: null, excludeCoSpeaker: null, yearBefore: null, yearAfter: null };
 
   try {
     const ctx = await fetchSpeakerFilterContext(speakerName);
@@ -105,6 +107,8 @@ Years: 2000 through 2026
 Rules:
 - Only extract a filter if the user's message clearly references it
 - Match co-speaker names even if misspelled (e.g. "Lex" → "Lex Fridman")
+- If the user says "non", "not", "except", "excluding", "without", or "no" before a name, that is EXCLUSION — use excludeChannel / excludeCoSpeaker, NOT the include fields
+- "non" before a person's name is negation (exclusion), NOT a match for the channel "Nonzero"
 - yearBefore means "published before this year" (exclusive)
 - yearAfter means "published after this year" (exclusive)
 - If nothing is mentioned, set the field to null
@@ -132,6 +136,8 @@ I will start the JSON and you will complete it:
       filters: {
         channel: parsed.channel || null,
         coSpeaker: parsed.coSpeaker || null,
+        excludeChannel: parsed.excludeChannel || null,
+        excludeCoSpeaker: parsed.excludeCoSpeaker || null,
         yearBefore: parsed.yearBefore ? Number(parsed.yearBefore) : null,
         yearAfter: parsed.yearAfter ? Number(parsed.yearAfter) : null,
       },
@@ -156,6 +162,9 @@ function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter |
   if (detected.channel) {
     conditions.push({ type: "eq", key: "channel", value: detected.channel });
   }
+  if (detected.excludeChannel) {
+    conditions.push({ type: "ne", key: "channel", value: detected.excludeChannel });
+  }
   if (detected.coSpeaker) {
     // OR across speaker_1..speaker_5 since we don't know which slot the speaker is in
     conditions.push({
@@ -164,6 +173,17 @@ function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter |
         type: "eq" as const,
         key: `speaker_${i}`,
         value: detected.coSpeaker!,
+      })),
+    });
+  }
+  if (detected.excludeCoSpeaker) {
+    // AND of ne across speaker_1..speaker_5 — excluded speaker must not be in ANY slot
+    conditions.push({
+      type: "and",
+      filters: [1, 2, 3, 4, 5].map(i => ({
+        type: "ne" as const,
+        key: `speaker_${i}`,
+        value: detected.excludeCoSpeaker!,
       })),
     });
   }
