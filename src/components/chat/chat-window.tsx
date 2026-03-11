@@ -64,6 +64,9 @@ export function ChatWindow() {
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+    setDebugFilterCall(null);
+    setDebugMainCall(null);
+    setDebugFileSearch(null);
 
     // Add a placeholder assistant message that we'll stream into
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
