@@ -399,9 +399,20 @@ export function ChatWindow() {
               <h3 className="font-semibold text-sm">
                 {debugModal === "filter" ? "GPT-4o-mini Filter Detection Call" : debugModal === "main" ? "OpenAI Responses API Call" : "File Search Results"}
               </h3>
-              <button onClick={() => setDebugModal(null)} className="text-gray-400 hover:text-gray-600">
-                <X className="h-5 w-5" />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const data = debugModal === "filter" ? debugFilterCall : debugModal === "main" ? debugMainCall : debugFileSearch;
+                    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                  }}
+                  className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
+                >
+                  Copy
+                </button>
+                <button onClick={() => setDebugModal(null)} className="text-gray-400 hover:text-gray-600">
+                  <X className="h-5 w-5" />
+                </button>
+              </div>
             </div>
             <div className="overflow-auto p-4">
               <pre className="text-xs whitespace-pre-wrap break-words font-mono text-gray-800">
