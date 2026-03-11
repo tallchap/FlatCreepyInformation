@@ -5,11 +5,15 @@
 // ─────────────────────────────────────────────────────────────
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
-import { getSpeakerBySlug } from "@/lib/speakers";
+import { resolveSpeaker, stripDiacritics, slugify } from "@/lib/speakers";
 import { fetchTranscript, fetchVideoMeta, fetchSpeakerFilterContext } from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+let _openai: OpenAI | null = null;
+function getOpenAI() {
+  if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  return _openai;
+}
 const MODEL = process.env.CHAT_MODEL || "gpt-5.4";
 
 // ── Citation helpers ────────────────────────────────────────────────────
@@ -118,7 +122,7 @@ I will start the JSON and you will complete it:
   "userMessage": "${message.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}",
   "channel":`;
 
-    const response = await openai.chat.completions.create({
+    const response = await getOpenAI().chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
@@ -150,7 +154,7 @@ I will start the JSON and you will complete it:
   }
 }
 
-function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter | undefined {
+function buildFiltersFromDetected(detected: DetectedFilters, isSharedStore = false): FileSearchFilter | undefined {
   const conditions: (ComparisonFilter | CompoundFilter)[] = [];
 
   if (detected.yearBefore) {
@@ -165,27 +169,49 @@ function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter |
   if (detected.excludeChannel) {
     conditions.push({ type: "ne", key: "channel", value: detected.excludeChannel });
   }
+
+  // Co-speaker filtering: shared store uses co_speaker_1..3, legacy uses speaker_1..5
   if (detected.coSpeaker) {
-    // OR across speaker_1..speaker_5 since we don't know which slot the speaker is in
-    conditions.push({
-      type: "or",
-      filters: [1, 2, 3, 4, 5].map(i => ({
-        type: "eq" as const,
-        key: `speaker_${i}`,
-        value: detected.coSpeaker!,
-      })),
-    });
+    if (isSharedStore) {
+      conditions.push({
+        type: "or",
+        filters: [1, 2, 3].map(i => ({
+          type: "eq" as const,
+          key: `co_speaker_${i}`,
+          value: detected.coSpeaker!,
+        })),
+      });
+    } else {
+      conditions.push({
+        type: "or",
+        filters: [1, 2, 3, 4, 5].map(i => ({
+          type: "eq" as const,
+          key: `speaker_${i}`,
+          value: detected.coSpeaker!,
+        })),
+      });
+    }
   }
   if (detected.excludeCoSpeaker) {
-    // AND of ne across speaker_1..speaker_5 — excluded speaker must not be in ANY slot
-    conditions.push({
-      type: "and",
-      filters: [1, 2, 3, 4, 5].map(i => ({
-        type: "ne" as const,
-        key: `speaker_${i}`,
-        value: detected.excludeCoSpeaker!,
-      })),
-    });
+    if (isSharedStore) {
+      conditions.push({
+        type: "and",
+        filters: [1, 2, 3].map(i => ({
+          type: "ne" as const,
+          key: `co_speaker_${i}`,
+          value: detected.excludeCoSpeaker!,
+        })),
+      });
+    } else {
+      conditions.push({
+        type: "and",
+        filters: [1, 2, 3, 4, 5].map(i => ({
+          type: "ne" as const,
+          key: `speaker_${i}`,
+          value: detected.excludeCoSpeaker!,
+        })),
+      });
+    }
   }
 
   if (conditions.length === 0) return undefined;
@@ -267,8 +293,9 @@ function buildSystemPrompt(speakerName: string): string {
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { speaker, message, messages: clientMessages } = body as {
+    const { speaker, speakerName: rawSpeakerName, message, messages: clientMessages } = body as {
       speaker: string;
+      speakerName?: string;
       message: string;
       messages?: { role: "user" | "assistant"; content: string }[];
     };
@@ -280,7 +307,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const speakerConfig = getSpeakerBySlug(speaker);
+    const speakerConfig = resolveSpeaker(speaker, rawSpeakerName);
     if (!speakerConfig) {
       return Response.json({ error: "Unknown speaker" }, { status: 400 });
     }
@@ -311,7 +338,24 @@ export async function POST(req: NextRequest) {
     // GPT pre-pass: detect filters from natural language (~200-400ms)
     const detectResult = await detectFilters(message, speakerConfig.name);
     const detected = detectResult.filters;
-    const filters = buildFiltersFromDetected(detected);
+    const isShared = speakerConfig.usesSharedStore === true;
+    const filters = buildFiltersFromDetected(detected, isShared);
+
+    // For shared store speakers, add mandatory speaker filter
+    // (skip for "all" mode which searches everything)
+    let finalFilters = filters;
+    if (isShared && speaker !== "all") {
+      const speakerFilter: ComparisonFilter = {
+        type: "eq",
+        key: "speaker",
+        value: stripDiacritics(speakerConfig.name),
+      };
+      if (finalFilters) {
+        finalFilters = { type: "and", filters: [speakerFilter, finalFilters] };
+      } else {
+        finalFilters = speakerFilter;
+      }
+    }
 
     // Build tools payload for Responses API
     const toolsPayload = [
@@ -319,7 +363,7 @@ export async function POST(req: NextRequest) {
         type: "file_search" as const,
         vector_store_ids: [speakerConfig.vectorStoreId],
         max_num_results: 20,
-        ...(filters ? { filters } : {}),
+        ...(finalFilters ? { filters: finalFilters } : {}),
       },
     ];
 
@@ -338,7 +382,7 @@ export async function POST(req: NextRequest) {
     };
 
     // Call Responses API with file_search
-    const stream = await openai.responses.create({
+    const stream = await getOpenAI().responses.create({
       model: MODEL,
       input,
       tools: toolsPayload,
@@ -526,13 +570,25 @@ async function resolveCitations(
     if (ann.type !== "file_citation") continue;
     if (typeof ann.index !== "number") continue;
 
-    // Extract video ID from filename (e.g. "transcript_-mXVKLrgBwY.txt" → "-mXVKLrgBwY")
+    // Extract video ID from filename
+    // Legacy: "transcript_-mXVKLrgBwY.txt" → "-mXVKLrgBwY"
+    // Shared: "transcript_-mXVKLrgBwY_speaker-slug.txt" → "-mXVKLrgBwY"
     let videoId: string | undefined;
     let title: string | undefined;
 
     if (ann.filename) {
-      const match = ann.filename.match(/^transcript_(.+)\.txt$/);
-      if (match) videoId = match[1];
+      const match = ann.filename.match(/^transcript_([^_]+(?:_[^_]+)?)(?:_[a-z][-a-z0-9]*)?\.txt$/);
+      if (match) {
+        // For shared store files: transcript_{VIDEOID}_{speakerslug}.txt
+        // Video IDs can contain hyphens but speaker slugs are lowercase alpha+hyphens
+        // Try the attributes first, fall back to regex
+        videoId = match[1];
+      }
+      // Simpler fallback: just strip "transcript_" prefix and ".txt" suffix, take first 11 chars
+      if (!videoId) {
+        const simple = ann.filename.match(/^transcript_(.{11})/);
+        if (simple) videoId = simple[1];
+      }
     }
 
     // Try file attributes

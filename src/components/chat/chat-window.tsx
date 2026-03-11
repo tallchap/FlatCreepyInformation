@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Send, RotateCcw, Bug, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { SPEAKERS } from "@/lib/speakers";
+
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
 import { VideoPreviewPane } from "./video-preview-pane";
@@ -21,6 +21,7 @@ type SelectedVideo = {
 
 export function ChatWindow() {
   const [speaker, setSpeaker] = useState("");
+  const [speakerName, setSpeakerName] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
 
@@ -51,8 +52,9 @@ export function ChatWindow() {
     setSelectedVideo(null);
   }
 
-  function handleSpeakerChange(value: string) {
+  function handleSpeakerChange(value: string, name?: string) {
     setSpeaker(value);
+    setSpeakerName(name || value);
     handleNewConversation();
   }
 
@@ -79,6 +81,7 @@ export function ChatWindow() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           speaker,
+          speakerName,
           message: trimmed,
           messages: currentMessages,
         }),
@@ -267,8 +270,7 @@ export function ChatWindow() {
                 <p className="text-lg">
                   Chat with{" "}
                   <span className="font-semibold text-gray-600">
-                    {SPEAKERS.find((s) => s.slug === speaker)
-                      ?.name ?? speaker}
+                    {speakerName || speaker}
                   </span>
                   &apos;s transcript history
                 </p>

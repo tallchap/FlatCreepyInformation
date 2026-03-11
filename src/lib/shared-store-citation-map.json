@@ -1,0 +1,1255 @@
+{
+  "vectorStoreId": "vs_69b1015315d88191b6f26c169575bc4c",
+  "files": {
+    "file-FztTiFgBkA375yBcfbGgDF": {
+      "videoId": "O6gl5jZelMM",
+      "speaker": "Aleksander Mądry",
+      "title": "\"Sztuczna inteligencja - szanse i wyzwania.\" Prof. Aleksander Mądry MIT, Open AI"
+    },
+    "file-4XqnM97jfkkdGmesZu1Qgs": {
+      "videoId": "LxfUGhug-iQ",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 7: Convolutional Neural Networks"
+    },
+    "file-Tp1wpuMk9DKHjL5XmNkKxo": {
+      "videoId": "P9ybYVtQvOs",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy Computer Vision 2021 Konferencia Összefoglaló"
+    },
+    "file-7edC7r2yo4cpmv4xbTqYzV": {
+      "videoId": "UHSkjro-VbE",
+      "speaker": "Alexandr Wang",
+      "title": "OpenAI Co-Founder Ilya Sutskever: What's Next for Large Language Models (LLMs)"
+    },
+    "file-13ZAUhZ839ou92RM4XxwqJ": {
+      "videoId": "2BZFhDWJ8D8",
+      "speaker": "Aleksander Mądry",
+      "title": "Data Labeling Consequences: AI for Healthcare Equity Conference Sneak Peek"
+    },
+    "file-CnfHKnEv4AzXtFsgkL2gL9": {
+      "videoId": "5CUJExj5yVE",
+      "speaker": "Aleksander Mądry",
+      "title": "WYKŁAD OTWARTY: SZTUCZNA INTELIGENCJA – SZANSE I WYZWANIA"
+    },
+    "file-AaaGjymPBrybWuE5yhmdeo": {
+      "videoId": "5B06ugw1K2g",
+      "speaker": "Aleksander Mądry",
+      "title": "Science czy fiction? Jak AI zmienia naukę | Aleksander Mądry, Andrzej Dragan, Piotr Sankowski"
+    },
+    "file-XdzBFJnX81YpCpeYU6jSCd": {
+      "videoId": "5B06ugw1K2g",
+      "speaker": "Andrzej Dragan",
+      "title": "Science czy fiction? Jak AI zmienia naukę | Aleksander Mądry, Andrzej Dragan, Piotr Sankowski"
+    },
+    "file-3KhxQXYLqHxNNYAYNQ3EVt": {
+      "videoId": "BxkVmLPq79k",
+      "speaker": "Alexandra Levine",
+      "title": "Why top AI leaders are calling for a pause"
+    },
+    "file-82iRUmpHpyoHV6L1qL1mHS": {
+      "videoId": "3AmFAWqV2l0",
+      "speaker": "Aluf Benn",
+      "title": "Hebrew University's Prof. Yuval Noah Harari speaks at the 2023 Israeli Science Conference"
+    },
+    "file-QYcQKjHanyS7diY2CoJz6j": {
+      "videoId": "ZxRfhH-ONA0",
+      "speaker": "Andrej Karpathy",
+      "title": "EurekaLabs, Apple steals YouTube data, Microsoft allegations, UN AIFOD & more | AI News #73"
+    },
+    "file-RF4SZxswmM4E5RJAg9nvkD": {
+      "videoId": "o4z4qUvohvY",
+      "speaker": "Adrian Hieatt",
+      "title": "James Cameron: Avatar interview"
+    },
+    "file-Kaj5aA1UBcXeXfZLsa4Rju": {
+      "videoId": "WRsxoVB8Yng",
+      "speaker": "Anca Dragan",
+      "title": "OpenAI Robotics Symposium 2019"
+    },
+    "file-Gn2cBLJcNzxE9SpKjArLNB": {
+      "videoId": "bZQun8Y4L2A",
+      "speaker": "Andrej Karpathy",
+      "title": "State of GPT | BRK216HFS"
+    },
+    "file-2pQA2hPAr8vGjz7cZEQSw2": {
+      "videoId": "tG0sunmKQz0",
+      "speaker": "Andrew Ng",
+      "title": "🌐 El Debate de IA que tienes que ver! 🤖 Yann LeCun, Kai-Fu Lee, Andrew NG sobre dónde llegará la IA"
+    },
+    "file-DSKatMqRGi3mbaj85e6y52": {
+      "videoId": "tn0XpTAD_8Q",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "The Next Frontier: Sam Altman on the Future of A.I. and Society"
+    },
+    "file-7eNHV2Hc4RWQntSPDC2sP9": {
+      "videoId": "t0YKO1Eotog",
+      "speaker": "Alexandre Ramé",
+      "title": "Heuritech Deep Learning Paris Meetup #6 with Yann LeCun - 5/5"
+    },
+    "file-7Yz5qLEUfmRoGHrkNKxDJ9": {
+      "videoId": "3uzhSnfvaqk",
+      "speaker": "Adam Carolla",
+      "title": "Morgan Jay & Gary Marcus l Adam Carolla Show 5/22/2023"
+    },
+    "file-TxoLYT2UXVmiermjGjTM8D": {
+      "videoId": "CUCBXyJym3M",
+      "speaker": "Adam D'Angelo",
+      "title": "Cerebral Valley: Adam D'Angelo (Quora) + Harrison Chase (LangChain) with Miles Grimshaw (Benchmark)"
+    },
+    "file-Jg92r6WNpHiQNz5maeRTm1": {
+      "videoId": "EvSgrcSxNBk",
+      "speaker": "Aleksander Mądry",
+      "title": "Using AI to protect against AI image manipulation"
+    },
+    "file-HfYCYCokjGJwA1TTVvM16u": {
+      "videoId": "GmHCpFr1EbA",
+      "speaker": "Aleksander Mądry",
+      "title": "ICCV'21 Tutorial (Aleksander Madry): Are All Features Created Equal?"
+    },
+    "file-HM12PTHVqMkqfUbXRfUX3R": {
+      "videoId": "EJhOsQNpBCs",
+      "speaker": "Aleksander Mądry",
+      "title": "Aleksander Mądry, \"Data (Really) Matters\": AI for Healthcare Equity Conference"
+    },
+    "file-98QLXeUrJTtU7mFRW1M8Vs": {
+      "videoId": "AvcRBuFreFg",
+      "speaker": "Aleksander Mądry",
+      "title": "Adversarial Examples and Human-ML Alignment"
+    },
+    "file-NfQBDY8Vy3iZ2uT8CTkK8k": {
+      "videoId": "4lV2cqbjq-M",
+      "speaker": "Aleksander Mądry",
+      "title": "AI Policy Forum Summit 2022: Conversation on AI Policy 2"
+    },
+    "file-RmoNf7UtMxBSdYnTLV4ppT": {
+      "videoId": "1gjRDrFmMVI",
+      "speaker": "Alison Wood Brooks",
+      "title": "Alison Wood Brooks - Everyday Exchange: From Chuckles to Meaningful Chat"
+    },
+    "file-HdgvBEptCUiYqGfHSKyHrB": {
+      "videoId": "CVRNaDkooKg",
+      "speaker": "Alison Wood Brooks",
+      "title": "#275: Better Conversations – One Question at a Time (Part 1) – Dr. Alison Wood Brooks"
+    },
+    "file-EWRYrnwvHTyqR9ewPQ3gKc": {
+      "videoId": "-349VqqqHEM",
+      "speaker": "Alison Wood Brooks",
+      "title": "A Harvard Expert’s Guide to Mastering Conversations"
+    },
+    "file-T7ZpCs7rwqbh1WA7TiNEJg": {
+      "videoId": "DHP2Eahxjm0",
+      "speaker": "Alison Wood Brooks",
+      "title": "How to Have Amazing Conversations with Harvard Expert Alison Wood Brooks"
+    },
+    "file-51u6TWe8A1r1LLSrjGjfsV": {
+      "videoId": "-C1lz8-UcMo",
+      "speaker": "Alison Wood Brooks",
+      "title": "Want to Talk Like a Pro? Learn from Harvard’s Alison Wood Brooks Now"
+    },
+    "file-E5iqdh9GhkPsLHT3PDfXfy": {
+      "videoId": "AHHwXUm3iIg",
+      "speaker": "Alison van Diggelen",
+      "title": "CHM Revolutionaries: An Evening with Elon Musk"
+    },
+    "file-7kMuZbKhwnTQ1yoznB1vPA": {
+      "videoId": "8X4PQd_3qf0",
+      "speaker": "Amitai Armon",
+      "title": "Live Q&A session with Prof. Yann LeCun"
+    },
+    "file-9DKRUKhKW3JEfS2614N6jx": {
+      "videoId": "2CgxFDc8Ja0",
+      "speaker": "Andrej Karpathy",
+      "title": "Tesla Neural Network Multi-Task Learning Summarized | Andrej Karpathy"
+    },
+    "file-3NzStMuYgsDe279PQnCw3R": {
+      "videoId": "0AwMqjGZMyk",
+      "speaker": "Andrej Karpathy",
+      "title": "Imitation learning at Tesla (Andrej Karpathy and Elon Musk)"
+    },
+    "file-Kz21VpYp6Lezbjonb7LD5b": {
+      "videoId": "GxZrEKZfW2o",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 8: Localization and Detection"
+    },
+    "file-5HdGHiKFVZZsAGD3WfMezt": {
+      "videoId": "3SypMvnQT_s",
+      "speaker": "Andrej Karpathy",
+      "title": "Tesla Full Self Driving explained by Andrej Karpathy"
+    },
+    "file-WA35EYLeACeiMp8qFS3f7U": {
+      "videoId": "8inugqHkfvE",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 2: Data-driven approach, kNN, Linear Classification 1"
+    },
+    "file-PpgM4dLFgTjRUQ8WwJ8pno": {
+      "videoId": "2BfMuHDfGJI",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Elon Musk on Advertisers, Trust and the “Wild Storm” in His Mind | DealBook Summit 2023"
+    },
+    "file-1e1X8Sdf976rcoUNZsYbHf": {
+      "videoId": "FfrdFqr-E0g",
+      "speaker": "Alex Vilenkin",
+      "title": "\"What Can We Know and Predict in a Superlarge Universe\" Panel at the FQXi conference 2014 in Vieques"
+    },
+    "file-KDknY4hBaA6pZHEcgspmk8": {
+      "videoId": "FfrdFqr-E0g",
+      "speaker": "Alan Guth",
+      "title": "\"What Can We Know and Predict in a Superlarge Universe\" Panel at the FQXi conference 2014 in Vieques"
+    },
+    "file-UFmGWjyaAH5am4zHyrKxxR": {
+      "videoId": "FfrdFqr-E0g",
+      "speaker": "Andreas Albrecht",
+      "title": "\"What Can We Know and Predict in a Superlarge Universe\" Panel at the FQXi conference 2014 in Vieques"
+    },
+    "file-2R6VhRASHQDxg71P73WCpy": {
+      "videoId": "2zSKm5uTqwI",
+      "speaker": "Alice Heiman",
+      "title": "Living with technology. The future of life - Nobel Week Dialogue 2022"
+    },
+    "file-4biu45j1f8GydZACVyupB7": {
+      "videoId": "ARdDCRbmw2w",
+      "speaker": "Abhiram Ranade",
+      "title": "ACM Annual Event - 2020 | IIT Gandhinagar"
+    },
+    "file-Q56RvRMQbvumU52jG8oUT8": {
+      "videoId": "08aze3rPFK4",
+      "speaker": "Alicia Keys",
+      "title": "Demis Hassabis and John Jumper with Kim Kardashian and Alicia Keys: 2024 Breakthrough Prize Ceremony"
+    },
+    "file-M5Rk32A3cuPjmpAWTfpWT5": {
+      "videoId": "2PXHZqv2-qc",
+      "speaker": "Alex Kantrowitz",
+      "title": "AI Scaling, Alignment, and the Path to Superintelligence — With Dwarkesh Patel"
+    },
+    "file-MWATCWBXi3vmP4wuobNhRd": {
+      "videoId": "7OyLHeJB15c",
+      "speaker": "Amy E. Lerman",
+      "title": "A Conversation with Ezra Klein about Liberalism"
+    },
+    "file-FibG1pDtbth6wJdYEKR4AT": {
+      "videoId": "4ZER82ZPQO0",
+      "speaker": "Adam Savage",
+      "title": "James Cameron! | Mythbusters"
+    },
+    "file-KYbzaQVZvqJTd4EcR5B86E": {
+      "videoId": "6ovuMoW2EGk",
+      "speaker": "Adam Conover",
+      "title": "A.I. Companies Believe They're Making God with Karen Hao"
+    },
+    "file-Qe6z86RCUq39bHshMzu8UZ": {
+      "videoId": "8dVba_xm4MQ",
+      "speaker": "Alex Heath",
+      "title": "Why Mark Zuckerberg thinks AR glasses will replace your phone"
+    },
+    "file-AJz9wNjgi3jjvZGYiVSDsS": {
+      "videoId": "A5G_6uNiM18",
+      "speaker": "Aleksander Mądry",
+      "title": "Bias in Algorithms, Nisheeth Vishnoi - Moderated Conversation with Aleksander Mądry"
+    },
+    "file-QBhRCza1wVhbp3oAZYN9FB": {
+      "videoId": "DB9mjd-65gw",
+      "speaker": "Andrew Mayne",
+      "title": "Sam Altman on AGI, GPT-5, and what’s next — the OpenAI Podcast Ep. 1"
+    },
+    "file-TPiDfKWTJg7eLFQci9qimQ": {
+      "videoId": "31yKNgoZKag",
+      "speaker": "Andrew Moore",
+      "title": "Is AI gonna destroy humanity?"
+    },
+    "file-TZKQwevxx516eQQNPaT2wo": {
+      "videoId": "BY9KV8uCtj4",
+      "speaker": "Andrew Ng",
+      "title": "Yann LeCun and Andrew Ng: Why the 6-month AI Pause is a Bad Idea"
+    },
+    "file-2hvAhGCcx1bpuTFBsML4Tx": {
+      "videoId": "1XOH7TZCESo",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 9 - “Apply AI to problems you are passionate about”"
+    },
+    "file-D6KhHbqb283LrABUpAXup9": {
+      "videoId": "1XOH7TZCESo",
+      "speaker": "Abigail Horn",
+      "title": "EPISODE 9 - “Apply AI to problems you are passionate about”"
+    },
+    "file-R9amugu7SW62kZzZ7mkpqU": {
+      "videoId": "H9GfFnMHXDk",
+      "speaker": "Adam Russell",
+      "title": "“AI is also the reinvention of communication”"
+    },
+    "file-GB3KCkzcujn55vQwUMJAvo": {
+      "videoId": "H9GfFnMHXDk",
+      "speaker": "Alexander Spangher",
+      "title": "“AI is also the reinvention of communication”"
+    },
+    "file-2x4ucBg55nBptSecMGtN7Z": {
+      "videoId": "HD-n77CKlsw",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 4 - “I want to make an impact by reducing misinformation”"
+    },
+    "file-MwSbjb4xCk9SGztyShyvxW": {
+      "videoId": "0cqmhqAC6YU",
+      "speaker": "Adam Russell",
+      "title": "“My fear is that we put AI at the core without any human knowledge”"
+    },
+    "file-Jwh4cPAvNWjsgg8KyDVLH6": {
+      "videoId": "6XvwZ0bpuwk",
+      "speaker": "Adam Russell",
+      "title": "\"I wish AI could surpass humans in empathy, it should be pretty easy\""
+    },
+    "file-A6CbEQRrFpDVYt3HF5XRMM": {
+      "videoId": "DMP-HgWAcQk",
+      "speaker": "Adam Russell",
+      "title": "\"I worry that people are not contextualizing their interactions with AI enough\""
+    },
+    "file-JskCep3CbXEhrYHPZXEQmk": {
+      "videoId": "HKIpZpAjPuU",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 8 - “If I could go back in time I would tell myself to learn Python much earlier”"
+    },
+    "file-98W8fMdxDuETHgNhssc2T6": {
+      "videoId": "FOSrJBS9_Lc",
+      "speaker": "Adam Russell",
+      "title": "“The talk around AI replacing us is the most misunderstood concept in AI”"
+    },
+    "file-7P7rn7JbLZXZUV8fBhkovu": {
+      "videoId": "6hxS_9PWFpw",
+      "speaker": "Adam Russell",
+      "title": "“I love OpenAI tools. They save me so much time, I call her Chatty”"
+    },
+    "file-AxALAjG3sYN95Hjhcopis8": {
+      "videoId": "F-GCeJx3gsM",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 5 - \"Learn Fundamental Math: AI will always rely on it\""
+    },
+    "file-BAiC94gDPifpzpTws5qMyB": {
+      "videoId": "GVEurq4KtN0",
+      "speaker": "Adam Russell",
+      "title": "\"AIs will give you answers even if they don’t know\""
+    },
+    "file-2XjNGDpJYetiLgcFEtEB9P": {
+      "videoId": "-2LmpDMaajY",
+      "speaker": "Adam Russell",
+      "title": "\"There is no end goal for AI ethics, there will always be something new to mitigate\""
+    },
+    "file-V4MQL3dN53WQoCaQAuCct4": {
+      "videoId": "C2zWjwTmlDw",
+      "speaker": "Ahmir \"Questlove\" Thompson",
+      "title": "Exclusive Outtake: Wordle Addicts | Unconfuse Me with Bill Gates"
+    },
+    "file-UWVc3LQb14VspTiPegCGLB": {
+      "videoId": "FvBNzHzN73o",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Bill Gates: I don't own bitcoin and have taken a neutral view on it"
+    },
+    "file-4b3QsPWj1ZBZq2Tx1FHFZo": {
+      "videoId": "CEBq_JMev_4",
+      "speaker": "Anderson Cooper",
+      "title": "Bill Gates weighs in on Elon Musk's government role"
+    },
+    "file-Dczt9eQWpJSzQQcdkaCDsP": {
+      "videoId": "5XIyin68vEE",
+      "speaker": "Anderson Cooper",
+      "title": "James Cameron on 'fundamental flaw' in design of Titan submersible"
+    },
+    "file-Q1VuoF9EPepYW4UJ8H6CUa": {
+      "videoId": "4DpP-T-rGWQ",
+      "speaker": "Andrew Song",
+      "title": "Climate Change Is Stupidly EASY To Stop — Andrew Song, Cofounder of Make Sunsets"
+    },
+    "file-Gx9EtJDqwjaegN5FP13LiP": {
+      "videoId": "E65CHSV6Ads",
+      "speaker": "Alexander Mikaberidze",
+      "title": "Alexander Mikaberidze - Napoleon, War, Progress, and Global Order"
+    },
+    "file-V4YmA7q9BvWvGGBRqjib6Z": {
+      "videoId": "3BBNG0TlVwM",
+      "speaker": "Agustin Lebron",
+      "title": "Agustin Lebron - Trading, Crypto, and Adverse Selection"
+    },
+    "file-LNifemoJRuhTQiKb8deXMx": {
+      "videoId": "-so7j0aXkDc",
+      "speaker": "Aleksander Mądry",
+      "title": "Aleksander Madry - Preparedness @ OpenAl"
+    },
+    "file-Jr39JjYc9oVbDu8kFVg1p7": {
+      "videoId": "HEusKC7QRXg",
+      "speaker": "Andrew Serazin",
+      "title": "Effective Funding from COVID-19 | Jaan Tallinn, Kevin Dong, Andrew Serazin, Christine Peterson"
+    },
+    "file-EnHeJdgU6hWYqXyvT4jVhm": {
+      "videoId": "DfQ7El0eSFg",
+      "speaker": "Amanda Askell",
+      "title": "Lex Fridman on AI consciousness"
+    },
+    "file-ABUTg8dgYFak2PaCjWTDwM": {
+      "videoId": "3pi87kLm8PQ",
+      "speaker": "Amanda Askell",
+      "title": "Lex Fridman: Questions for AGI"
+    },
+    "file-SrmCW4uYegHHUJjQbmv2PK": {
+      "videoId": "3InHr9_GX7I",
+      "speaker": "Amanda Askell",
+      "title": "Is Claude getting dumber? | Lex Fridman Podcast"
+    },
+    "file-KZW9MgQR2e2ZSJeKchBUWp": {
+      "videoId": "Gd9pVx5QxhM",
+      "speaker": "Aleksander Mądry",
+      "title": "Frontiers in Machine Learning: Security and Machine Learning"
+    },
+    "file-8dVGYWSTHT33LhamMKFGaW": {
+      "videoId": "04EJNEW3EnQ",
+      "speaker": "Alex Moseson",
+      "title": "Smarter Drones Through Customized AI: OptoAI for Unique Government Needs"
+    },
+    "file-5NpG7TMvstR2fhVBcPrKsP": {
+      "videoId": "9WbdWRxYDGM",
+      "speaker": "Amy Gowder",
+      "title": "The Next 100 Years of Flying"
+    },
+    "file-BP63KLsEzdZk4Jsq5U3iwc": {
+      "videoId": "BOLxeR_culU",
+      "speaker": "Alan Chan",
+      "title": "Alan Chan and Max Kaufmann–Model Evaluations, Timelines, Coordination"
+    },
+    "file-GWmVhQczkZ7xpneCsQ543n": {
+      "videoId": "-Mzfru1r_5s",
+      "speaker": "Alan Chan",
+      "title": "Christoph Schuhmann–Open Source AI, Misuse, Existential risk"
+    },
+    "file-Q9pkrSmXrYmG1iFXhePtRv": {
+      "videoId": "rp6XUzh60YI",
+      "speaker": "A.R. Rahman",
+      "title": "A.R. Rahman | will.i.am | Rare Conversation About Music, Creativity and Future Collaboration"
+    },
+    "file-7vaeW8mAUFvfWz73K5TyP9": {
+      "videoId": "eaHAutrUr2k",
+      "speaker": "Aaron Levie",
+      "title": "A conversation with Dario Amodei, Co-Founder and CEO of Anthropic | BoxWorks 2024"
+    },
+    "file-RV1Nc6924ZV9jMh4CvoRev": {
+      "videoId": "TVlNn4GnWEQ",
+      "speaker": "Adam Conover",
+      "title": "The ACTUAL Danger of A.I. with Gary Marcus - Factually! - 218"
+    },
+    "file-SQLPkMkmriQ55BE2CUJBVa": {
+      "videoId": "XLb53om3IFQ",
+      "speaker": "Adam D'Angelo",
+      "title": "The Importance of Failure - Interview with Adam D'Angelo, CEO of Quora"
+    },
+    "file-RoVCQxRgXTk6LT3G6q1apz": {
+      "videoId": "HQV9s_JgNZA",
+      "speaker": "Adam D'Angelo",
+      "title": "Bringing AI to the Masses with Adam D'Angelo, CEO of Quora"
+    },
+    "file-CrYgq8k52gsc4ibgz3StAp": {
+      "videoId": "VFXvCROy4go",
+      "speaker": "Agnes Callard",
+      "title": "How Does US Politics Work? with Ezra Klein"
+    },
+    "file-TEyBLkNto7Lew4kRkFx5zD": {
+      "videoId": "IiPJsI8pl8Q",
+      "speaker": "Alan Murray",
+      "title": "Elon Musk: I'll Put a Man on Mars in 10 Years"
+    },
+    "file-4v2BPz8fesVgGVmSQeS4kj": {
+      "videoId": "IO7bz_Hv9X4",
+      "speaker": "Alastair Campbell",
+      "title": "Why Bill Gates Is Optimistic About Climate Change | \"There's incredible innovation..\""
+    },
+    "file-5aFCTnaKkGS3o9uEtbFfkp": {
+      "videoId": "nX_TpPAoY4k",
+      "speaker": "Aleksander Mądry",
+      "title": "ML (Non-)Robustness and Dataset Biases"
+    },
+    "file-VspsQD9Fnp8PimuSgoBKy7": {
+      "videoId": "pe3XF0Qhx1M",
+      "speaker": "Aleksander Mądry",
+      "title": "AI Preparedness with Aleksander Madry, OpenAI, MIT EECS Department"
+    },
+    "file-MxaPa5Q8DUsxW5yR87iGN8": {
+      "videoId": "mcYSO0GDAlY",
+      "speaker": "Aleksander Mądry",
+      "title": "AI is beating us, but is it playing fair? | Aleksander Madry | TEDxMIT"
+    },
+    "file-9Cwb8e1fgR47A7Z9Zv1Lub": {
+      "videoId": "pwDi91YICZg",
+      "speaker": "Aleksander Mądry",
+      "title": "2020 Frontiers of AI:ML - Aleksander Madry"
+    },
+    "file-Ls55svEdXh9UnEgKa7QvD2": {
+      "videoId": "_Osf6F7zZUM",
+      "speaker": "Aleksander Mądry",
+      "title": "What Do Our Models Learn? - Aleksander Mądry"
+    },
+    "file-SXLvEQxMB8s3zCfKYPzmS1": {
+      "videoId": "Dc2iGFD8JHo",
+      "speaker": "Aleksander Mądry",
+      "title": "Why Do Our Models Learn?"
+    },
+    "file-KePKwLcX1cUDrXJmeoL5TG": {
+      "videoId": "Lan4NQnDg9o",
+      "speaker": "Aleksander Mądry",
+      "title": "Aleksander Madry: Why Do ML Models Fail?"
+    },
+    "file-KcEqfKjpmRhwYhmmHZtSsK": {
+      "videoId": "MCif6rUPrA4",
+      "speaker": "Aleksander Mądry",
+      "title": "TRAC Workshop 2020 - Report Out and Closing Remarks (Day 2)"
+    },
+    "file-LBvEUFZLSoR9twKD17vv6E": {
+      "videoId": "naSVLtCF7-E",
+      "speaker": "Aleksander Mądry",
+      "title": "OpenAI and MIT - Aleksander Madry"
+    },
+    "file-Hor2Kt3DTMAN5dtLAWtoPW": {
+      "videoId": "hl4dZosppFM",
+      "speaker": "Aliko Dangote",
+      "title": "WATCH: Bill Gates, Dangote Visit President Tinubu At presidential Villa"
+    },
+    "file-8uAPHpHEiBvt62E6paqFHt": {
+      "videoId": "ZZtejQZaZvQ",
+      "speaker": "Alison Wood Brooks",
+      "title": "Master the Art of Conversation: Alison Wood Brooks on TALK and Communication Success @TheAwbrooks"
+    },
+    "file-FRoNnkCFCYf3gcHaHumdBu": {
+      "videoId": "fgeBclMl8fU",
+      "speaker": "Alison Wood Brooks",
+      "title": "717: A Key Tactic for Way Better Conversations, with Alison Wood Brooks"
+    },
+    "file-LdCg353V6MmbeeeXzvuZq5": {
+      "videoId": "On9jhMEg-lE",
+      "speaker": "Alison Wood Brooks",
+      "title": "Dr. Alison Wood Brooks | The Science of Conversation & the Art of Being Ourselves | Talks at Google"
+    },
+    "file-21Afa42JqRsM27Z7yDrf7Y": {
+      "videoId": "z5xFfy8a1s4",
+      "speaker": "Alison Wood Brooks",
+      "title": "The Science of Good Conversation with Alison Wood Brooks"
+    },
+    "file-WrpNoS7x67kiBx1iNW4zxk": {
+      "videoId": "igm_vwPizFs",
+      "speaker": "Alison Wood Brooks",
+      "title": "\"TALK: The Science of Conversation and the Art of Being Ourselves\" 2-min summary by Alison W. Brooks"
+    },
+    "file-UKvXoAyizHcyq3eBtR5HQ9": {
+      "videoId": "ko6LMcb5O0M",
+      "speaker": "Alison Wood Brooks",
+      "title": "Alison Wood Brooks, TALK: The Science of Conversation and the Art of Being Ourselves"
+    },
+    "file-QUR7JknFLfxKRC8UvQFiNG": {
+      "videoId": "NNEngCEqKTQ",
+      "speaker": "Alison Wood Brooks",
+      "title": "The Science of Conversation (Feat. Dr. Alison Wood Brooks) | NSLS Motivational Mondays Podcast"
+    },
+    "file-Kbp3oS2jtzuhNTictNFMt1": {
+      "videoId": "MY1wzjqT-GM",
+      "speaker": "Alison Wood Brooks",
+      "title": "The Science of Conversation"
+    },
+    "file-RqJeFhYX2UgMw47j78jMB8": {
+      "videoId": "j44jHsgybnY",
+      "speaker": "Alison Wood Brooks",
+      "title": "TALK: The Science of Conversation"
+    },
+    "file-BMkBNjyGzXQC5GaoQT93UR": {
+      "videoId": "j44jHsgybnY",
+      "speaker": "Amy Sandler",
+      "title": "TALK: The Science of Conversation"
+    },
+    "file-R7BNYjqHU2Kjw7zYynbWgM": {
+      "videoId": "UIqfA7bIp4I",
+      "speaker": "Alison Wood Brooks",
+      "title": "Harvard Behavioral Scientist \"The Simple Trick To Make People Trust You\" I Anthony Scaramucci"
+    },
+    "file-DHRFzGW6cVLRxcoJu9xNQG": {
+      "videoId": "yO7PreI83Ck",
+      "speaker": "Alison Wood Brooks",
+      "title": "Alison Wood Brooks (on the science of conversation) | Armchair Expert with Dax Shepard"
+    },
+    "file-6qRWU187W8PiMMBqNc1raF": {
+      "videoId": "qtoVhqD_i0s",
+      "speaker": "Alison Wood Brooks",
+      "title": "498. Unlocking the Art of Conversation with Alison Wood Brooks"
+    },
+    "file-2SGX2bCBAiZ3AipaGfTey5": {
+      "videoId": "yi8mVrwvrhw",
+      "speaker": "Alison Wood Brooks",
+      "title": "Queen of Conversation: Alison Wood Brooks Teaches Us How to Talk Gooder"
+    },
+    "file-5un242Juvd2B12DTAEu4ov": {
+      "videoId": "KmRPqrM9SWM",
+      "speaker": "Alison Wood Brooks",
+      "title": "The Most Important Career Advice You’ll Ever Hear With Harvard Business School’s #1 Professor"
+    },
+    "file-MmLdbPWNTG2VZCkxqABQzt": {
+      "videoId": "xCwQcPVYkOM",
+      "speaker": "Alison Wood Brooks",
+      "title": "Alison Wood Brooks with Michael Lewis - Talk (Corte Madera Store)"
+    },
+    "file-5AW3P36LYFS1GHtHw3mSo4": {
+      "videoId": "_a79uJ6T8Hs",
+      "speaker": "Alison Wood Brooks",
+      "title": "FranklinCovey On Leadership with Scott Miller: #471 Alison Wood Brooks"
+    },
+    "file-Rq2JPSEUz7ZENz9zjigjUf": {
+      "videoId": "T9aRN5JkmL8",
+      "speaker": "Amanda Askell",
+      "title": "AI prompt engineering: A deep dive"
+    },
+    "file-RkaRiDriBKp9LhJVT28y9x": {
+      "videoId": "T9aRN5JkmL8",
+      "speaker": "Alex Albert",
+      "title": "AI prompt engineering: A deep dive"
+    },
+    "file-CsDQfGdEMDQHsbzRnWH8hV": {
+      "videoId": "iyJj9RxSsBY",
+      "speaker": "Amanda Askell",
+      "title": "What should an AI's personality be?"
+    },
+    "file-A79AS7Qb32w7BxKMV7omS4": {
+      "videoId": "nQBHrrJOVC0",
+      "speaker": "Amandeep Singh Gill",
+      "title": "Global AI Governance: What’s Next for International Institutions? | The Athens Roundtable 2023"
+    },
+    "file-XVdvTHNfUeYwjYoSEiN8xn": {
+      "videoId": "JMYQmGfTltY",
+      "speaker": "Amjad Masad",
+      "title": "AI AGENTS EMERGENCY DEBATE: These Jobs Won't Exist In 24 Months! We Must Prepare For What's Coming!"
+    },
+    "file-6Gq8gq3NzbBWPeuKAxu2b8": {
+      "videoId": "eHc0Imgn6QU",
+      "speaker": "Ana Daniela Soares",
+      "title": "🚨 Yuval Noah Harari on AI, bitcoin, fake news, social media, politics, religion and future"
+    },
+    "file-9kXXP9nQYydweeoBNyMbSq": {
+      "videoId": "ZVJTqAuPvTU",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy on AI at Tesla (Full Stack Deep Learning - August 2018)"
+    },
+    "file-Q4vb5yCni4pd4zcPsF76KD": {
+      "videoId": "yk6XDFm3J2c",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy - Automated Image Captioning with ConvNets and Recurrent Nets"
+    },
+    "file-KS3uw3uM8rB4CHtS7CoFLB": {
+      "videoId": "tsTeEkzO9xc",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy's Keynote & Winner Pitches at UC Berkeley AI Hackathon 2024 Awards Ceremony"
+    },
+    "file-QttgNH6cxN2HpcCqsfnYpe": {
+      "videoId": "tGe6syxT4C4",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy, OpenAI (AGI House)"
+    },
+    "file-CdJVuGhHk1bMs2m8gm3ekk": {
+      "videoId": "U7INcN7TSdY",
+      "speaker": "Andrej Karpathy",
+      "title": "AI Ascent - Andrej Karpathy"
+    },
+    "file-Q7zrv3odPFSVZNqDHJAJ7Q": {
+      "videoId": "g2R2T631x7k",
+      "speaker": "Andrej Karpathy",
+      "title": "[CVPR'20 Workshop on Scalability in Autonomous Driving] Keynote - Andrej Karpathy"
+    },
+    "file-1Sdb1G9KkGcXe5eGsiottd": {
+      "videoId": "y57wwucbXR8",
+      "speaker": "Andrej Karpathy",
+      "title": "Building the Software 2 0 Stack (Andrej Karpathy)"
+    },
+    "file-M5s7gLAmRHo1iTz8gbDSHv": {
+      "videoId": "ZiHCpeFzPgM",
+      "speaker": "Andrej Karpathy",
+      "title": "WHY Tesla Removed Radar from Model 3 & Y (Sr. AI Director)"
+    },
+    "file-THcQAKPPAqpgQdSyTj4Tvs": {
+      "videoId": "xxu4IqwKw0w",
+      "speaker": "Andrej Karpathy",
+      "title": "deeplearning.ai's Heroes of Deep Learning: Andrej Karpathy"
+    },
+    "file-Pc9QKNeHFdQtyFoc9YpqiV": {
+      "videoId": "tqrcjHuNdmQ",
+      "speaker": "Andrej Karpathy",
+      "title": "Deep RL Bootcamp  Lecture 4B Policy Gradients Revisited"
+    },
+    "file-HL1GWxMHTJgEhghgJjCAg3": {
+      "videoId": "_9f9r0l3mrg",
+      "speaker": "Andrej Karpathy",
+      "title": "AI for Full-Self Driving by Andrej Karpathy in 10 Minutes"
+    },
+    "file-VmZhPvFhqwEkRfdS1LatwG": {
+      "videoId": "g6bOwQdCJrc",
+      "speaker": "Andrej Karpathy",
+      "title": "[CVPR'21 WAD] Keynote - Andrej Karpathy, Tesla"
+    },
+    "file-6HKvXBCB4H5PT1QWKbMJyU": {
+      "videoId": "YNvwfMhAD8U",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy on Machine Consciousness"
+    },
+    "file-CEqgDZK4eTr2buSAwuCvb2": {
+      "videoId": "NYPSK7UgeRg",
+      "speaker": "Andrej Karpathy",
+      "title": "𝐎𝐩𝐞𝐧𝐀𝐈 𝐂𝐨-𝐟𝐨𝐮𝐧𝐝𝐞𝐫 𝐀𝐧𝐝𝐫𝐞𝐣 𝐊𝐚𝐫𝐩𝐚𝐭𝐡𝐲!"
+    },
+    "file-UBKw6zEZHLbkyAYVqFEdK5": {
+      "videoId": "qPcCk1V1JO8",
+      "speaker": "Andrej Karpathy",
+      "title": "Recurrent Neural Networks & Long Short-Term Memory - Andrej Karpathy, Research Scientist, OpenAI"
+    },
+    "file-HLroLK1KryZLVR1rpFiEAw": {
+      "videoId": "XfpMkf4rD6E",
+      "speaker": "Andrej Karpathy",
+      "title": "Stanford CS25: V2 I Introduction to Transformers w/ Andrej Karpathy"
+    },
+    "file-BADERFw2fsFtm62GRNrFuP": {
+      "videoId": "PlLmdTcsAWU",
+      "speaker": "Andrej Karpathy",
+      "title": "Season 1 Ep.1 Andrej Karpathy on the visionary AI in Tesla's autonomous driving"
+    },
+    "file-2kQXxwpaGeSq9Rrysr4vFF": {
+      "videoId": "c3b-JASoPi0",
+      "speaker": "Andrej Karpathy",
+      "title": "Making AI accessible with Andrej Karpathy and Stephanie Zhan"
+    },
+    "file-Aok49s59CT9QxjVJNH7JeU": {
+      "videoId": "ve_qMBwfDxc",
+      "speaker": "Andrew Ng",
+      "title": "Andre Ng interviews Andrej Karpathy with subtitle"
+    },
+    "file-Y8E317Q3kJzGrHhCwXNTtx": {
+      "videoId": "ve_qMBwfDxc",
+      "speaker": "Andrej Karpathy",
+      "title": "Andre Ng interviews Andrej Karpathy with subtitle"
+    },
+    "file-SCNcpYWbvZLcJzyK39DwhS": {
+      "videoId": "uFpAVSkZMxM",
+      "speaker": "Andrew Ng",
+      "title": "World Economic Forums Dawn of Artificial General Intelligence Meeting of the AI Minds"
+    },
+    "file-HUf9tQAbNvkLdcCZVTLKXR": {
+      "videoId": "pnTLZQhFpaE",
+      "speaker": "Andrew Ng",
+      "title": "Heroes of Deep Learning: Andrew Ng interviews Yoshua Bengio"
+    },
+    "file-G1g3cJxujrzrcgc3ysu3xR": {
+      "videoId": "Y1BUaLo67ac",
+      "speaker": "Andrew Ng",
+      "title": "The Dawn of Artificial General Intelligence? | World Economic Forum Annual Meeting 2025"
+    },
+    "file-VowU88H3FZYR4tb5BaV5ya": {
+      "videoId": "wzGvcE060jI",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Elon Musk on Thinking for the Future w/ Sam Altman and Andrew Ross Sorkin"
+    },
+    "file-6NHdq7VTR9gUQAY7CQNPm5": {
+      "videoId": "tfL0ZpYBLrw",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Where the Economy, and the World, Are Headed"
+    },
+    "file-Q36VetjR4GQNFrMcLbktMe": {
+      "videoId": "jvFgOdEVf98",
+      "speaker": "Andrew Yang",
+      "title": "Andrew Yang & Yuval Noah Harari: Tech, Public Policy & the Future of Work"
+    },
+    "file-UZjYzd7hEfWC74g2pFiJNn": {
+      "videoId": "fi1LtFsvbs0",
+      "speaker": "Anant Goenka",
+      "title": "When Bill Gates Was Asked To Choose Between China and Russia | Rapid Fire With Bill Gates"
+    },
+    "file-LtwV2LJNTkLvvFwSKHxnL4": {
+      "videoId": "sZlVp275TZk",
+      "speaker": "Andreas Viestad",
+      "title": "Bill Gates Cooks with Celebrity Chef Andreas Viestad"
+    },
+    "file-3UaMPR7v4j3JDmVrGAiDah": {
+      "videoId": "_15DReQKbt8",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Bill Gates Talks Philanthropy, Microsoft, and Taxes | DealBook"
+    },
+    "file-XfhRUf8mwK5AJGjnZH24zR": {
+      "videoId": "YKMDw7ERxZ4",
+      "speaker": "Adam Selipsky",
+      "title": "AWS re:Invent 2023 - Customer Keynote Anthropic"
+    },
+    "file-8xGAiu79MP8DrB6Mh9hTVy": {
+      "videoId": "uVJTe88NqwE",
+      "speaker": "Alexander Wolitzky",
+      "title": "28 Sep 2023, Daron Acemoglu (MIT)"
+    },
+    "file-Ec7iuiv15yK9ZhHKBWAbVs": {
+      "videoId": "NwjC8lhWkSg",
+      "speaker": "Alice Evans",
+      "title": "\"Power & Progress\":  Daron Acemoglu"
+    },
+    "file-ALr8HWrRL1vqtBBDvpFpkv": {
+      "videoId": "yr0GiSgUvPU",
+      "speaker": "Alex Kantrowitz",
+      "title": "Google DeepMind CEO Demis Hassabis: The Path To AGI, Deceptive AIs, Building a Virtual Cell"
+    },
+    "file-Ghrpu6Nogk5j5H2tu6vkD3": {
+      "videoId": "cpjKbWKZn00",
+      "speaker": "Alice Weidel",
+      "title": "Elon Musk-Alice Weidel Full Conversation: Tesla CEO speaks to German far-right party AfD chief"
+    },
+    "file-MHQhL9yEcs2efpSWZ1zY35": {
+      "videoId": "SqEo107j-uw",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Elon Musk and Y Combinator President on Thinking for the Future - FULL CONVERSATION"
+    },
+    "file-7fHPHEGRF8vQRPW25WrPaJ": {
+      "videoId": "M0jKuL_DElE",
+      "speaker": "Amy Lerman",
+      "title": "A Liberalism That Builds: Ezra Klein in Conversation with Amy Lerman"
+    },
+    "file-S9Cki1CUz43MuDrLdDjjdT": {
+      "videoId": "TPbndc-uIDw",
+      "speaker": "Andreas Maier",
+      "title": "Beyond the Patterns 15 - Gary Marcus - The Next Decade in AI"
+    },
+    "file-JJtMiNbxBfvSRVq1gLKWXG": {
+      "videoId": "yIu8QAiw5Yw",
+      "speaker": "Andrew Yang",
+      "title": "Gary Marcus on AI's hallucination problem"
+    },
+    "file-RmZMYmGLDb1vF4SSasrSuB": {
+      "videoId": "vxkBE23zDmQ",
+      "speaker": "Andrew Marr",
+      "title": "‘Godfather of AI’ predicts it will take over the world | LBC"
+    },
+    "file-MN5BHrVfzHnuZxCmYdE3Dv": {
+      "videoId": "_CCopIk2Chs",
+      "speaker": "Andrew Harvey",
+      "title": "RubyConf AU '14: Greg Brockman"
+    },
+    "file-VLeHJT2i6WNeaWyDPEctWV": {
+      "videoId": "txwi7sXsIcc",
+      "speaker": "Adrian Kreye",
+      "title": "Can We Teach AI Human Values?(Jaan Tallinn, Investor & Ayesha Khanna, AddoAI, Andrian Kreye)| DLD 19"
+    },
+    "file-Wk454xMNysW9nEk45MrkUo": {
+      "videoId": "WOaCG2r47-A",
+      "speaker": "Ali Plumb",
+      "title": "\"Matt, get over it!\" James Cameron on Avatar: The Way of Water and how Matt Damon blew $290 million"
+    },
+    "file-PWiF9GoN21cgWGdL91VVNP": {
+      "videoId": "blAOPCNCszM",
+      "speaker": "Alan Murray",
+      "title": "Larry Page Talks Alphabet, Warren Buffett And Project Loon At Fortune Global Forum 2015 | Fortune"
+    },
+    "file-H4NBy2KFhNLfEZbM2LAZBH": {
+      "videoId": "_mhG9WLpc30",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Lina Khan Explains the F.T.C.’s Aggressive Strategy | DealBook Summit 2023"
+    },
+    "file-9JJ7PH7tiwp4pbTW3CDRdH": {
+      "videoId": "lPvqvt55l3A",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "CEO of Microsoft AI speaks about the future of artificial intelligence at Aspen Ideas Festival"
+    },
+    "file-PMtZYF686ujGXD8SH2QY6U": {
+      "videoId": "e6TpE8-Ucuc",
+      "speaker": "Amjad Masad",
+      "title": "If You Have An AI Arms Race, The Winner Is AI | Roman Yampolskiy & Amjad Masad on Counterpoints"
+    },
+    "file-4PMhpYbHNTB9vPeUgMD5Hk": {
+      "videoId": "c0NqpG--Pzw",
+      "speaker": "Adam Grant",
+      "title": "Sam Altman on the future of AI | ReThinking with Adam Grant"
+    },
+    "file-94fBUr8WPPmh3VMX8rESKZ": {
+      "videoId": "rr8N5IOvTGk",
+      "speaker": "Alexandr Wang",
+      "title": "Sam Altman (Open AI): The Future of AI Research from DALL·E to GPT-3"
+    },
+    "file-Mns52eAXPiiEQ3wWxrhhAQ": {
+      "videoId": "wTVjuPGNsLU",
+      "speaker": "Alex Visotzky",
+      "title": "CalMatters Ideas Festival 2024 - Homelessness Solutions"
+    },
+    "file-R28SzWN7YLM6ZoGLu21MZd": {
+      "videoId": "eYHJFw-waDA",
+      "speaker": "Ajla Gasal",
+      "title": "Panel discussion, questions from students"
+    },
+    "file-PQq8ibdcCLBEwVo8o6YCFP": {
+      "videoId": "eYHJFw-waDA",
+      "speaker": "Alexander Selvikvåg Lundervold",
+      "title": "Panel discussion, questions from students"
+    },
+    "file-K5nKRSutqDZQX1Lh4Yp2fA": {
+      "videoId": "Qh0-tZ8Rua0",
+      "speaker": "Alessio Figalli",
+      "title": "Laureate Discussion: Advances in Computer Science, Mathematics and Computing | September 23"
+    },
+    "file-7HrK6k3y9tLUBCGnoWtQKk": {
+      "videoId": "bheJ5YXtWSY",
+      "speaker": "Amir Banifatemi",
+      "title": "Next wave of AI for Good: from principles to implementation"
+    },
+    "file-Se5HkooGm24cWM6J5Wr2FH": {
+      "videoId": "ULbpPHjiSBg",
+      "speaker": "Alex Kantrowitz",
+      "title": "Is ChatGPT A Step Toward Human-Level AI? — With Yann LeCun, Meta Chief AI Scientist"
+    },
+    "file-PTX4Xf3WzCMgMzheG6ABuw": {
+      "videoId": "eJeJWWEo7cE",
+      "speaker": "Alfredo Canziani",
+      "title": "05.2 – But what are these EBMs used for?"
+    },
+    "file-3VEd4X1oqQSc5g9BGr8ZCe": {
+      "videoId": "mTtDfKgLm54",
+      "speaker": "Alfredo Canziani",
+      "title": "01 – History and resources"
+    },
+    "file-X7sQDztbzAJHi4FvHdEnwi": {
+      "videoId": "fKk9KhGRBdI",
+      "speaker": "Abigail See",
+      "title": "Yann LeCun and Christopher Manning discuss Deep Learning and Innate Priors"
+    },
+    "file-HafG3kjgujcA5NBtZKPiSd": {
+      "videoId": "hBd8XY5OIjM",
+      "speaker": "Alison Gopnik",
+      "title": "Panel discussion: Consciousness and representation in brains and machines"
+    },
+    "file-UhmwV6k9cPsYYsCp8ZKVLa": {
+      "videoId": "_XhZ9f0P2SA",
+      "speaker": "Aaron Schurger",
+      "title": "Yoshua Bengio, Michael Graziano, Aaron Schurger - Panel discussion: Building sentient machines"
+    },
+    "file-MNPySnFWmSsVnNRBhraMmy": {
+      "videoId": "eWXRfwUeKP4",
+      "speaker": "Anant Goenka",
+      "title": "Yuval Noah Harari Interview: Elon Musk & Silicon Valley Leaders Aren’t Elected but Make Big Decision"
+    },
+    "file-SBB2zmJiGdbq3kzX3CKaN5": {
+      "videoId": "VIxjvBV75As",
+      "speaker": "Adam Khan",
+      "title": "Will.i.am Salutes Ariana Grande's Choir and Manchester Bombing Survivors | Good Morning Britain"
+    },
+    "file-RwQURFqcjDPGopgXGX5J83": {
+      "videoId": "HtFDlnU5LFQ",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 3 - \"AI is a tool but it might not be your best solution\""
+    },
+    "file-8EM8hc7YcUKozjtBHF1MB3": {
+      "videoId": "QFCxxjX0CmY",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 10 - \"We need diverse voices doing AI to serve a diverse population\""
+    },
+    "file-Rsmt4UF2C4tQmdavrKoSsA": {
+      "videoId": "WjuymS6M0T0",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 11 - “We answer questions that companies are not brave enough to answer”"
+    },
+    "file-Xx9sXwqEbgzyjPy1cpBZEk": {
+      "videoId": "MyRvINVERZ8",
+      "speaker": "Adam Russell",
+      "title": "EPIDSODE 2 - “A smarter way to organize the world around us”"
+    },
+    "file-BM9BXx1eYqpLUt6PutDsKR": {
+      "videoId": "kOqx9Ej3Zyo",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 14 - \"Humans are better at humor because AI's context sensing is still raw\""
+    },
+    "file-Eyt1DnTqTTbnwfzddy2Ry4": {
+      "videoId": "Oz9BgJZ9Pcc",
+      "speaker": "Adam Russell",
+      "title": "“AIs can’t be sentient, they are bunch of numbers that obey algorithms”"
+    },
+    "file-X76C6Ws4BBSi37buafUMmy": {
+      "videoId": "cbyK0NB_JJA",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 6 - “We don’t have evidence that genuine AI empathy is on the horizon”"
+    },
+    "file-GzrLgR43TQfAbuRrmeYT8o": {
+      "videoId": "O11M8fgxBSk",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 1 - “AI can be good for low stakes issues”"
+    },
+    "file-NsvAerBUUc55gwWgdP69Ej": {
+      "videoId": "lZ4oW_aK9Y4",
+      "speaker": "Adam Russell",
+      "title": "“We need to determine who is responsible when AI makes a mistake”"
+    },
+    "file-1zoAKARSpGzQN59iBbPc6m": {
+      "videoId": "K6Z0yrjBsUw",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 13 - \"I want to help a student write a thesis on artificial general intelligence\""
+    },
+    "file-9LY2eweiGbuUqtJQWUMbsb": {
+      "videoId": "OKwe0f0OHRA",
+      "speaker": "Adam Russell",
+      "title": "EPISODE 12 - “I try to solve problems where we don’t have enough resources”"
+    },
+    "file-4cc7NdTGsL7Vh4gVaMuoHm": {
+      "videoId": "n3X3HWd5qOs",
+      "speaker": "Adam Russell",
+      "title": "“I worry that AI will be used to manipulate large groups of people”"
+    },
+    "file-NfXnZghhDgqRBNs6ghX9tk": {
+      "videoId": "njZJ7V2e6zI",
+      "speaker": "Adam Russell",
+      "title": "“We need more social sciences experts in AI to focus on its human side”"
+    },
+    "file-U1tXjZfb5SUSKo1ZA1QxjB": {
+      "videoId": "i94OvYb6noo",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 4: Backpropagation, Neural Networks 1"
+    },
+    "file-VtAF2sboyUf5wbhmmUdf7J": {
+      "videoId": "l8pRSuU81PU",
+      "speaker": "Andrej Karpathy",
+      "title": "Let's reproduce GPT-2 (124M)"
+    },
+    "file-JD9FpeGAQGGetAdxVeGDNs": {
+      "videoId": "hd_KFJ5ktUc",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 6: Neural Networks Part 3 / Intro to ConvNets"
+    },
+    "file-AtrqpCpCKKragc9JQ98KoC": {
+      "videoId": "PaCmpygFfXo",
+      "speaker": "Andrej Karpathy",
+      "title": "The spelled-out intro to language modeling: building makemore"
+    },
+    "file-5Gtb3TCEdLxDJ2dAih9wwr": {
+      "videoId": "TCH_1BHY58I",
+      "speaker": "Andrej Karpathy",
+      "title": "Building makemore Part 2: MLP"
+    },
+    "file-VkNx3ednEg1bjizU8jpqsQ": {
+      "videoId": "kCc8FmEb1nY",
+      "speaker": "Andrej Karpathy",
+      "title": "Let's build GPT: from scratch, in code, spelled out."
+    },
+    "file-WF8DhKgiskfjBTnsHGp9Et": {
+      "videoId": "qlLChbHhbg4",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 3: Linear Classification 2, Optimization"
+    },
+    "file-EjLF1ujX9poRAUN9QwikBa": {
+      "videoId": "q8SA3rM6ckI",
+      "speaker": "Andrej Karpathy",
+      "title": "Building makemore Part 4: Becoming a Backprop Ninja"
+    },
+    "file-UGG2o28cWtN3WwNmacJgoZ": {
+      "videoId": "zduSFxRajkE",
+      "speaker": "Andrej Karpathy",
+      "title": "Let's build the GPT Tokenizer"
+    },
+    "file-75AUAos8gr2HUmPdf8VUzV": {
+      "videoId": "ta5fdaqDT3M",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 9: Visualization, Deep Dream, Neural Style, Adversarial Examples"
+    },
+    "file-C5e8bfm68xoShWXRvws8Y2": {
+      "videoId": "zjkBMFhNj_g",
+      "speaker": "Andrej Karpathy",
+      "title": "[1hr Talk] Intro to Large Language Models"
+    },
+    "file-MbExXzsekfHg6igg7j4iAc": {
+      "videoId": "P6sfmUTpUmc",
+      "speaker": "Andrej Karpathy",
+      "title": "Building makemore Part 3: Activations & Gradients, BatchNorm"
+    },
+    "file-RUZVZu9hFuUb8Yasnd6P1K": {
+      "videoId": "VMj-3S1tku0",
+      "speaker": "Andrej Karpathy",
+      "title": "The spelled-out intro to neural networks and backpropagation: building micrograd"
+    },
+    "file-DWNTX6URHqYRWQ7EGJ8Q4s": {
+      "videoId": "t3YJ5hKiMQ0",
+      "speaker": "Andrej Karpathy",
+      "title": "Building makemore Part 5: Building a WaveNet"
+    },
+    "file-GFc8BWAu2hDspWYUFWrj5z": {
+      "videoId": "gYpoJMlgyXA",
+      "speaker": "Andrej Karpathy",
+      "title": "CS231n Winter 2016: Lecture 5: Neural Networks Part 2"
+    },
+    "file-AD2FEW54LWmENu7s3YkT4B": {
+      "videoId": "mGw5jF_jGdU",
+      "speaker": "Ahmir \"Questlove\" Thompson",
+      "title": "“Food has always been the greatest social adhesive” | Unconfuse Me with Bill Gates"
+    },
+    "file-1M3R5CuYKdNbK8qU7KRLrr": {
+      "videoId": "LXIeHTyiSGU",
+      "speaker": "Ahmir \"Questlove\" Thompson",
+      "title": "“Let’s go with the amazing performance” | Unconfuse Me with Bill Gates"
+    },
+    "file-WACfMLZe6KtGPZ1eYsiWPC": {
+      "videoId": "rmpDvbryaxY",
+      "speaker": "Ahmir \"Questlove\" Thompson",
+      "title": "“When I was 10, I was operating the system inside nightclubs” | Unconfuse Me with Bill Gates"
+    },
+    "file-PSfMZkrAaM38q7bARm6Drb": {
+      "videoId": "_lE6UNY-7dM",
+      "speaker": "Ahmir Thompson",
+      "title": "“I’m going to call you Trey Rock until the day you die” | Unconfuse Me with Bill Gates"
+    },
+    "file-JEWEDGPgnCF8wBaFxQ8HjE": {
+      "videoId": "OQHuj0pCp7E",
+      "speaker": "Alok Sharma",
+      "title": "Alok Sharma & Bill Gates | London | How to Avoid a Climate Disaster Book Tour"
+    },
+    "file-UdWbixRYu4DgP15U2NBvGK": {
+      "videoId": "Q4ZaiTCr9iA",
+      "speaker": "Anderson Cooper",
+      "title": "Anderson Cooper & Bill Gates | Seattle | How to Avoid a Climate Disaster Book Tour"
+    },
+    "file-Dzm5JJz2vvxk3sfkXSL2pd": {
+      "videoId": "HPOxCHhCJFA",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "CNBC's Andrew Ross Sorkin joins Davos panel on the power of AI — 1/18/2024"
+    },
+    "file-BjkcRHgkaW4U6fdnreUp96": {
+      "videoId": "nby6KervPxQ",
+      "speaker": "Andrew Ross Sorkin",
+      "title": "Bill Gates: More than 50% of business travel will disappear in post-coronavirus world"
+    },
+    "file-TkrwvKXbTWkJ2dyAj4bohp": {
+      "videoId": "V3AyCc2Z4co",
+      "speaker": "Alexander Campbell",
+      "title": "Gödel's Theorem Says Intelligence ≠ Power? AI Doom Debate with Alexander Campbell"
+    },
+    "file-JmpWnjroDKXvDKo1rxe9Xg": {
+      "videoId": "opIvVzJF8t0",
+      "speaker": "Andrew Critch",
+      "title": "Andrew Critch vs. Liron Shapira: Will AI Extinction Be Fast Or Slow?"
+    },
+    "file-6G9oMJccmcHAFTRyPXJJMR": {
+      "videoId": "XhB3qH_TFds",
+      "speaker": "Adam Brown",
+      "title": "Adam Brown – Bubble Universes, Space Elevators, & AdS/CFT"
+    },
+    "file-XbZgYKQXskMGTXjfoH87Eb": {
+      "videoId": "i75KvXVrtLw",
+      "speaker": "Alex Tabarrok",
+      "title": "Alex Tabarrok - Prizes, Prices, and Public Goods"
+    },
+    "file-G4CkRrqzAT14YntZifA64K": {
+      "videoId": "faZI6OBOopE",
+      "speaker": "Ananyo Bhattacharya",
+      "title": "Ananyo Bhattacharya - John von Neumann, Jewish Genius, and Nuclear War"
+    },
+    "file-UxQoGRgmXLjD8y4JFGCg6U": {
+      "videoId": "tM9ZMYUYhTk",
+      "speaker": "Andrew Roberts",
+      "title": "Andrew Roberts -Why Hitler Lost WW2, Churchill as Applied Historian, & Napoleon as Startup Founder"
+    },
+    "file-FRLdhjU1z4Zz6Hgr76BzYn": {
+      "videoId": "V0aXMTpZTfc",
+      "speaker": "Anca Dragan",
+      "title": "Creating Human-level AI: How and When?"
+    },
+    "file-SzNGRpLrqRmD5DhapivzAA": {
+      "videoId": "J47xG5fFcMY",
+      "speaker": "Amanda Askell",
+      "title": "How Claude approaches controversial topics | Lex Fridman Podcast"
+    },
+    "file-Lj6CaaRcBhFLDKCCuZz9zu": {
+      "videoId": "xNXC9UZsgiA",
+      "speaker": "Amanda Askell",
+      "title": "Post-training of LLMs: RLHF and Constitutional AI | Lex Fridman Podcast"
+    },
+    "file-XktHjgmE9mYmMdxh16uLsW": {
+      "videoId": "zju4WDhj3UU",
+      "speaker": "Amanda Askell",
+      "title": "Romantic relationships with AI | Amanda Askell and Lex Fridman"
+    },
+    "file-3tMfrfZeSBWpwnStcMs31V": {
+      "videoId": "bLgc_skmQTE",
+      "speaker": "Amanda Askell",
+      "title": "How Claude discusses politics and other controversial topics | Lex Fridman Podcast"
+    },
+    "file-DGoueRZc6UANAf7xtS9rqw": {
+      "videoId": "HzG-77ToJCo",
+      "speaker": "Amanda Askell",
+      "title": "Nature of truth - lessons from talking to Claude | Amanda Askell and Lex Fridman"
+    },
+    "file-Y8h2vss1ZZFmM7n8VyCFFT": {
+      "videoId": "TM4_bN4StaU",
+      "speaker": "Amanda Askell",
+      "title": "Programming advice for non-technical people | Lex Fridman Podcast"
+    },
+    "file-4AYwkkA9hLEDUgKaipGMjr": {
+      "videoId": "cdiD-9MMpb0",
+      "speaker": "Andrej Karpathy",
+      "title": "Andrej Karpathy: Tesla AI, Self-Driving, Optimus, Aliens, and AGI | Lex Fridman Podcast #333"
+    },
+    "file-JY6LYfnnfn9Z1f2jgaXesm": {
+      "videoId": "hm-Yq3cHJ9U",
+      "speaker": "Adam Frank",
+      "title": "Abandoning religion"
+    },
+    "file-EZh2LGSqvWjAzuf8VXD9pD": {
+      "videoId": "Kuzfkyaj1oQ",
+      "speaker": "Andrew Gelman",
+      "title": "Percontations: The Nature of Probability | Eliezer Yudkowsky & Andrew Gelman [Percontations]"
+    },
+    "file-7C5SPvmq9DRRKSbUUPiu93": {
+      "videoId": "xERIT7QYfl4",
+      "speaker": "Aaron Sant-Miller",
+      "title": "Cyber AI via DarkLabs Detect"
+    },
+    "file-5HE9e2Be6DXD5C1ra6qgVA": {
+      "videoId": "_Hhobyrq9AM",
+      "speaker": "Andrew Gee",
+      "title": "See the Unseen with Data"
+    },
+    "file-LzaUbeE15ZnMy6AKDcmGoX": {
+      "videoId": "P67gjm3nH7o",
+      "speaker": "Alison Snyder",
+      "title": "Fireside Chat with the Director of the White House OSTP Arati Prabhakar"
+    },
+    "file-1yM9D5rnEqsdtAG6gN8VQF": {
+      "videoId": "_X6CShh2TfU",
+      "speaker": "Aaron Wilkowitz",
+      "title": "ChatGPT: Redefining Knowledge Work"
+    },
+    "file-91vyLGW9SicZPpzEp1NWdC": {
+      "videoId": "TM7KwxZxLdQ",
+      "speaker": "Alexander Tsado",
+      "title": "Making Wakanda Real"
+    },
+    "file-V6kiQ1d8FQux9QDQz9KX3q": {
+      "videoId": "KFAOtfOKmcs",
+      "speaker": "André Loesekrug-Pietri",
+      "title": "Forecasting the Frontier: Global Perspectives on Tech Horizon Scanning"
+    },
+    "file-TrUso79E8EfrCophDdvaFf": {
+      "videoId": "vLkasevJP5c",
+      "speaker": "Alex Lawsen",
+      "title": "Alex Lawsen—Forecasting AI Progress"
+    },
+    "file-3wtMxjpSHL5ehvtTkCQifC": {
+      "videoId": "MhqU05yVXPU",
+      "speaker": "Alex Zvorygin",
+      "title": "Existential Risk From AI Is Higher Than 10%—Change My Mind"
+    },
+    "file-CQwbNDK5oyReMhYuAThXHv": {
+      "videoId": "MhqU05yVXPU",
+      "speaker": "Aaron Lou",
+      "title": "Existential Risk From AI Is Higher Than 10%—Change My Mind"
+    },
+    "file-HXwBZfcqULgBYzB3q7c8GS": {
+      "videoId": "MjkSETpoFlY",
+      "speaker": "Alexander Pan",
+      "title": "Alexander Pan–Are AIs Machiavellian?"
+    },
+    "file-JWyLSQ3iecTKcLTdimB8ZK": {
+      "videoId": "bVux6H9TUVQ",
+      "speaker": "Andi Peng",
+      "title": "Andi Peng—A Human-in-the-Loop Framework for Test-Time Policy Adaptation"
+    },
+    "file-XbfHzPL57Pvm3ry1B6d7ux": {
+      "videoId": "p4amJyOfbec",
+      "speaker": "Alexander Wissner-Gross",
+      "title": "Alexander Wissner-Gross on Planetary Scale Intelligence"
+    },
+    "file-DnNTeh6ShcVuB8hW7pSwvC": {
+      "videoId": "YYsRuFUTlAY",
+      "speaker": "Anders Sandberg",
+      "title": "Anders Sandberg: \"Technical Roadmap for Whole Brain Emulation\""
+    }
+  }
+}
