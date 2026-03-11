@@ -30,7 +30,9 @@ export function ChatWindow() {
   const [debugFilterCall, setDebugFilterCall] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [debugMainCall, setDebugMainCall] = useState<any>(null);
-  const [debugModal, setDebugModal] = useState<"filter" | "main" | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const [debugFileSearch, setDebugFileSearch] = useState<any>(null);
+  const [debugModal, setDebugModal] = useState<"filter" | "main" | "filesearch" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -109,6 +111,8 @@ export function ChatWindow() {
               setDebugFilterCall(event);
             } else if (event.type === "debug_main_call") {
               setDebugMainCall(event);
+            } else if (event.type === "debug_file_search") {
+              setDebugFileSearch(event);
             } else if (event.type === "thread_id") {
               // Legacy — no-op for Responses API
             } else if (event.type === "text_delta") {
@@ -359,6 +363,15 @@ export function ChatWindow() {
                     Main API Call
                   </button>
                 )}
+                {debugFileSearch && (
+                  <button
+                    onClick={() => setDebugModal("filesearch")}
+                    className="text-[10px] px-2 py-0.5 rounded border border-green-300 text-green-600 hover:bg-green-50"
+                  >
+                    <Bug className="h-3 w-3 inline mr-0.5" />
+                    Search Results
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -379,7 +392,7 @@ export function ChatWindow() {
           <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="font-semibold text-sm">
-                {debugModal === "filter" ? "GPT-4o-mini Filter Detection Call" : "OpenAI Responses API Call"}
+                {debugModal === "filter" ? "GPT-4o-mini Filter Detection Call" : debugModal === "main" ? "OpenAI Responses API Call" : "File Search Results"}
               </h3>
               <button onClick={() => setDebugModal(null)} className="text-gray-400 hover:text-gray-600">
                 <X className="h-5 w-5" />
@@ -388,7 +401,7 @@ export function ChatWindow() {
             <div className="overflow-auto p-4">
               <pre className="text-xs whitespace-pre-wrap break-words font-mono text-gray-800">
                 {JSON.stringify(
-                  debugModal === "filter" ? debugFilterCall : debugMainCall,
+                  debugModal === "filter" ? debugFilterCall : debugModal === "main" ? debugMainCall : debugFileSearch,
                   null,
                   2,
                 )}

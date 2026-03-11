@@ -392,8 +392,30 @@ export async function POST(req: NextRequest) {
               }
             }
 
-            // Response complete — resolve citations
+            // Response complete — emit file_search debug + resolve citations
             if (event.type === "response.completed") {
+              // Extract file_search results for debug
+              const fileSearchResults: any[] = [];
+              for (const item of event.response?.output || []) {
+                if (item.type === "file_search_call") {
+                  fileSearchResults.push({
+                    status: item.status,
+                    resultCount: item.results?.length ?? 0,
+                    results: (item.results || []).map((r: any) => ({
+                      file_id: r.file_id,
+                      filename: r.filename,
+                      score: r.score,
+                      attributes: r.attributes,
+                    })),
+                  });
+                }
+              }
+              controller.enqueue(
+                encoder.encode(
+                  `data: ${JSON.stringify({ type: "debug_file_search", fileSearchResults })}\n\n`,
+                ),
+              );
+
               try {
                 await resolveCitations(
                   event.response,
