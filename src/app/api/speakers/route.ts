@@ -33,7 +33,7 @@ export async function GET() {
     result.set(s.slug, { name: s.name, slug: s.slug, videoCount: s.videoCount });
   }
 
-  const speakers = [...result.values()].sort((a, b) => b.videoCount - a.videoCount);
+  const speakers = [...result.values()].sort((a, b) => a.name.localeCompare(b.name));
 
   return Response.json({ speakers, total: speakers.length });
 }

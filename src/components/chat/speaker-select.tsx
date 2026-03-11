@@ -53,7 +53,7 @@ export function SpeakerSelect({
       }
     }
 
-    return [...map.values()].sort((a, b) => b.videoCount - a.videoCount);
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [dynamicSpeakers]);
 
   const filtered = useMemo(() => {
