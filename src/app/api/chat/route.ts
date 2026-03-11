@@ -387,6 +387,7 @@ export async function POST(req: NextRequest) {
       input,
       tools: toolsPayload,
       stream: true,
+      include: ["file_search_call.results"],
     });
 
     // Stream SSE to client
