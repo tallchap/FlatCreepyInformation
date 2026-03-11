@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Send, RotateCcw, Bug, X } from "lucide-react";
+import { Send, RotateCcw, Bug, X, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { SpeakerSelect } from "./speaker-select";
@@ -344,10 +344,22 @@ export function ChatWindow() {
                 <Send className="h-5 w-5" />
               </Button>
             </div>
-            <p className="text-xs text-gray-400 mt-2 text-center">
-              Responses are based on video transcript data. Always verify quotes
-              against the original videos.
-            </p>
+            <div className="flex items-center justify-center gap-3 mt-2">
+              <p className="text-xs text-gray-400 text-center">
+                Responses are based on video transcript data. Always verify quotes
+                against the original videos.
+              </p>
+              <button
+                onClick={() => {
+                  window.open(`/api/export-transcripts?speaker=${encodeURIComponent(speakerName || speaker)}`, "_blank");
+                }}
+                disabled={isLoading}
+                className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition-colors whitespace-nowrap flex items-center gap-1"
+              >
+                <Download className="h-3 w-3" />
+                Export Transcripts
+              </button>
+            </div>
             {(debugFilterCall || debugMainCall) && (
               <div className="flex justify-center gap-2 mt-2">
                 {debugFilterCall && (
