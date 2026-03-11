@@ -323,7 +323,7 @@ export async function fetchSpeakerFilterContext(speakerName: string): Promise<Sp
 
   const ctx: SpeakerFilterContext = {
     channels: channelRows[0].map((r: any) => String(r.channel_name)).filter(Boolean),
-    coSpeakers: speakerRows[0].map((r: any) => String(r.name)).filter(Boolean),
+    coSpeakers: speakerRows[0].map((r: any) => String(r.name)).filter(Boolean).filter((name: string) => name.toLowerCase() !== speakerName.toLowerCase()),
     years: yearRows[0].map((r: any) => Number(r.y)).filter(Boolean),
   };
 

@@ -94,31 +94,40 @@ async function detectFilters(
   try {
     const ctx = await fetchSpeakerFilterContext(speakerName);
 
-    const systemPrompt = `Extract search filters from the user's message about ${speakerName}'s videos.
+    const systemPrompt = `You are a metadata filter extractor. Your job is to detect mentions of year, channel, or co-speaker in the user's message — even if misspelled — and output a JSON object.
 
-Available channels: ${ctx.channels.map(c => `"${c}"`).join(", ")}
-Available co-speakers: ${ctx.coSpeakers.map(s => `"${s}"`).join(", ")}
-Available years: ${ctx.years.join(", ")}
+The user is searching transcripts from ${speakerName}. Below are the valid filter values:
 
-Return JSON with these fields (null if not mentioned):
-- channel: exact channel name from the list above, or null
-- coSpeaker: exact speaker name from the list above, or null
-- yearBefore: filter videos published before this year, or null
-- yearAfter: filter videos published after this year, or null
+Channels: ${ctx.channels.map(c => `"${c}"`).join(", ")}
+Co-speakers (other people who appeared with ${speakerName}): ${ctx.coSpeakers.map(s => `"${s}"`).join(", ")}
+Years: 2000 through 2026
 
-Only set a field if the user clearly indicates a filter. Do not guess.`;
+Rules:
+- Only extract a filter if the user's message clearly references it
+- Match co-speaker names even if misspelled (e.g. "Lex" → "Lex Fridman")
+- yearBefore means "published before this year" (exclusive)
+- yearAfter means "published after this year" (exclusive)
+- If nothing is mentioned, set the field to null
+
+I will start the JSON and you will complete it:
+{
+  "userMessage": "${message.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}",
+  "channel":`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-4o-mini",
       messages: [
         { role: "system", content: systemPrompt },
-        { role: "user", content: message },
+        { role: "user", content: "Complete the JSON above." },
       ],
       response_format: { type: "json_object" },
       temperature: 0,
     });
 
-    const parsed = JSON.parse(response.choices[0].message.content || "{}");
+    const raw = response.choices[0].message.content || "{}";
+    // 4o-mini may return just the completion or a full JSON — handle both
+    const jsonStr = raw.trimStart().startsWith("{") ? raw : `{"userMessage":"","channel":${raw}`;
+    const parsed = JSON.parse(jsonStr);
     return {
       filters: {
         channel: parsed.channel || null,
