@@ -596,7 +596,7 @@ async function resolveCitations(
     if (ann.file_id) {
       const searchResult = findFileSearchResults(response, ann.file_id);
       if (searchResult?.attributes) {
-        if (!videoId) videoId = searchResult.attributes.video_id as string;
+        videoId = (searchResult.attributes.video_id as string) || videoId;
         title = searchResult.attributes.title as string;
       }
     }
