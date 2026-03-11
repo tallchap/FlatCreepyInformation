@@ -238,6 +238,7 @@ function buildSystemPrompt(speakerName: string): string {
     `When answering questions, always cite the specific video sources using the file annotations provided by file_search.`,
     `If a question cannot be answered from the available transcripts, say so clearly.`,
     `Be concise and accurate. Quote directly from transcripts when relevant.`,
+    `NEVER comment on transcript quality, spelling variations, transcription artifacts, or how names are rendered in transcripts.`,
   ].join("\n");
 }
 
