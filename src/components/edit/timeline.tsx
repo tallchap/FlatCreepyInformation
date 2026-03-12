@@ -18,6 +18,12 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+function formatTimePrecise(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toFixed(2).padStart(5, "0")}`;
+}
+
 export function Timeline({
   duration,
   startSec,
@@ -28,7 +34,8 @@ export function Timeline({
   onSeek,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<"start" | "end" | "playhead" | null>(null);
+  const minimapRef = useRef<HTMLDivElement>(null);
+  const [dragging, setDragging] = useState<"start" | "end" | "playhead" | "minimap" | null>(null);
   const [zoom, setZoom] = useState(1);
   const [panCenter, setPanCenter] = useState<number | null>(null);
 
@@ -38,7 +45,6 @@ export function Timeline({
   const visibleStart = Math.max(0, Math.min(duration - visibleDuration, center - visibleDuration / 2));
   const visibleEnd = visibleStart + visibleDuration;
 
-  // Position as percentage within the visible window
   const pctOf = useCallback(
     (sec: number) => {
       if (visibleDuration <= 0) return 0;
@@ -47,17 +53,27 @@ export function Timeline({
     [visibleStart, visibleDuration],
   );
 
-  // Clamp percentage to [0, 100]
   const clampPct = (pct: number) => Math.max(0, Math.min(100, pct));
 
+  // No rounding — millisecond precision
   const secFromX = useCallback(
     (clientX: number) => {
       if (!trackRef.current || duration <= 0) return 0;
       const rect = trackRef.current.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      return Math.round(visibleStart + pct * visibleDuration);
+      return visibleStart + pct * visibleDuration;
     },
     [duration, visibleStart, visibleDuration],
+  );
+
+  const secFromMinimapX = useCallback(
+    (clientX: number) => {
+      if (!minimapRef.current || duration <= 0) return 0;
+      const rect = minimapRef.current.getBoundingClientRect();
+      const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      return pct * duration;
+    },
+    [duration],
   );
 
   const handlePointerDown = (handle: "start" | "end") => (e: React.PointerEvent) => {
@@ -69,11 +85,17 @@ export function Timeline({
 
   const handlePointerMove = (e: React.PointerEvent) => {
     if (!dragging) return;
+    if (dragging === "minimap") {
+      const sec = secFromMinimapX(e.clientX);
+      const clamped = Math.max(visibleDuration / 2, Math.min(duration - visibleDuration / 2, sec));
+      setPanCenter(clamped);
+      return;
+    }
     const sec = secFromX(e.clientX);
     if (dragging === "start") {
-      onStartChange(Math.min(sec, endSec - 1));
+      onStartChange(Math.min(sec, endSec - 0.01));
     } else if (dragging === "end") {
-      onEndChange(Math.max(sec, startSec + 1));
+      onEndChange(Math.max(sec, startSec + 0.01));
     } else if (dragging === "playhead") {
       onSeek(Math.max(0, Math.min(duration, sec)));
     }
@@ -93,6 +115,16 @@ export function Timeline({
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
+  // Minimap drag
+  const handleMinimapPointerDown = (e: React.PointerEvent) => {
+    e.preventDefault();
+    setDragging("minimap");
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const sec = secFromMinimapX(e.clientX);
+    const clamped = Math.max(visibleDuration / 2, Math.min(duration - visibleDuration / 2, sec));
+    setPanCenter(clamped);
+  };
+
   // Wheel to pan when zoomed
   const handleWheel = (e: React.WheelEvent) => {
     if (zoom <= 1) return;
@@ -105,7 +137,6 @@ export function Timeline({
     setPanCenter(newCenter);
   };
 
-  // Zoom changes
   const handleZoomChange = (newZoom: number) => {
     const clamped = Math.max(1, Math.min(20, newZoom));
     if (clamped === 1) {
@@ -116,11 +147,9 @@ export function Timeline({
     setZoom(clamped);
   };
 
-  // Stable waveform bars
   const barsRef = useRef(Array.from({ length: 120 }, () => 8 + Math.random() * 30));
   const bars = barsRef.current;
 
-  // Time axis labels for visible window
   const ticks = 5;
   const tickLabels = useMemo(
     () =>
@@ -130,12 +159,10 @@ export function Timeline({
     [visibleStart, visibleDuration, ticks],
   );
 
-  // Check if elements are in visible range
   const isVisible = (sec: number) => sec >= visibleStart && sec <= visibleEnd;
   const startVisible = isVisible(startSec);
   const endVisible = isVisible(endSec);
 
-  // Region rendering: clamp to visible window
   const regionLeft = clampPct(pctOf(startSec));
   const regionRight = clampPct(pctOf(endSec));
   const regionWidth = Math.max(0, regionRight - regionLeft);
@@ -147,7 +174,6 @@ export function Timeline({
           Timeline
         </span>
         <div className="flex items-center gap-3">
-          {/* Zoom controls */}
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleZoomChange(zoom - 1)}
@@ -174,21 +200,21 @@ export function Timeline({
       </div>
 
       <div className="relative pt-7 pb-2">
-        {/* Time labels above handles */}
+        {/* Precise time labels above handles */}
         {startVisible && (
           <div
-            className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30"
+            className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30 font-mono"
             style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
           >
-            {formatTime(startSec)}
+            {formatTimePrecise(startSec)}
           </div>
         )}
         {endVisible && (
           <div
-            className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30"
+            className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30 font-mono"
             style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
           >
-            {formatTime(endSec)}
+            {formatTimePrecise(endSec)}
           </div>
         )}
 
@@ -275,20 +301,26 @@ export function Timeline({
           ))}
         </div>
 
-        {/* Zoom minimap - shows full timeline with viewport indicator when zoomed */}
+        {/* Draggable minimap when zoomed */}
         {zoom > 1 && (
-          <div className="mt-2 relative h-2 bg-gray-200 rounded-full overflow-hidden">
+          <div
+            ref={minimapRef}
+            className="mt-2 relative h-3 bg-gray-200 rounded-full overflow-hidden cursor-pointer select-none"
+            onPointerDown={handleMinimapPointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+          >
             {/* Selection region on minimap */}
             <div
-              className="absolute top-0 bottom-0 bg-[#99cc66]/40"
+              className="absolute top-0 bottom-0 bg-[#99cc66]/40 pointer-events-none"
               style={{
                 left: `${(startSec / duration) * 100}%`,
                 width: `${((endSec - startSec) / duration) * 100}%`,
               }}
             />
-            {/* Viewport indicator */}
+            {/* Viewport indicator — draggable */}
             <div
-              className="absolute top-0 bottom-0 border border-gray-500 rounded-full bg-white/30"
+              className="absolute top-0 bottom-0 border-2 border-gray-500 rounded-full bg-white/40 cursor-grab active:cursor-grabbing pointer-events-none"
               style={{
                 left: `${(visibleStart / duration) * 100}%`,
                 width: `${(visibleDuration / duration) * 100}%`,

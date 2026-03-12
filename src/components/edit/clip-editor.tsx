@@ -20,8 +20,8 @@ function extractVideoId(input: string): string | null {
 
 function formatDuration(sec: number): string {
   const m = Math.floor(sec / 60);
-  const s = Math.floor(sec % 60);
-  return `${m}:${s.toString().padStart(2, "0")}`;
+  const s = sec % 60;
+  return `${m}:${s.toFixed(2).padStart(5, "0")}`;
 }
 
 const MAX_CLIP_SEC = 11 * 60;
@@ -33,6 +33,7 @@ export function ClipEditor() {
   const [startSec, setStartSec] = useState(0);
   const [endSec, setEndSec] = useState(60);
   const [playheadSec, setPlayheadSec] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(false);
   const [quality, setQuality] = useState<Quality>("720p");
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
@@ -117,14 +118,16 @@ export function ClipEditor() {
     };
   }, [videoId]);
 
-  // Playhead sync — update position from player every 250ms
+  // Playhead sync + isPlaying state — update from player every 100ms
   useEffect(() => {
     if (!videoId) return;
     playheadTimerRef.current = setInterval(() => {
       if (!playerReadyRef.current) return;
       const t = playerRef.current?.getCurrentTime?.();
       if (t != null) setPlayheadSec(t);
-    }, 250);
+      const state = playerRef.current?.getPlayerState?.();
+      setIsPlaying(state === 1);
+    }, 100);
     return () => {
       if (playheadTimerRef.current) clearInterval(playheadTimerRef.current);
     };
@@ -139,7 +142,6 @@ export function ClipEditor() {
       e.preventDefault();
       if (!playerReadyRef.current) return;
       const state = playerRef.current?.getPlayerState?.();
-      // YT.PlayerState.PLAYING === 1
       if (state === 1) {
         playerRef.current?.pauseVideo();
       } else {
@@ -182,11 +184,8 @@ export function ClipEditor() {
     [],
   );
 
-  // Shared play-with-auto-pause logic
-  const playAndPauseAt = (fromSec: number) => {
-    if (!playerReadyRef.current) return;
-    playerRef.current?.seekTo(fromSec, true);
-    playerRef.current?.playVideo();
+  // Auto-pause at endSec helper
+  const startAutoPause = () => {
     if (previewTimerRef.current) clearInterval(previewTimerRef.current);
     previewTimerRef.current = setInterval(() => {
       const t = playerRef.current?.getCurrentTime?.();
@@ -194,33 +193,40 @@ export function ClipEditor() {
         playerRef.current?.pauseVideo();
         if (previewTimerRef.current) clearInterval(previewTimerRef.current);
       }
-    }, 250);
+    }, 100);
   };
 
-  const handleFromStart = () => playAndPauseAt(startSec);
-
-  const handlePlay = () => {
+  const handleFromStart = () => {
     if (!playerReadyRef.current) return;
+    playerRef.current?.seekTo(startSec, true);
     playerRef.current?.playVideo();
-    // Still auto-pause at end
-    if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-    previewTimerRef.current = setInterval(() => {
-      const t = playerRef.current?.getCurrentTime?.();
-      if (t != null && t >= endSec) {
-        playerRef.current?.pauseVideo();
-        if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-      }
-    }, 250);
+    startAutoPause();
   };
 
-  const handleLast5 = () => playAndPauseAt(Math.max(startSec, endSec - 5));
+  const handlePlayPause = () => {
+    if (!playerReadyRef.current) return;
+    if (isPlaying) {
+      playerRef.current?.pauseVideo();
+      if (previewTimerRef.current) clearInterval(previewTimerRef.current);
+    } else {
+      playerRef.current?.playVideo();
+      startAutoPause();
+    }
+  };
+
+  const handleLast5 = () => {
+    if (!playerReadyRef.current) return;
+    playerRef.current?.seekTo(Math.max(startSec, endSec - 5), true);
+    playerRef.current?.playVideo();
+    startAutoPause();
+  };
 
   const handleTranscriptClick = (sec: number) => {
     const mid = (startSec + endSec) / 2;
     if (sec < mid) {
-      setStartSec(Math.min(sec, endSec - 1));
+      setStartSec(Math.min(sec, endSec - 0.01));
     } else {
-      setEndSec(Math.max(sec, startSec + 1));
+      setEndSec(Math.max(sec, startSec + 0.01));
     }
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
@@ -341,15 +347,15 @@ export function ClipEditor() {
               {/* Time inputs */}
               <div className="flex items-center gap-2">
                 <label className="text-xs font-medium text-gray-500 uppercase">Start</label>
-                <TimeInput value={startSec} onChange={(s) => setStartSec(Math.min(s, endSec - 1))} />
+                <TimeInput value={startSec} onChange={(s) => setStartSec(Math.min(s, endSec - 0.01))} />
               </div>
               <div className="flex items-center gap-2">
                 <label className="text-xs font-medium text-gray-500 uppercase">End</label>
-                <TimeInput value={endSec} onChange={(s) => setEndSec(Math.max(s, startSec + 1))} />
+                <TimeInput value={endSec} onChange={(s) => setEndSec(Math.max(s, startSec + 0.01))} />
               </div>
 
               <div className="text-sm text-gray-500">
-                Clip: <span className="font-semibold text-gray-700">{formatDuration(clipDuration)}</span>
+                Clip: <span className="font-semibold text-gray-700 font-mono">{formatDuration(clipDuration)}</span>
                 {clipTooLong && (
                   <span className="text-red-500 ml-2">
                     (exceeds {MAX_CLIP_SEC / 60} min limit)
@@ -390,13 +396,13 @@ export function ClipEditor() {
                 From Start
               </button>
               <button
-                onClick={handlePlay}
-                className={btnClass}
+                onClick={handlePlayPause}
+                className={`${btnClass} min-w-[80px]`}
                 style={{ backgroundColor: DINO_RED }}
                 onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
-                Play
+                {isPlaying ? "Pause" : "Play"}
               </button>
               <button
                 onClick={handleLast5}
@@ -437,27 +443,36 @@ export function ClipEditor() {
   );
 }
 
-/* ── Editable MM:SS input ── */
+/* ── Editable MM:SS.ms input ── */
 
 function TimeInput({ value, onChange }: { value: number; onChange: (sec: number) => void }) {
   const [text, setText] = useState(formatDuration(value));
   const prevValue = useRef(value);
 
   useEffect(() => {
-    if (value !== prevValue.current) {
+    if (Math.abs(value - prevValue.current) > 0.005) {
       setText(formatDuration(value));
       prevValue.current = value;
     }
   }, [value]);
 
   const commit = () => {
-    const match = text.match(/^(\d+):(\d{1,2})$/);
+    // Accept M:SS, M:SS.mm, or just seconds
+    const match = text.match(/^(\d+):(\d{1,2}(?:\.\d{0,2})?)$/);
     if (match) {
-      const sec = parseInt(match[1]) * 60 + parseInt(match[2]);
+      const sec = parseInt(match[1]) * 60 + parseFloat(match[2]);
       onChange(sec);
       prevValue.current = sec;
+      setText(formatDuration(sec));
     } else {
-      setText(formatDuration(value));
+      const num = parseFloat(text);
+      if (!isNaN(num) && num >= 0) {
+        onChange(num);
+        prevValue.current = num;
+        setText(formatDuration(num));
+      } else {
+        setText(formatDuration(value));
+      }
     }
   };
 
@@ -468,7 +483,7 @@ function TimeInput({ value, onChange }: { value: number; onChange: (sec: number)
       onChange={(e) => setText(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => e.key === "Enter" && commit()}
-      className="w-16 text-center rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
+      className="w-20 text-center rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
     />
   );
 }
