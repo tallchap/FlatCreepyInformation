@@ -11,6 +11,11 @@ app.use(cors());
 app.use(express.json());
 
 const DEMO_URL = "https://www.youtube.com/watch?v=EYg3fmaycZA";
+const PROXY_URL = process.env.WEBSHARE_PROXY_URL || "";
+
+function proxyArgs() {
+  return PROXY_URL ? ["--proxy", PROXY_URL] : [];
+}
 
 function execCapture(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -37,7 +42,7 @@ app.post("/download", async (req, res) => {
   try {
     await execCapture(
       "yt-dlp",
-      [url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
+      [...proxyArgs(), url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
       { timeout: 300_000 }
     );
 
@@ -86,6 +91,7 @@ app.post("/clip", async (req, res) => {
       await execCapture(
         "yt-dlp",
         [
+          ...proxyArgs(),
           url, "-f", fmt,
           "--download-sections", `*${startSec}-${endSec}`,
           "--force-keyframes-at-cuts",
@@ -101,7 +107,7 @@ app.post("/clip", async (req, res) => {
       // Fallback: full download + ffmpeg trim
       await execCapture(
         "yt-dlp",
-        [url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
+        [...proxyArgs(), url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
         { timeout: 300_000 }
       );
 
@@ -139,7 +145,7 @@ app.post("/clip", async (req, res) => {
 });
 
 app.get("/debug", async (_req, res) => {
-  const results = {};
+  const results = { proxy: PROXY_URL ? "configured" : "not configured" };
   try {
     const ytdlp = await execCapture("yt-dlp", ["--version"], { timeout: 10_000 });
     results.ytdlp = ytdlp.stdout.trim();
