@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import TranscriptPane from "@/components/TranscriptPane";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -47,6 +48,15 @@ export function VideoPreviewPane({ videoId, startSec, title }: Props) {
           autoScrollToActive
           playerSyncKey={`${videoId}-${startSec}`}
         />
+
+        <div className="pt-2 border-t border-gray-100">
+          <Link
+            href={`/edit?v=${videoId}`}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+          >
+            Clip Video
+          </Link>
+        </div>
       </CardContent>
     </Card>
   );

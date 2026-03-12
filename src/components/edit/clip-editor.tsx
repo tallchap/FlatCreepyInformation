@@ -39,6 +39,17 @@ export function ClipEditor() {
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Auto-load from ?v= query param
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const v = params.get("v");
+    if (v) {
+      setUrl(v);
+      const id = extractVideoId(v);
+      if (id) setVideoId(id);
+    }
+  }, []);
+
   // Load history from localStorage
   useEffect(() => {
     try {
