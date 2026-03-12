@@ -64,7 +64,7 @@ export async function searchTranscripts(params: {
 
     if (params.speakerQuery) {
       whereConditions.push(
-        'LOWER(Speakers) LIKE CONCAT("%", LOWER(@speakerQuery), "%")',
+        `LOWER(COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude)) LIKE CONCAT("%", LOWER(@speakerQuery), "%")`,
       );
       queryParams.speakerQuery = params.speakerQuery;
     }
