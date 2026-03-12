@@ -18,30 +18,9 @@ const SEGMENT_LINE_EXPR = `CASE
 END`;
 
 function buildBaseSelect() {
-  if (useNewTranscriptTables()) {
-    return `
-      WITH transcripts AS (
-        SELECT
-          s.video_id,
-          STRING_AGG(${SEGMENT_LINE_EXPR}, '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index) AS Search_Doc_1
-        FROM ${TABLE_REFS.transcriptSegments} s
-        GROUP BY s.video_id
-      )
-      SELECT
-        v.video_id AS ID,
-        v.video_title AS Video_Title,
-        v.channel_name AS Channel_Name,
-        v.published_date AS Published_Date,
-        v.speaker_source AS Speakers,
-        v.youtube_link AS Youtube_Link,
-        v.video_length AS Video_Length,
-        NULL AS Transcript_Doc_Link,
-        t.Search_Doc_1
-      FROM ${TABLE_REFS.videos} v
-      LEFT JOIN transcripts t ON t.video_id = v.video_id
-    `;
-  }
-
+  // Always use the legacy table for full-text search — it has Search_Doc_1
+  // pre-aggregated. The segments table (3.7M rows) is too expensive to
+  // STRING_AGG at query time and times out on serverless.
   return `
     SELECT
       ID,
