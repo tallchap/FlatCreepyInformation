@@ -6,8 +6,10 @@ interface TimelineProps {
   duration: number; // total seconds
   startSec: number;
   endSec: number;
+  playheadSec: number;
   onStartChange: (sec: number) => void;
   onEndChange: (sec: number) => void;
+  onSeek: (sec: number) => void;
 }
 
 function formatTime(sec: number): string {
@@ -20,11 +22,13 @@ export function Timeline({
   duration,
   startSec,
   endSec,
+  playheadSec,
   onStartChange,
   onEndChange,
+  onSeek,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
-  const [dragging, setDragging] = useState<"start" | "end" | null>(null);
+  const [dragging, setDragging] = useState<"start" | "end" | "playhead" | null>(null);
 
   const pctOf = (sec: number) => (duration > 0 ? (sec / duration) * 100 : 0);
 
@@ -40,6 +44,7 @@ export function Timeline({
 
   const handlePointerDown = (handle: "start" | "end") => (e: React.PointerEvent) => {
     e.preventDefault();
+    e.stopPropagation();
     setDragging(handle);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -49,8 +54,10 @@ export function Timeline({
     const sec = secFromX(e.clientX);
     if (dragging === "start") {
       onStartChange(Math.min(sec, endSec - 1));
-    } else {
+    } else if (dragging === "end") {
       onEndChange(Math.max(sec, startSec + 1));
+    } else if (dragging === "playhead") {
+      onSeek(sec);
     }
   };
 
@@ -59,17 +66,19 @@ export function Timeline({
   const handleTrackClick = (e: React.MouseEvent) => {
     if (dragging) return;
     const sec = secFromX(e.clientX);
-    // Click left half of selection → move start, right half → move end
-    const mid = (startSec + endSec) / 2;
-    if (sec < mid) {
-      onStartChange(Math.min(sec, endSec - 1));
-    } else {
-      onEndChange(Math.max(sec, startSec + 1));
-    }
+    onSeek(sec);
   };
 
-  // Generate waveform bars (decorative)
-  const bars = Array.from({ length: 120 }, () => 8 + Math.random() * 30);
+  const handleTrackPointerDown = (e: React.PointerEvent) => {
+    // If clicking empty track (not a handle), start playhead drag
+    if ((e.target as HTMLElement).dataset.handle) return;
+    setDragging("playhead");
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  // Generate waveform bars (decorative) — stable via ref
+  const barsRef = useRef(Array.from({ length: 120 }, () => 8 + Math.random() * 30));
+  const bars = barsRef.current;
 
   // Time axis labels
   const ticks = 5;
@@ -106,13 +115,14 @@ export function Timeline({
         {/* Track */}
         <div
           ref={trackRef}
-          className="relative h-12 bg-gray-100 rounded-lg overflow-hidden cursor-pointer select-none"
+          className="relative h-12 bg-gray-100 rounded-lg overflow-visible cursor-pointer select-none"
           onClick={handleTrackClick}
+          onPointerDown={handleTrackPointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
         >
           {/* Waveform bars */}
-          <div className="absolute inset-0 flex items-center gap-[1px] px-2">
+          <div className="absolute inset-0 flex items-center gap-[1px] px-2 overflow-hidden rounded-lg">
             {bars.map((h, i) => (
               <div
                 key={i}
@@ -131,22 +141,43 @@ export function Timeline({
             }}
           />
 
+          {/* Playhead */}
+          <div
+            className="absolute top-[-6px] bottom-[-6px] z-20 pointer-events-none"
+            style={{ left: `${pctOf(playheadSec)}%`, transform: "translateX(-50%)" }}
+          >
+            {/* Line */}
+            <div className="absolute left-1/2 -translate-x-1/2 top-[6px] bottom-[6px] w-[2px] bg-white shadow-[0_0_3px_rgba(0,0,0,0.5)]" />
+            {/* Triangle head */}
+            <div
+              className="absolute left-1/2 -translate-x-1/2 top-0 w-0 h-0"
+              style={{
+                borderLeft: "5px solid transparent",
+                borderRight: "5px solid transparent",
+                borderTop: "7px solid white",
+                filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.4))",
+              }}
+            />
+          </div>
+
           {/* Start handle */}
           <div
+            data-handle="start"
             className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-[#99cc66] rounded cursor-ew-resize z-10 flex items-center justify-center"
             style={{ left: `${pctOf(startSec)}%`, transform: "translateX(-50%)" }}
             onPointerDown={handlePointerDown("start")}
           >
-            <div className="w-0.5 h-4 bg-white/80 rounded" />
+            <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
           </div>
 
           {/* End handle */}
           <div
+            data-handle="end"
             className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-red-500 rounded cursor-ew-resize z-10 flex items-center justify-center"
             style={{ left: `${pctOf(endSec)}%`, transform: "translateX(-50%)" }}
             onPointerDown={handlePointerDown("end")}
           >
-            <div className="w-0.5 h-4 bg-white/80 rounded" />
+            <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
           </div>
         </div>
 
