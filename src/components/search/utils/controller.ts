@@ -77,8 +77,19 @@ export async function searchTranscripts(params: {
     }
 
     if (params.yearFilter && params.yearFilter !== "all") {
-      whereConditions.push("EXTRACT(YEAR FROM Published_Date) = @yearFilter");
-      queryParams.yearFilter = parseInt(params.yearFilter);
+      if (params.yearFilter.startsWith("before:")) {
+        const year = parseInt(params.yearFilter.split(":")[1]);
+        whereConditions.push("EXTRACT(YEAR FROM Published_Date) < @yearFilter");
+        queryParams.yearFilter = year;
+      } else if (params.yearFilter.startsWith("after:")) {
+        const year = parseInt(params.yearFilter.split(":")[1]);
+        whereConditions.push("EXTRACT(YEAR FROM Published_Date) > @yearFilter");
+        queryParams.yearFilter = year;
+      } else {
+        // Legacy: exact year
+        whereConditions.push("EXTRACT(YEAR FROM Published_Date) = @yearFilter");
+        queryParams.yearFilter = parseInt(params.yearFilter);
+      }
     }
 
     const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";

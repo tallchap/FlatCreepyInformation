@@ -12,9 +12,45 @@ import {
 } from "@/components/ui/select";
 import { SearchQueryInfo } from "./search-query-info";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { searchTranscript } from "./utils/actions";
 import { toast } from "sonner";
+
+function YearFilter({ defaultValue }: { defaultValue: string }) {
+  const parsed = defaultValue.match(/^(before|after):(\d{4})$/);
+  const [mode, setMode] = useState<"all" | "before" | "after">(
+    parsed ? (parsed[1] as "before" | "after") : "all"
+  );
+  const [year, setYear] = useState(parsed ? parsed[2] : "2020");
+  const value = mode === "all" ? "all" : `${mode}:${year}`;
+
+  return (
+    <div className="flex gap-2 items-center">
+      <Label>Year</Label>
+      <input type="hidden" name="yearFilter" value={value} />
+      <Select value={mode} onValueChange={(v) => setMode(v as "all" | "before" | "after")}>
+        <SelectTrigger>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">All Years</SelectItem>
+          <SelectItem value="before">Before</SelectItem>
+          <SelectItem value="after">After</SelectItem>
+        </SelectContent>
+      </Select>
+      {mode !== "all" && (
+        <Input
+          type="number"
+          min={2009}
+          max={new Date().getFullYear()}
+          value={year}
+          onChange={(e) => setYear(e.target.value)}
+          className="w-[80px]"
+        />
+      )}
+    </div>
+  );
+}
 
 export function SearchForm({
   data,
@@ -126,28 +162,7 @@ export function SearchForm({
                 </SelectContent>
               </Select>
             </div>
-            <div className="flex gap-2 items-center">
-              <Label>Year Filter</Label>
-              <Select
-                name="yearFilter"
-                defaultValue={data?.yearFilter || "all"}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Year" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All Years</SelectItem>
-                  {Array.from(
-                    { length: new Date().getFullYear() - 2009 + 1 },
-                    (_, i) => new Date().getFullYear() - i
-                  ).map((year) => (
-                    <SelectItem key={year} value={year.toString()}>
-                      {year}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <YearFilter defaultValue={data?.yearFilter || "all"} />
           </div>
           <Button type="submit" disabled={isLoading}>
             {isLoading ? "Searching..." : "Search Videos"}
