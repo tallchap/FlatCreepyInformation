@@ -5,7 +5,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import { useActionState, useEffect } from "react";
 import { toast } from "sonner";
 import { Loader } from "../loader";
@@ -62,19 +61,7 @@ export function SingleForm() {
               Enter the name of the main speaker (or most relevant person)
             </span>
           </div>
-          <div className="flex justify-between items-center gap-2 rounded-lg border p-3">
-            <div className="flex flex-col gap-2">
-              <Label htmlFor="store_in_bigquery">Store in Database</Label>
-              <p className="text-sm text-gray-500">
-                Save transcript to searchable database
-              </p>
-            </div>
-            <Switch
-              id="store_in_bigquery"
-              name="store_in_bigquery"
-              defaultChecked={true}
-            />
-          </div>
+          <input type="hidden" name="store_in_bigquery" value="on" />
           <Button type="submit">Process Video</Button>
         </form>
       </CardContent>

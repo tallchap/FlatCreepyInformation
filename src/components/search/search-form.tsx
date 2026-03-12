@@ -69,29 +69,31 @@ export function SearchForm({
               <SearchQueryInfo />
             </div>
           </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="speakerQuery">
-              Search by Speaker{" "}
-              <span className="text-xs text-gray-500">(Optional)</span>
-            </Label>
-            <Input
-              id="speakerQuery"
-              name="speakerQuery"
-              defaultValue={data?.speakerQuery || ""}
-              placeholder="Enter speaker name..."
-            />
-          </div>
-          <div className="flex flex-col gap-2">
-            <Label htmlFor="channelQuery">
-              Search by Channel{" "}
-              <span className="text-xs text-gray-500">(Optional)</span>
-            </Label>
-            <Input
-              id="channelQuery"
-              name="channelQuery"
-              defaultValue={data?.channelQuery || ""}
-              placeholder="Enter channel name..."
-            />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="speakerQuery">
+                Speaker{" "}
+                <span className="text-xs text-gray-500">(Optional)</span>
+              </Label>
+              <Input
+                id="speakerQuery"
+                name="speakerQuery"
+                defaultValue={data?.speakerQuery || ""}
+                placeholder="Enter speaker name..."
+              />
+            </div>
+            <div className="flex flex-col gap-2">
+              <Label htmlFor="channelQuery">
+                Channel{" "}
+                <span className="text-xs text-gray-500">(Optional)</span>
+              </Label>
+              <Input
+                id="channelQuery"
+                name="channelQuery"
+                defaultValue={data?.channelQuery || ""}
+                placeholder="Enter channel name..."
+              />
+            </div>
           </div>
           <div className="flex gap-4 flex-col md:flex-row md:items-center">
             <div className="flex gap-2 items-center">
