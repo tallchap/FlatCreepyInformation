@@ -30,6 +30,8 @@ import * as fs from "fs";
 const DRY_RUN = process.argv.includes("--dry-run");
 const LIMIT_FLAG = process.argv.indexOf("--limit");
 const SPEAKER_LIMIT = LIMIT_FLAG >= 0 ? Number(process.argv[LIMIT_FLAG + 1]) : Infinity;
+const OFFSET_FLAG = process.argv.indexOf("--offset");
+const SPEAKER_OFFSET = OFFSET_FLAG >= 0 ? Number(process.argv[OFFSET_FLAG + 1]) : 0;
 const STORE_FLAG = process.argv.indexOf("--store");
 const EXISTING_STORE_ID = STORE_FLAG >= 0 ? process.argv[STORE_FLAG + 1] : null;
 
@@ -100,7 +102,7 @@ interface TranscriptSegment {
 
 // ── BigQuery queries ────────────────────────────────────────────────────
 
-async function fetchAllSpeakersAlpha(limit: number): Promise<string[]> {
+async function fetchAllSpeakersAlpha(limit: number, offset: number): Promise<string[]> {
   const [rows] = await bigQuery.query({
     query: `
       SELECT TRIM(speaker) AS name
@@ -108,10 +110,11 @@ async function fetchAllSpeakersAlpha(limit: number): Promise<string[]> {
       WHERE TRIM(speaker) != ""
       GROUP BY name
       ORDER BY name ASC
-      ${limit < Infinity ? `LIMIT ${limit}` : ""}
+      ${limit < Infinity ? `LIMIT ${limit + offset}` : ""}
     `,
   });
-  return rows.map((r: any) => String(r.name));
+  const all = rows.map((r: any) => String(r.name));
+  return offset > 0 ? all.slice(offset) : all;
 }
 
 async function fetchVideosForSpeakers(speakers: string[]): Promise<VideoRow[]> {
@@ -215,13 +218,13 @@ END OF TRANSCRIPT — Video ID: ${videoId} — Title: ${title}`;
 async function main() {
   console.log(`\n${"=".repeat(60)}`);
   console.log(DRY_RUN ? "  DRY RUN — no files will be uploaded" : "  LIVE RUN — uploading to OpenAI");
-  console.log(`  Speaker limit: ${SPEAKER_LIMIT < Infinity ? SPEAKER_LIMIT : "ALL"}`);
+  console.log(`  Speaker offset: ${SPEAKER_OFFSET}, limit: ${SPEAKER_LIMIT < Infinity ? SPEAKER_LIMIT : "ALL"}`);
   if (EXISTING_STORE_ID) console.log(`  Resuming into store: ${EXISTING_STORE_ID}`);
   console.log(`${"=".repeat(60)}\n`);
 
   // 1. Get speakers
   console.log("Fetching speakers...");
-  const speakers = await fetchAllSpeakersAlpha(SPEAKER_LIMIT);
+  const speakers = await fetchAllSpeakersAlpha(SPEAKER_LIMIT, SPEAKER_OFFSET);
   console.log(`Found ${speakers.length} speakers`);
 
   // 2. Fetch all videos for these speakers
@@ -444,18 +447,23 @@ async function main() {
 
   console.log(`Attributes: ${attrOk} ok, ${attrErr} errors`);
 
-  // 8. Save citation map
-  const citationMap: Record<string, { videoId: string; speaker: string; title: string }> = {};
+  // 8. Save citation map (merge with existing)
+  const outPath = path.resolve(__dirname, "../src/lib/shared-store-citation-map.json");
+  let existingFiles: Record<string, { videoId: string; speaker: string; title: string }> = {};
+  try {
+    const existing = JSON.parse(fs.readFileSync(outPath, "utf-8"));
+    existingFiles = existing.files || {};
+  } catch { /* no existing file */ }
+
   for (const { fileId, entry } of uploadedFiles) {
-    citationMap[fileId] = {
+    existingFiles[fileId] = {
       videoId: entry.videoId,
       speaker: entry.speaker,
       title: entry.title,
     };
   }
 
-  const outPath = path.resolve(__dirname, "../src/lib/shared-store-citation-map.json");
-  fs.writeFileSync(outPath, JSON.stringify({ vectorStoreId, files: citationMap }, null, 2));
+  fs.writeFileSync(outPath, JSON.stringify({ vectorStoreId, files: existingFiles }, null, 2));
 
   // 9. Summary
   console.log(`\n${"=".repeat(60)}`);
