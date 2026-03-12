@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, useMemo } from "react";
 
 interface TimelineProps {
-  duration: number; // total seconds
+  duration: number;
   startSec: number;
   endSec: number;
   playheadSec: number;
@@ -29,17 +29,35 @@ export function Timeline({
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<"start" | "end" | "playhead" | null>(null);
+  const [zoom, setZoom] = useState(1);
+  const [panCenter, setPanCenter] = useState<number | null>(null);
 
-  const pctOf = (sec: number) => (duration > 0 ? (sec / duration) * 100 : 0);
+  // Visible window
+  const visibleDuration = duration / zoom;
+  const center = panCenter ?? (startSec + endSec) / 2;
+  const visibleStart = Math.max(0, Math.min(duration - visibleDuration, center - visibleDuration / 2));
+  const visibleEnd = visibleStart + visibleDuration;
+
+  // Position as percentage within the visible window
+  const pctOf = useCallback(
+    (sec: number) => {
+      if (visibleDuration <= 0) return 0;
+      return ((sec - visibleStart) / visibleDuration) * 100;
+    },
+    [visibleStart, visibleDuration],
+  );
+
+  // Clamp percentage to [0, 100]
+  const clampPct = (pct: number) => Math.max(0, Math.min(100, pct));
 
   const secFromX = useCallback(
     (clientX: number) => {
       if (!trackRef.current || duration <= 0) return 0;
       const rect = trackRef.current.getBoundingClientRect();
       const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-      return Math.round(pct * duration);
+      return Math.round(visibleStart + pct * visibleDuration);
     },
-    [duration],
+    [duration, visibleStart, visibleDuration],
   );
 
   const handlePointerDown = (handle: "start" | "end") => (e: React.PointerEvent) => {
@@ -57,7 +75,7 @@ export function Timeline({
     } else if (dragging === "end") {
       onEndChange(Math.max(sec, startSec + 1));
     } else if (dragging === "playhead") {
-      onSeek(sec);
+      onSeek(Math.max(0, Math.min(duration, sec)));
     }
   };
 
@@ -66,25 +84,61 @@ export function Timeline({
   const handleTrackClick = (e: React.MouseEvent) => {
     if (dragging) return;
     const sec = secFromX(e.clientX);
-    onSeek(sec);
+    onSeek(Math.max(0, Math.min(duration, sec)));
   };
 
   const handleTrackPointerDown = (e: React.PointerEvent) => {
-    // If clicking empty track (not a handle), start playhead drag
     if ((e.target as HTMLElement).dataset.handle) return;
     setDragging("playhead");
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
 
-  // Generate waveform bars (decorative) — stable via ref
+  // Wheel to pan when zoomed
+  const handleWheel = (e: React.WheelEvent) => {
+    if (zoom <= 1) return;
+    e.preventDefault();
+    const delta = (e.deltaX || e.deltaY) * (visibleDuration / 500);
+    const newCenter = Math.max(
+      visibleDuration / 2,
+      Math.min(duration - visibleDuration / 2, (panCenter ?? center) + delta),
+    );
+    setPanCenter(newCenter);
+  };
+
+  // Zoom changes
+  const handleZoomChange = (newZoom: number) => {
+    const clamped = Math.max(1, Math.min(20, newZoom));
+    if (clamped === 1) {
+      setPanCenter(null);
+    } else if (panCenter === null) {
+      setPanCenter((startSec + endSec) / 2);
+    }
+    setZoom(clamped);
+  };
+
+  // Stable waveform bars
   const barsRef = useRef(Array.from({ length: 120 }, () => 8 + Math.random() * 30));
   const bars = barsRef.current;
 
-  // Time axis labels
+  // Time axis labels for visible window
   const ticks = 5;
-  const tickLabels = Array.from({ length: ticks }, (_, i) =>
-    formatTime((duration / (ticks - 1)) * i),
+  const tickLabels = useMemo(
+    () =>
+      Array.from({ length: ticks }, (_, i) =>
+        formatTime(visibleStart + (visibleDuration / (ticks - 1)) * i),
+      ),
+    [visibleStart, visibleDuration, ticks],
   );
+
+  // Check if elements are in visible range
+  const isVisible = (sec: number) => sec >= visibleStart && sec <= visibleEnd;
+  const startVisible = isVisible(startSec);
+  const endVisible = isVisible(endSec);
+
+  // Region rendering: clamp to visible window
+  const regionLeft = clampPct(pctOf(startSec));
+  const regionRight = clampPct(pctOf(endSec));
+  const regionWidth = Math.max(0, regionRight - regionLeft);
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
@@ -92,25 +146,51 @@ export function Timeline({
         <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
           Timeline
         </span>
-        <span className="text-xs text-gray-400">
-          Total: {formatTime(duration)}
-        </span>
+        <div className="flex items-center gap-3">
+          {/* Zoom controls */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handleZoomChange(zoom - 1)}
+              disabled={zoom <= 1}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              -
+            </button>
+            <span className="text-xs text-gray-500 w-8 text-center font-mono">
+              {zoom}x
+            </span>
+            <button
+              onClick={() => handleZoomChange(zoom + 1)}
+              disabled={zoom >= 20}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              +
+            </button>
+          </div>
+          <span className="text-xs text-gray-400">
+            Total: {formatTime(duration)}
+          </span>
+        </div>
       </div>
 
       <div className="relative pt-7 pb-2">
         {/* Time labels above handles */}
-        <div
-          className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded"
-          style={{ left: `${pctOf(startSec)}%`, transform: "translateX(-50%)" }}
-        >
-          {formatTime(startSec)}
-        </div>
-        <div
-          className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded"
-          style={{ left: `${pctOf(endSec)}%`, transform: "translateX(-50%)" }}
-        >
-          {formatTime(endSec)}
-        </div>
+        {startVisible && (
+          <div
+            className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30"
+            style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
+          >
+            {formatTime(startSec)}
+          </div>
+        )}
+        {endVisible && (
+          <div
+            className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30"
+            style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
+          >
+            {formatTime(endSec)}
+          </div>
+        )}
 
         {/* Track */}
         <div
@@ -120,6 +200,7 @@ export function Timeline({
           onPointerDown={handleTrackPointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
+          onWheel={handleWheel}
         >
           {/* Waveform bars */}
           <div className="absolute inset-0 flex items-center gap-[1px] px-2 overflow-hidden rounded-lg">
@@ -133,22 +214,24 @@ export function Timeline({
           </div>
 
           {/* Selected region */}
-          <div
-            className="absolute top-0 bottom-0 bg-[#99cc66]/25 border-l-[3px] border-l-[#99cc66] border-r-[3px] border-r-red-500"
-            style={{
-              left: `${pctOf(startSec)}%`,
-              width: `${pctOf(endSec) - pctOf(startSec)}%`,
-            }}
-          />
+          {regionWidth > 0 && (
+            <div
+              className="absolute top-0 bottom-0 bg-[#99cc66]/25"
+              style={{
+                left: `${regionLeft}%`,
+                width: `${regionWidth}%`,
+                borderLeft: startVisible ? "3px solid #99cc66" : undefined,
+                borderRight: endVisible ? "3px solid #ef4444" : undefined,
+              }}
+            />
+          )}
 
           {/* Playhead */}
           <div
             className="absolute top-[-6px] bottom-[-6px] z-20 pointer-events-none"
-            style={{ left: `${pctOf(playheadSec)}%`, transform: "translateX(-50%)" }}
+            style={{ left: `${clampPct(pctOf(playheadSec))}%`, transform: "translateX(-50%)" }}
           >
-            {/* Line */}
             <div className="absolute left-1/2 -translate-x-1/2 top-[6px] bottom-[6px] w-[2px] bg-white shadow-[0_0_3px_rgba(0,0,0,0.5)]" />
-            {/* Triangle head */}
             <div
               className="absolute left-1/2 -translate-x-1/2 top-0 w-0 h-0"
               style={{
@@ -161,24 +244,28 @@ export function Timeline({
           </div>
 
           {/* Start handle */}
-          <div
-            data-handle="start"
-            className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-[#99cc66] rounded cursor-ew-resize z-10 flex items-center justify-center"
-            style={{ left: `${pctOf(startSec)}%`, transform: "translateX(-50%)" }}
-            onPointerDown={handlePointerDown("start")}
-          >
-            <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
-          </div>
+          {startVisible && (
+            <div
+              data-handle="start"
+              className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-[#99cc66] rounded cursor-ew-resize z-10 flex items-center justify-center"
+              style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
+              onPointerDown={handlePointerDown("start")}
+            >
+              <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
+            </div>
+          )}
 
           {/* End handle */}
-          <div
-            data-handle="end"
-            className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-red-500 rounded cursor-ew-resize z-10 flex items-center justify-center"
-            style={{ left: `${pctOf(endSec)}%`, transform: "translateX(-50%)" }}
-            onPointerDown={handlePointerDown("end")}
-          >
-            <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
-          </div>
+          {endVisible && (
+            <div
+              data-handle="end"
+              className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-red-500 rounded cursor-ew-resize z-10 flex items-center justify-center"
+              style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
+              onPointerDown={handlePointerDown("end")}
+            >
+              <div className="w-0.5 h-4 bg-white/80 rounded pointer-events-none" />
+            </div>
+          )}
         </div>
 
         {/* Time axis */}
@@ -187,6 +274,28 @@ export function Timeline({
             <span key={i}>{t}</span>
           ))}
         </div>
+
+        {/* Zoom minimap - shows full timeline with viewport indicator when zoomed */}
+        {zoom > 1 && (
+          <div className="mt-2 relative h-2 bg-gray-200 rounded-full overflow-hidden">
+            {/* Selection region on minimap */}
+            <div
+              className="absolute top-0 bottom-0 bg-[#99cc66]/40"
+              style={{
+                left: `${(startSec / duration) * 100}%`,
+                width: `${((endSec - startSec) / duration) * 100}%`,
+              }}
+            />
+            {/* Viewport indicator */}
+            <div
+              className="absolute top-0 bottom-0 border border-gray-500 rounded-full bg-white/30"
+              style={{
+                left: `${(visibleStart / duration) * 100}%`,
+                width: `${(visibleDuration / duration) * 100}%`,
+              }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

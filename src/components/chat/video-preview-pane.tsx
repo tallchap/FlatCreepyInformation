@@ -52,7 +52,8 @@ export function VideoPreviewPane({ videoId, startSec, title }: Props) {
         <div className="pt-2 border-t border-gray-100">
           <Link
             href={`/edit?v=${videoId}`}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-600 bg-gray-100 rounded-md hover:bg-gray-200 transition-colors"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-md transition-colors"
+            style={{ backgroundColor: "#DC2626" }}
           >
             Clip Video
           </Link>

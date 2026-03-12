@@ -285,24 +285,24 @@ export function ClipEditor() {
       </div>
 
       {/* URL Input */}
-      <div className="flex gap-2">
+      <div>
         <input
           type="text"
-          placeholder="Paste YouTube URL or video ID..."
+          placeholder="Paste YouTube URL or video ID and press Enter..."
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && handleLoad()}
-          className="flex-1 rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
+          onPaste={(e) => {
+            const pasted = e.clipboardData.getData("text");
+            if (extractVideoId(pasted)) {
+              e.preventDefault();
+              setUrl(pasted);
+              const id = extractVideoId(pasted);
+              if (id) { setVideoId(id); setExportError(null); }
+            }
+          }}
+          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
         />
-        <button
-          onClick={handleLoad}
-          className={`${btnClass} px-5 py-2.5`}
-          style={{ backgroundColor: DINO_RED }}
-          onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-          onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-        >
-          Load
-        </button>
       </div>
 
       {videoId && (
