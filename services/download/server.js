@@ -93,7 +93,7 @@ function execCapture(cmd, args, opts = {}) {
 }
 
 // Retry yt-dlp with different proxies on bot-detection errors
-async function execYtdlpWithRetry(args, opts = {}, maxRetries = 3) {
+async function execYtdlpWithRetry(args, opts = {}, maxRetries = 5) {
   let lastError;
   for (let attempt = 0; attempt < maxRetries; attempt++) {
     const proxy = getNextProxy();
@@ -105,7 +105,7 @@ async function execYtdlpWithRetry(args, opts = {}, maxRetries = 3) {
     } catch (e) {
       lastError = e;
       const stderr = e.stderr || "";
-      if (stderr.includes("Sign in to confirm") || stderr.includes("bot")) {
+      if (stderr.includes("Sign in to confirm") || stderr.includes("bot") || stderr.includes("page needs to be reloaded") || stderr.includes("HTTP Error 403") || stderr.includes("HTTP Error 429")) {
         console.log(`[yt-dlp] Proxy ${proxyLabel} blocked by YouTube, trying next...`);
         continue;
       }
