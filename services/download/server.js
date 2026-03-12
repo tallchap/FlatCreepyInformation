@@ -17,6 +17,10 @@ function proxyArgs() {
   return PROXY_URL ? ["--proxy", PROXY_URL] : [];
 }
 
+function jsArgs() {
+  return ["--js-runtimes", "node"];
+}
+
 function execCapture(cmd, args, opts = {}) {
   return new Promise((resolve, reject) => {
     const proc = execFile(cmd, args, opts, (error) => {
@@ -42,7 +46,7 @@ app.post("/download", async (req, res) => {
   try {
     await execCapture(
       "yt-dlp",
-      [...proxyArgs(), url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
+      [...jsArgs(), ...proxyArgs(), url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
       { timeout: 300_000 }
     );
 
@@ -91,7 +95,7 @@ app.post("/clip", async (req, res) => {
       await execCapture(
         "yt-dlp",
         [
-          ...proxyArgs(),
+          ...jsArgs(), ...proxyArgs(),
           url, "-f", fmt,
           "--download-sections", `*${startSec}-${endSec}`,
           "--force-keyframes-at-cuts",
@@ -107,7 +111,7 @@ app.post("/clip", async (req, res) => {
       // Fallback: full download + ffmpeg trim
       await execCapture(
         "yt-dlp",
-        [...proxyArgs(), url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
+        [...jsArgs(), ...proxyArgs(), url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
         { timeout: 300_000 }
       );
 
