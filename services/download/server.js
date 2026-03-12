@@ -12,19 +12,34 @@ app.use(express.json());
 
 const DEMO_URL = "https://www.youtube.com/watch?v=EYg3fmaycZA";
 
+function execCapture(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = execFile(cmd, args, opts, (error) => {
+      if (error) {
+        error.stderr = stderrChunks.join("");
+        error.stdout = stdoutChunks.join("");
+        reject(error);
+      } else {
+        resolve({ stdout: stdoutChunks.join(""), stderr: stderrChunks.join("") });
+      }
+    });
+    const stderrChunks = [];
+    const stdoutChunks = [];
+    if (proc.stderr) proc.stderr.on("data", (d) => stderrChunks.push(d.toString()));
+    if (proc.stdout) proc.stdout.on("data", (d) => stdoutChunks.push(d.toString()));
+  });
+}
+
 app.post("/download", async (req, res) => {
   const url = req.body.url || DEMO_URL;
   const outfile = join(tmpdir(), `video-${crypto.randomUUID()}.mp4`);
 
   try {
-    await new Promise((resolve, reject) => {
-      const proc = execFile(
-        "yt-dlp",
-        [url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
-        { timeout: 300_000 },
-        (error) => (error ? reject(error) : resolve())
-      );
-    });
+    await execCapture(
+      "yt-dlp",
+      [url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
+      { timeout: 300_000 }
+    );
 
     const data = await readFile(outfile);
     await unlink(outfile).catch(() => {});
@@ -37,8 +52,9 @@ app.post("/download", async (req, res) => {
     res.send(data);
   } catch (error) {
     await unlink(outfile).catch(() => {});
-    console.error("Download error:", error);
-    res.status(500).json({ error: "Failed to download video" });
+    const detail = error.stderr || error.message || "Unknown error";
+    console.error("Download error:", detail);
+    res.status(500).json({ error: `Failed to download video: ${detail}` });
   }
 });
 
@@ -55,8 +71,8 @@ app.post("/clip", async (req, res) => {
   }
 
   const uid = crypto.randomUUID();
-  const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
   const clipFile = join(tmpdir(), `clip-${uid}.mp4`);
+  const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
 
   // Quality-based format selection
   const fmt = quality === "1080p"
@@ -64,19 +80,32 @@ app.post("/clip", async (req, res) => {
     : "bestvideo[height<=720]+bestaudio/best[height<=720]";
 
   try {
-    // Step 1: Download with yt-dlp
-    await new Promise((resolve, reject) => {
-      execFile(
+    // Try optimized path: yt-dlp --download-sections to grab only the clip portion
+    let usedFallback = false;
+    try {
+      await execCapture(
+        "yt-dlp",
+        [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4",
+          "-o", clipFile,
+        ],
+        { timeout: 300_000 }
+      );
+    } catch (sectionsErr) {
+      console.log("--download-sections failed, falling back to full download:", sectionsErr.stderr?.slice(0, 500));
+      usedFallback = true;
+
+      // Fallback: full download + ffmpeg trim
+      await execCapture(
         "yt-dlp",
         [url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
-        { timeout: 300_000 },
-        (error) => (error ? reject(error) : resolve())
+        { timeout: 300_000 }
       );
-    });
 
-    // Step 2: Trim with ffmpeg (stream copy for speed)
-    await new Promise((resolve, reject) => {
-      execFile(
+      await execCapture(
         "ffmpeg",
         [
           "-i", rawFile,
@@ -86,14 +115,13 @@ app.post("/clip", async (req, res) => {
           "-movflags", "+faststart",
           clipFile,
         ],
-        { timeout: 120_000 },
-        (error) => (error ? reject(error) : resolve())
+        { timeout: 120_000 }
       );
-    });
+    }
 
     const data = await readFile(clipFile);
-    await unlink(rawFile).catch(() => {});
     await unlink(clipFile).catch(() => {});
+    if (usedFallback) await unlink(rawFile).catch(() => {});
 
     res.set({
       "Content-Type": "video/mp4",
@@ -102,11 +130,29 @@ app.post("/clip", async (req, res) => {
     });
     res.send(data);
   } catch (error) {
-    await unlink(rawFile).catch(() => {});
     await unlink(clipFile).catch(() => {});
-    console.error("Clip error:", error);
-    res.status(500).json({ error: "Failed to create clip" });
+    await unlink(rawFile).catch(() => {});
+    const detail = error.stderr || error.message || "Unknown error";
+    console.error("Clip error:", detail);
+    res.status(500).json({ error: `Failed to create clip: ${detail}` });
   }
+});
+
+app.get("/debug", async (_req, res) => {
+  const results = {};
+  try {
+    const ytdlp = await execCapture("yt-dlp", ["--version"], { timeout: 10_000 });
+    results.ytdlp = ytdlp.stdout.trim();
+  } catch (e) {
+    results.ytdlp = `ERROR: ${e.stderr || e.message}`;
+  }
+  try {
+    const ffmpeg = await execCapture("ffmpeg", ["-version"], { timeout: 10_000 });
+    results.ffmpeg = ffmpeg.stdout.split("\n")[0];
+  } catch (e) {
+    results.ffmpeg = `ERROR: ${e.stderr || e.message}`;
+  }
+  res.json(results);
 });
 
 app.get("/health", (_req, res) => {
