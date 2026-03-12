@@ -8,6 +8,7 @@ import OpenAI from "openai";
 import { resolveSpeaker, stripDiacritics, slugify } from "@/lib/speakers";
 import { fetchTranscript, fetchVideoMeta, fetchSpeakerFilterContext } from "@/lib/bigquery";
 import citationMap from "@/lib/file-citation-map.json";
+import sharedCitationMap from "@/lib/shared-store-citation-map.json";
 
 let _openai: OpenAI | null = null;
 function getOpenAI() {
@@ -35,6 +36,11 @@ for (const speaker of Object.values(citationMap)) {
   for (const [fileId, meta] of Object.entries(files)) {
     FILE_ID_LOOKUP[fileId] = meta;
   }
+}
+// Merge shared store citation map
+const sharedFiles = (sharedCitationMap as { files: Record<string, { videoId: string; speaker: string; title: string }> }).files;
+for (const [fileId, meta] of Object.entries(sharedFiles)) {
+  FILE_ID_LOOKUP[fileId] = { videoId: meta.videoId, title: meta.title };
 }
 
 function parseDurationToSeconds(raw: string | null | undefined): number | undefined {
@@ -578,18 +584,9 @@ async function resolveCitations(
     let title: string | undefined;
 
     if (ann.filename) {
-      const match = ann.filename.match(/^transcript_([^_]+(?:_[^_]+)?)(?:_[a-z][-a-z0-9]*)?\.txt$/);
-      if (match) {
-        // For shared store files: transcript_{VIDEOID}_{speakerslug}.txt
-        // Video IDs can contain hyphens but speaker slugs are lowercase alpha+hyphens
-        // Try the attributes first, fall back to regex
-        videoId = match[1];
-      }
-      // Simpler fallback: just strip "transcript_" prefix and ".txt" suffix, take first 11 chars
-      if (!videoId) {
-        const simple = ann.filename.match(/^transcript_(.{11})/);
-        if (simple) videoId = simple[1];
-      }
+      // YouTube video IDs are always exactly 11 characters
+      const match = ann.filename.match(/^transcript_(.{11})/);
+      if (match) videoId = match[1];
     }
 
     // Try file attributes
