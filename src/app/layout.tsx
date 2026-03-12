@@ -5,6 +5,7 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/sonner";
 import { Navbar } from "@/components/navbar";
+import { ClientProviders } from "@/components/client-providers";
 
 const geistSans = Geist({ variable: "--font-geist-sans", subsets: ["latin"] });
 const geistMono = Geist_Mono({
@@ -49,12 +50,14 @@ export default function RootLayout({
           />
         </noscript>
 
-        <Navbar />
-        <main className="p-4">{children}</main>
-        <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
-          v{process.env.BUILD_VERSION || "dev"}
-        </footer>
-        <Toaster />
+        <ClientProviders>
+          <Navbar />
+          <main className="p-4">{children}</main>
+          <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
+            v{process.env.BUILD_VERSION || "dev"}
+          </footer>
+          <Toaster />
+        </ClientProviders>
       </body>
     </html>
   );

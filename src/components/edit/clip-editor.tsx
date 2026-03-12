@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Timeline } from "./timeline";
 import { TranscriptPanel } from "./transcript-panel";
-import { DownloadHistory, type DownloadRecord } from "./download-history";
+import { useDownload } from "@/lib/download-context";
 
 type Quality = "720p" | "1080p";
 
@@ -35,9 +35,7 @@ export function ClipEditor() {
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [quality, setQuality] = useState<Quality>("720p");
-  const [exporting, setExporting] = useState(false);
-  const [exportError, setExportError] = useState<string | null>(null);
-  const [history, setHistory] = useState<DownloadRecord[]>([]);
+  const { startDownload, hasActive: exporting } = useDownload();
   const playerRef = useRef<any>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -53,19 +51,6 @@ export function ClipEditor() {
       if (id) setVideoId(id);
     }
   }, []);
-
-  // Load history from localStorage
-  useEffect(() => {
-    try {
-      const saved = localStorage.getItem("clip-history");
-      if (saved) setHistory(JSON.parse(saved));
-    } catch {}
-  }, []);
-
-  const saveHistory = (records: DownloadRecord[]) => {
-    setHistory(records);
-    localStorage.setItem("clip-history", JSON.stringify(records));
-  };
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -154,10 +139,7 @@ export function ClipEditor() {
 
   const handleLoad = () => {
     const id = extractVideoId(url);
-    if (id) {
-      setVideoId(id);
-      setExportError(null);
-    }
+    if (id) setVideoId(id);
   };
 
   const clipDuration = endSec - startSec;
@@ -231,51 +213,10 @@ export function ClipEditor() {
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
 
-  const handleExport = async () => {
+  const handleExport = () => {
     if (!videoId || clipTooLong) return;
-    setExporting(true);
-    setExportError(null);
-
-    try {
-      const resp = await fetch("/api/clip", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          startSec,
-          endSec,
-          quality,
-        }),
-      });
-
-      if (!resp.ok) {
-        const err = await resp.json().catch(() => ({ error: "Export failed" }));
-        throw new Error(err.error || "Export failed");
-      }
-
-      const blob = await resp.blob();
-      const a = document.createElement("a");
-      a.href = URL.createObjectURL(blob);
-      a.download = `clip-${videoId}-${startSec}-${endSec}.mp4`;
-      a.click();
-      URL.revokeObjectURL(a.href);
-
-      const title = playerRef.current?.getVideoData?.()?.title || videoId;
-      const record: DownloadRecord = {
-        id: crypto.randomUUID(),
-        videoId,
-        title,
-        startSec,
-        endSec,
-        quality,
-        date: new Date().toISOString(),
-      };
-      saveHistory([record, ...history]);
-    } catch (err: any) {
-      setExportError(err.message);
-    } finally {
-      setExporting(false);
-    }
+    const title = playerRef.current?.getVideoData?.()?.title || videoId;
+    startDownload({ videoId, title, startSec, endSec, quality });
   };
 
   const btnClass = `px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed`;
@@ -304,7 +245,7 @@ export function ClipEditor() {
               e.preventDefault();
               setUrl(pasted);
               const id = extractVideoId(pasted);
-              if (id) { setVideoId(id); setExportError(null); }
+              if (id) setVideoId(id);
             }
           }}
           className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
@@ -428,15 +369,7 @@ export function ClipEditor() {
               </button>
             </div>
 
-            {exportError && (
-              <p className="mt-3 text-sm text-red-600">{exportError}</p>
-            )}
           </div>
-
-          {/* Download History */}
-          {history.length > 0 && (
-            <DownloadHistory records={history} onClear={() => saveHistory([])} />
-          )}
         </>
       )}
     </div>
