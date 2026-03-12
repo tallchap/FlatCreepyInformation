@@ -17,8 +17,11 @@ function proxyArgs() {
   return PROXY_URL ? ["--proxy", PROXY_URL] : [];
 }
 
-function jsArgs() {
-  return ["--js-runtimes", "node"];
+function ytdlpBaseArgs() {
+  return [
+    "--js-runtimes", "node",
+    "--extractor-args", "youtube:player-client=mweb",
+  ];
 }
 
 function execCapture(cmd, args, opts = {}) {
@@ -46,7 +49,7 @@ app.post("/download", async (req, res) => {
   try {
     await execCapture(
       "yt-dlp",
-      [...jsArgs(), ...proxyArgs(), url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
+      [...ytdlpBaseArgs(), ...proxyArgs(), url, "-f", "bestvideo*+bestaudio/best", "-o", outfile],
       { timeout: 300_000 }
     );
 
@@ -95,7 +98,7 @@ app.post("/clip", async (req, res) => {
       await execCapture(
         "yt-dlp",
         [
-          ...jsArgs(), ...proxyArgs(),
+          ...ytdlpBaseArgs(), ...proxyArgs(),
           url, "-f", fmt,
           "--download-sections", `*${startSec}-${endSec}`,
           "--force-keyframes-at-cuts",
@@ -111,7 +114,7 @@ app.post("/clip", async (req, res) => {
       // Fallback: full download + ffmpeg trim
       await execCapture(
         "yt-dlp",
-        [...jsArgs(), ...proxyArgs(), url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
+        [...ytdlpBaseArgs(), ...proxyArgs(), url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
         { timeout: 300_000 }
       );
 
@@ -161,6 +164,31 @@ app.get("/debug", async (_req, res) => {
     results.ffmpeg = ffmpeg.stdout.split("\n")[0];
   } catch (e) {
     results.ffmpeg = `ERROR: ${e.stderr || e.message}`;
+  }
+  // Check if bgutil PO token server is reachable
+  try {
+    const http = require("http");
+    const potCheck = await new Promise((resolve, reject) => {
+      const req = http.get("http://127.0.0.1:4416/", { timeout: 3000 }, (r) => {
+        let body = "";
+        r.on("data", (d) => body += d);
+        r.on("end", () => resolve({ status: r.statusCode, body: body.slice(0, 200) }));
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+    });
+    results.bgutil_pot_server = potCheck;
+  } catch (e) {
+    results.bgutil_pot_server = `ERROR: ${e.message}`;
+  }
+  // Check yt-dlp plugin detection
+  try {
+    const verbose = await execCapture("yt-dlp", ["-v", "--skip-download", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"], { timeout: 15_000 });
+    const potLine = (verbose.stderr + verbose.stdout).split("\n").find(l => l.includes("[pot] PO Token Providers"));
+    results.pot_providers = potLine ? potLine.trim() : "not found in output";
+  } catch (e) {
+    const potLine = (e.stderr || "").split("\n").find(l => l.includes("[pot] PO Token Providers"));
+    results.pot_providers = potLine ? potLine.trim() : `check failed: ${(e.stderr || e.message).slice(0, 200)}`;
   }
   res.json(results);
 });
