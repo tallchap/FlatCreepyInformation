@@ -29,12 +29,8 @@ RUN curl -L https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_linux_am
 RUN curl -L https://github.com/pufferffish/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz \
     | tar xz -C /usr/local/bin wireproxy && chmod a+rx /usr/local/bin/wireproxy
 
-# Generate WARP account at build time
-RUN cd /tmp && wgcf register --accept-tos && wgcf generate && \
-    mv wgcf-profile.conf /etc/wireproxy.conf
-
-# Append wireproxy SOCKS5 config
-RUN printf '\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' >> /etc/wireproxy.conf
+# WARP account generation happens at runtime (start.sh) since
+# build environment may have different network restrictions
 
 WORKDIR /app
 COPY package.json ./
