@@ -36,7 +36,7 @@ export function Timeline({
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<"start" | "end" | "playhead" | "minimap" | null>(null);
-  const [zoom, setZoom] = useState(1);
+  const [zoom, setZoom] = useState(5);
   const [panCenter, setPanCenter] = useState<number | null>(null);
 
   // Visible window
