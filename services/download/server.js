@@ -11,6 +11,21 @@ app.use(cors());
 app.use(express.json());
 
 const WARP_PROXY = "socks5://127.0.0.1:1080";
+let warpAvailable = false;
+
+// Check if WARP proxy is reachable at startup
+setTimeout(() => {
+  const net = require("net");
+  const sock = net.connect(1080, "127.0.0.1", () => {
+    sock.destroy();
+    warpAvailable = true;
+    console.log("WARP proxy detected on :1080 — will route yt-dlp through WARP");
+  });
+  sock.on("error", () => {
+    console.log("WARP proxy not available — yt-dlp will use direct connection");
+  });
+  sock.setTimeout(2000, () => { sock.destroy(); });
+}, 1000);
 
 const DEBUG_LOG_LIMIT = 200;
 const debugEvents = [];
@@ -52,14 +67,17 @@ function execCapture(cmd, args, opts = {}) {
 }
 
 function ytdlpBaseArgs() {
-  return [
-    "--proxy", WARP_PROXY,
+  const args = [
     "--extractor-args", "youtube:player_client=mweb,web_safari",
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
     "--retries", "10",
     "--retry-sleep", "5",
   ];
+  if (warpAvailable) {
+    args.unshift("--proxy", WARP_PROXY);
+  }
+  return args;
 }
 
 async function execYtdlp(args, opts = {}) {
@@ -193,7 +211,7 @@ app.post("/clip", async (req, res) => {
 });
 
 app.get("/debug", async (_req, res) => {
-  const results = { debug_events: debugEvents.length };
+  const results = { debug_events: debugEvents.length, warp_available: warpAvailable };
 
   // yt-dlp version
   try {
