@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Download Service Test GUI</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; max-width: 900px; margin: 0 auto; }
+  h1 { font-size: 18px; margin-bottom: 16px; color: #7dd3fc; }
+  label { font-size: 12px; color: #94a3b8; display: block; margin-bottom: 4px; }
+  input, select { background: #16213e; border: 1px solid #334155; color: #e0e0e0; padding: 8px 10px; border-radius: 6px; font-size: 14px; width: 100%; }
+  input:focus, select:focus { outline: none; border-color: #7dd3fc; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; align-items: end; }
+  .row > div { flex: 1; }
+  .row > div.wide { flex: 3; }
+  .row > div.narrow { flex: 0.7; }
+  button { background: #1e3a5f; border: 1px solid #334155; color: #7dd3fc; padding: 8px 16px; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 600; }
+  button:hover { background: #264573; }
+  button:disabled { opacity: 0.4; cursor: not-allowed; }
+  button.primary { background: #0f766e; border-color: #14b8a6; color: #ccfbf1; }
+  button.primary:hover { background: #115e59; }
+  .btn-row { display: flex; gap: 8px; margin-bottom: 16px; }
+  .panel { background: #0f172a; border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 16px; overflow: hidden; }
+  .panel-header { background: #1e293b; padding: 8px 12px; font-size: 12px; font-weight: 600; color: #94a3b8; display: flex; justify-content: space-between; align-items: center; }
+  .panel-body { padding: 12px; max-height: 300px; overflow-y: auto; }
+  .log-entry { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; padding: 6px 8px; border-bottom: 1px solid #1e293b; }
+  .log-entry:last-child { border-bottom: none; }
+  .log-req { color: #7dd3fc; }
+  .log-ok { color: #4ade80; }
+  .log-err { color: #f87171; }
+  .log-info { color: #fbbf24; }
+  .log-detail { color: #64748b; margin-top: 2px; white-space: pre-wrap; word-break: break-all; font-size: 11px; }
+  video { width: 100%; border-radius: 8px; background: #000; }
+  .status { font-size: 13px; padding: 8px 12px; border-radius: 6px; margin-bottom: 12px; }
+  .status.loading { background: #1e3a5f; color: #7dd3fc; }
+  .status.success { background: #052e16; color: #4ade80; }
+  .status.error { background: #450a0a; color: #f87171; }
+  .hidden { display: none; }
+  pre { font-size: 11px; white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+
+<h1>Download Service Test GUI</h1>
+
+<div class="row">
+  <div>
+    <label>Server</label>
+    <select id="server">
+      <option value="http://localhost:3002">localhost:3002</option>
+      <option value="http://localhost:3001">localhost:3001</option>
+      <option value="https://snippysaurus-download.onrender.com">Render (production)</option>
+    </select>
+  </div>
+</div>
+
+<div class="row">
+  <div class="wide">
+    <label>YouTube URL</label>
+    <input type="text" id="url" placeholder="https://www.youtube.com/watch?v=dQw4w9WgXcQ" value="https://www.youtube.com/watch?v=dQw4w9WgXcQ">
+  </div>
+</div>
+
+<div class="row">
+  <div class="narrow">
+    <label>Start (sec)</label>
+    <input type="number" id="startSec" value="10" step="0.1">
+  </div>
+  <div class="narrow">
+    <label>End (sec)</label>
+    <input type="number" id="endSec" value="25" step="0.1">
+  </div>
+  <div class="narrow">
+    <label>Quality</label>
+    <select id="quality">
+      <option value="720p">720p</option>
+      <option value="1080p">1080p</option>
+    </select>
+  </div>
+</div>
+
+<div class="btn-row">
+  <button class="primary" onclick="doClip()">Clip</button>
+  <button class="primary" onclick="doDownload()">Download Full</button>
+  <button onclick="doDebug()">Debug</button>
+  <button onclick="doLogs()">Logs</button>
+  <button onclick="doPlugins()">Plugins</button>
+  <button onclick="doBgutilTest()">Bgutil Test</button>
+  <button onclick="clearLog()">Clear</button>
+</div>
+
+<div id="statusBar" class="status hidden"></div>
+
+<div class="panel">
+  <div class="panel-header">
+    <span>Video Player</span>
+    <span id="videoInfo"></span>
+  </div>
+  <div class="panel-body" style="padding: 0;">
+    <video id="player" controls class="hidden"></video>
+    <div id="noVideo" style="padding: 40px; text-align: center; color: #475569; font-size: 13px;">No video loaded</div>
+  </div>
+</div>
+
+<div class="panel">
+  <div class="panel-header">
+    <span>API Log</span>
+    <span id="logCount">0 entries</span>
+  </div>
+  <div class="panel-body" id="logPanel">
+    <div style="color: #475569; font-size: 13px;">Waiting for requests...</div>
+  </div>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let logEntries = [];
+
+function getServer() { return $('server').value; }
+
+function setStatus(msg, type) {
+  const el = $('statusBar');
+  el.textContent = msg;
+  el.className = `status ${type}`;
+  el.classList.remove('hidden');
+}
+function clearStatus() { $('statusBar').classList.add('hidden'); }
+
+function addLog(type, text, detail) {
+  logEntries.unshift({ type, text, detail, ts: new Date().toLocaleTimeString() });
+  renderLog();
+}
+
+function renderLog() {
+  const panel = $('logPanel');
+  $('logCount').textContent = `${logEntries.length} entries`;
+  panel.innerHTML = logEntries.map(e => `
+    <div class="log-entry">
+      <div class="log-${e.type}">${e.ts} ${e.text}</div>
+      ${e.detail ? `<div class="log-detail">${escHtml(e.detail)}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+function clearLog() { logEntries = []; renderLog(); $('logPanel').innerHTML = '<div style="color:#475569;font-size:13px">Cleared</div>'; }
+
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+function fmt(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
+}
+
+async function apiCall(method, path, body) {
+  const url = getServer() + path;
+  const isBlob = path === '/clip' || path === '/download';
+  const bodyStr = body ? JSON.stringify(body) : null;
+
+  addLog('req', `${method} ${path}`, bodyStr);
+  setStatus(`${method} ${path}...`, 'loading');
+  const start = Date.now();
+
+  try {
+    const opts = { method, headers: {} };
+    if (body) {
+      opts.headers['Content-Type'] = 'application/json';
+      opts.body = bodyStr;
+    }
+    const res = await fetch(url, opts);
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+
+    if (isBlob && res.ok) {
+      const blob = await res.blob();
+      addLog('ok', `${res.status} ${elapsed}s ${fmt(blob.size)}`, `Content-Type: ${res.headers.get('content-type')}`);
+      setStatus(`Success: ${fmt(blob.size)} in ${elapsed}s`, 'success');
+      return { ok: true, blob };
+    } else {
+      const text = await res.text();
+      let detail = text;
+      try { detail = JSON.stringify(JSON.parse(text), null, 2); } catch {}
+      if (res.ok) {
+        addLog('ok', `${res.status} ${elapsed}s`, detail);
+        setStatus(`Success in ${elapsed}s`, 'success');
+      } else {
+        addLog('err', `${res.status} ${elapsed}s`, detail);
+        setStatus(`Error ${res.status}: ${text.slice(0, 200)}`, 'error');
+      }
+      return { ok: res.ok, data: detail };
+    }
+  } catch (e) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    addLog('err', `NETWORK ERROR ${elapsed}s`, e.message);
+    setStatus(`Network error: ${e.message}`, 'error');
+    return { ok: false, error: e.message };
+  }
+}
+
+function showVideo(blob) {
+  const player = $('player');
+  const old = player.src;
+  player.src = URL.createObjectURL(blob);
+  if (old) URL.revokeObjectURL(old);
+  player.classList.remove('hidden');
+  $('noVideo').classList.add('hidden');
+  $('videoInfo').textContent = fmt(blob.size);
+  player.play();
+}
+
+async function doClip() {
+  const res = await apiCall('POST', '/clip', {
+    url: $('url').value,
+    startSec: parseFloat($('startSec').value),
+    endSec: parseFloat($('endSec').value),
+    quality: $('quality').value,
+  });
+  if (res.ok && res.blob) showVideo(res.blob);
+}
+
+async function doDownload() {
+  const res = await apiCall('POST', '/download', {
+    url: $('url').value,
+    quality: $('quality').value,
+  });
+  if (res.ok && res.blob) showVideo(res.blob);
+}
+
+async function doDebug() { await apiCall('GET', '/debug'); }
+async function doLogs() { await apiCall('GET', '/debug/logs'); }
+async function doPlugins() { await apiCall('GET', '/debug/ytdlp-plugins'); }
+async function doBgutilTest() { await apiCall('GET', '/debug/bgutil-test'); }
+</script>
+
+</body>
+</html>

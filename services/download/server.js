@@ -109,10 +109,10 @@ function ytdlpBaseArgs() {
   const args = [];
   if (warpAvailable) {
     args.push("--proxy", WARP_PROXY);
+    // WARP triggers YouTube's SABR experiment on ANDROID_VR, hiding 720p+.
+    // iOS client is unaffected by SABR and has full format range.
+    args.push("--extractor-args", "youtube:player_client=ios,default");
   }
-  // No player_client override — let yt-dlp use its default fallback chain
-  // (web → web_safari → ANDROID_VR etc). Explicitly setting player_client
-  // prevents fallback and causes fatal errors.
   args.push(
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
@@ -196,24 +196,29 @@ app.post("/clip", async (req, res) => {
   const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
 
   try {
-    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p` });
+    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable });
 
-    // Primary: yt-dlp --download-sections (downloads only needed DASH segments)
-    let usedFallback = false;
-    try {
-      await execYtdlp(url, [
-        url, "-f", fmt,
-        "--download-sections", `*${startSec}-${endSec}`,
-        "--force-keyframes-at-cuts",
-        "--merge-output-format", "mp4",
-        "-o", clipFile,
-      ], { timeout: 300_000 });
-    } catch (sectionsErr) {
-      logDebug("clip.sections-failed", { error: (sectionsErr.stderr || sectionsErr.message || "").slice(0, 500) });
-      console.log("--download-sections failed, falling back to full download + ffmpeg trim");
-      usedFallback = true;
+    // --download-sections uses ffmpeg internally to fetch segments.
+    // ffmpeg can't use SOCKS5 proxies, so when WARP is active we skip
+    // straight to full download + ffmpeg trim.
+    let usedFallback = warpAvailable;
+    if (!usedFallback) {
+      try {
+        await execYtdlp(url, [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4",
+          "-o", clipFile,
+        ], { timeout: 300_000 });
+      } catch (sectionsErr) {
+        logDebug("clip.sections-failed", { error: (sectionsErr.stderr || sectionsErr.message || "").slice(0, 500) });
+        console.log("--download-sections failed, falling back to full download + ffmpeg trim");
+        usedFallback = true;
+      }
+    }
 
-      // Fallback: download full video, then ffmpeg trim
+    if (usedFallback) {
       await execYtdlp(url, [
         url, "-f", fmt,
         "--merge-output-format", "mp4",
@@ -229,8 +234,8 @@ app.post("/clip", async (req, res) => {
         "-movflags", "+faststart",
         clipFile,
       ], { timeout: 120_000 });
+      await unlink(rawFile).catch(() => {});
     }
-    if (usedFallback) await unlink(rawFile).catch(() => {});
 
     const data = await readFile(clipFile);
     await unlink(clipFile).catch(() => {});
