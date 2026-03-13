@@ -69,7 +69,7 @@ function execCapture(cmd, args, opts = {}) {
 function ytdlpBaseArgs() {
   const args = [
     "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-    "--extractor-args", "youtube:player_client=mweb,web_safari",
+    "--extractor-args", "youtube:player_client=web",
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
     "--retries", "10",
@@ -283,7 +283,7 @@ app.get("/debug/ytdlp-plugins", async (_req, res) => {
     const result = await execCapture("yt-dlp", [
       "-v",
       "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-      "--extractor-args", "youtube:player_client=mweb,web_safari",
+      "--extractor-args", "youtube:player_client=web",
       "--print", "%(id)s",
       "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
     ], { timeout: 30_000 });
