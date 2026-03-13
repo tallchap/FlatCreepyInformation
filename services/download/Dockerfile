@@ -31,8 +31,7 @@ RUN curl -fL https://github.com/pufferffish/wireproxy/releases/latest/download/w
 # Verify all binaries are real executables (not 404 HTML pages)
 RUN wgcf --help > /dev/null 2>&1 && echo "wgcf OK" && \
     wireproxy --help > /dev/null 2>&1 && echo "wireproxy OK" && \
-    yt-dlp --version && echo "yt-dlp OK" && \
-    python3 -c "import bgutil_ytdlp_pot_provider; print('bgutil plugin OK')"
+    yt-dlp --version && echo "yt-dlp OK"
 
 # WARP account generation happens at runtime (start.sh) since
 # build environment may have different network restrictions
