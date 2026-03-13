@@ -68,6 +68,7 @@ function execCapture(cmd, args, opts = {}) {
 
 function ytdlpBaseArgs() {
   const args = [
+    "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
     "--extractor-args", "youtube:player_client=mweb,web_safari",
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
