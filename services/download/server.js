@@ -105,13 +105,10 @@ function execCapture(cmd, args, opts = {}) {
   });
 }
 
-function ytdlpBaseArgs() {
+function ytdlpBaseArgs({ useProxy = false } = {}) {
   const args = [];
-  if (warpAvailable) {
+  if (useProxy && warpAvailable) {
     args.push("--proxy", WARP_PROXY);
-    // WARP triggers YouTube's SABR experiment on ANDROID_VR, hiding 720p+.
-    // iOS client is unaffected by SABR and has full format range.
-    args.push("--extractor-args", "youtube:player_client=ios,default");
   }
   args.push(
     "--sleep-interval", "5",
@@ -123,12 +120,13 @@ function ytdlpBaseArgs() {
 }
 
 async function execYtdlp(url, args, opts = {}) {
-  const fullArgs = [...ytdlpBaseArgs(), ...args];
+  const { useProxy = false, ...execOpts } = opts;
+  const fullArgs = [...ytdlpBaseArgs({ useProxy }), ...args];
   const start = Date.now();
-  logDebug("ytdlp.exec", { args: fullArgs.join(" ") });
+  logDebug("ytdlp.exec", { proxy: useProxy && warpAvailable, args: fullArgs.join(" ") });
 
   try {
-    const result = await execCapture("yt-dlp", fullArgs, opts);
+    const result = await execCapture("yt-dlp", fullArgs, execOpts);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
     logDebug("ytdlp.success", { elapsed: `${elapsed}s`, stderr: result.stderr.slice(0, 500) });
     return result;
@@ -151,12 +149,24 @@ app.post("/download", async (req, res) => {
   try {
     logDebug("download.start", { url, quality });
 
-    await execYtdlp(url, [
+    const dlArgs = [
       url,
       "-f", `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]`,
       "--merge-output-format", "mp4",
       "-o", outfile,
-    ], { timeout: 300_000 });
+    ];
+
+    // Try direct first, WARP fallback
+    try {
+      await execYtdlp(url, dlArgs, { timeout: 300_000, useProxy: false });
+    } catch (directErr) {
+      logDebug("download.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+      if (warpAvailable) {
+        await execYtdlp(url, dlArgs, { timeout: 300_000, useProxy: true });
+      } else {
+        throw directErr;
+      }
+    }
 
     const data = await readFile(outfile);
     await unlink(outfile).catch(() => {});
@@ -198,32 +208,58 @@ app.post("/clip", async (req, res) => {
   try {
     logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable });
 
-    // --download-sections uses ffmpeg internally to fetch segments.
-    // ffmpeg can't use SOCKS5 proxies, so when WARP is active we skip
-    // straight to full download + ffmpeg trim.
-    let usedFallback = warpAvailable;
-    if (!usedFallback) {
+    // Strategy: try direct connection first (full format range), then
+    // WARP proxy as fallback (may get lower quality due to SABR).
+    // --download-sections only works without proxy (ffmpeg can't use SOCKS5).
+    let downloaded = false;
+
+    // Attempt 1: direct, with --download-sections
+    try {
+      await execYtdlp(url, [
+        url, "-f", fmt,
+        "--download-sections", `*${startSec}-${endSec}`,
+        "--force-keyframes-at-cuts",
+        "--merge-output-format", "mp4",
+        "-o", clipFile,
+      ], { timeout: 300_000, useProxy: false });
+      downloaded = true;
+    } catch (directErr) {
+      logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+    }
+
+    // Attempt 2: WARP proxy, full download + ffmpeg trim
+    if (!downloaded && warpAvailable) {
       try {
         await execYtdlp(url, [
           url, "-f", fmt,
-          "--download-sections", `*${startSec}-${endSec}`,
-          "--force-keyframes-at-cuts",
           "--merge-output-format", "mp4",
-          "-o", clipFile,
-        ], { timeout: 300_000 });
-      } catch (sectionsErr) {
-        logDebug("clip.sections-failed", { error: (sectionsErr.stderr || sectionsErr.message || "").slice(0, 500) });
-        console.log("--download-sections failed, falling back to full download + ffmpeg trim");
-        usedFallback = true;
+          "-o", rawFile,
+        ], { timeout: 300_000, useProxy: true });
+
+        logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
+        const duration = endSec - startSec;
+        await execCapture("ffmpeg", [
+          "-ss", String(startSec),
+          "-i", rawFile,
+          "-t", String(duration),
+          "-c", "copy",
+          "-movflags", "+faststart",
+          clipFile,
+        ], { timeout: 120_000 });
+        await unlink(rawFile).catch(() => {});
+        downloaded = true;
+      } catch (warpErr) {
+        logDebug("clip.warp-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 500) });
       }
     }
 
-    if (usedFallback) {
+    // Attempt 3: direct, full download + ffmpeg trim (no sections, no proxy)
+    if (!downloaded) {
       await execYtdlp(url, [
         url, "-f", fmt,
         "--merge-output-format", "mp4",
         "-o", rawFile,
-      ], { timeout: 300_000 });
+      ], { timeout: 300_000, useProxy: false });
 
       logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
       const duration = endSec - startSec;
@@ -240,7 +276,7 @@ app.post("/clip", async (req, res) => {
 
     const data = await readFile(clipFile);
     await unlink(clipFile).catch(() => {});
-    logDebug("clip.complete", { bytes: data.byteLength, mb: (data.byteLength / 1024 / 1024).toFixed(1), usedFallback });
+    logDebug("clip.complete", { bytes: data.byteLength, mb: (data.byteLength / 1024 / 1024).toFixed(1) });
 
     res.set({
       "Content-Type": "video/mp4",
