@@ -105,16 +105,14 @@ function execCapture(cmd, args, opts = {}) {
   });
 }
 
-function ytdlpBaseArgs(poToken) {
+function ytdlpBaseArgs() {
   const args = [];
   if (warpAvailable) {
     args.push("--proxy", WARP_PROXY);
   }
-  if (poToken) {
-    args.push("--extractor-args", `youtube:player_client=web;po_token=web+${poToken}`);
-  } else {
-    args.push("--extractor-args", "youtube:player_client=web");
-  }
+  // No player_client override — let yt-dlp use its default fallback chain
+  // (web → web_safari → ANDROID_VR etc). Explicitly setting player_client
+  // prevents fallback and causes fatal errors.
   args.push(
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
@@ -125,20 +123,7 @@ function ytdlpBaseArgs(poToken) {
 }
 
 async function execYtdlp(url, args, opts = {}) {
-  // Fetch PO token from bgutil before calling yt-dlp
-  let poToken = null;
-  const videoId = extractVideoId(url);
-  if (videoId) {
-    try {
-      const tokenData = await fetchPOToken(videoId);
-      poToken = tokenData.poToken;
-      logDebug("pot.fetched", { videoId, tokenLength: poToken?.length });
-    } catch (e) {
-      logDebug("pot.error", { videoId, error: e.message });
-    }
-  }
-
-  const fullArgs = [...ytdlpBaseArgs(poToken), ...args];
+  const fullArgs = [...ytdlpBaseArgs(), ...args];
   const start = Date.now();
   logDebug("ytdlp.exec", { args: fullArgs.join(" ") });
 
