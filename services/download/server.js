@@ -25,6 +25,30 @@ const S3_BUCKET = process.env.S3_BUCKET || "doom-debates-videos";
 const s3Configured = !!(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY && AWS_REGION && S3_BUCKET);
 const s3Client = s3Configured ? new S3Client({ region: AWS_REGION, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }) : null;
 
+
+const DEBUG_LOG_LIMIT = 200;
+const debugEvents = [];
+
+function redact(value) {
+  if (typeof value !== "string") return value;
+  return value
+    .replace(/apify_api_[A-Za-z0-9]+/g, "apify_api_[REDACTED]")
+    .replace(/AKIA[0-9A-Z]+/g, "AKIA[REDACTED]")
+    .replace(/([A-Za-z0-9_\-]{8,}):(\/[\/])?([A-Za-z0-9\/+_=\-]{8,})@/g, "[REDACTED]:$2[REDACTED]@");
+}
+
+function logDebug(stage, details = {}) {
+  const entry = {
+    ts: new Date().toISOString(),
+    stage,
+    details: JSON.parse(JSON.stringify(details, (_k, v) => typeof v === "string" ? redact(v) : v)),
+  };
+  debugEvents.push(entry);
+  if (debugEvents.length > DEBUG_LOG_LIMIT) debugEvents.shift();
+  console.log(`[debug] ${stage}`, entry.details);
+  return entry;
+}
+
 function isYouTubeUrl(url) {
   return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
 }
@@ -148,6 +172,7 @@ async function downloadViaApify(videoUrl, preferredQuality = "720p") {
     s3Region: AWS_REGION,
   };
 
+  logDebug("apify.request", { actor: "streamers/youtube-video-downloader", videoUrl, actorInput: { ...actorInput, s3AccessKeyId: "[REDACTED]", s3SecretAccessKey: "[REDACTED]" } });
   console.log(`[apify] Starting streamers/youtube-video-downloader for ${videoUrl}`);
   const response = await fetch(`https://api.apify.com/v2/acts/streamers~youtube-video-downloader/run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_TOKEN)}&timeout=900`, {
     method: "POST",
@@ -159,6 +184,7 @@ async function downloadViaApify(videoUrl, preferredQuality = "720p") {
     throw new Error(`Apify HTTP ${response.status}: ${text.slice(0, 500)}`);
   }
   const items = await response.json();
+  logDebug("apify.response", { ok: response.ok, itemCount: Array.isArray(items) ? items.length : null, firstItemKeys: Array.isArray(items) && items[0] ? Object.keys(items[0]) : [] });
   if (!Array.isArray(items) || items.length === 0) {
     throw new Error("Apify actor returned no items");
   }
@@ -185,12 +211,14 @@ async function fetchFromS3(apifyResult) {
   const extMatch = apifyResult.fileKey.match(/\.([a-zA-Z0-9]+)$/);
   const ext = extMatch ? extMatch[1] : 'mp4';
   const localPath = join(tmpdir(), `s3-${crypto.randomUUID()}.${ext}`);
+  logDebug("s3.getObject.request", { bucket: S3_BUCKET, key: apifyResult.fileKey });
   const response = await s3Client.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: apifyResult.fileKey }));
   const chunks = [];
   for await (const chunk of response.Body) chunks.push(chunk);
   const buffer = Buffer.concat(chunks);
   await writeFile(localPath, buffer);
   console.log(`[s3] Downloaded ${apifyResult.fileKey} to ${localPath} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
+  logDebug("s3.getObject.response", { bucket: S3_BUCKET, key: apifyResult.fileKey, bytes: buffer.length, localPath });
   return localPath;
 }
 
@@ -202,6 +230,7 @@ app.post("/download", async (req, res) => {
 
   if (useApify) {
     try {
+      logDebug("download.path", { mode: "apify-s3", url });
       console.log(`[download] Using Apify+S3 path for YouTube URL`);
       const apifyResult = await downloadViaApify(url, req.body.quality === "1080p" ? "1080p" : "720p");
       const localPath = await fetchFromS3(apifyResult);
@@ -216,8 +245,8 @@ app.post("/download", async (req, res) => {
       });
       return res.send(data);
     } catch (error) {
-      console.error("[download] Apify+S3 failed, falling back to yt-dlp:", error.message);
-      // Fall through to yt-dlp path
+      logDebug("download.error", { mode: "apify-s3", url, error: error.message || String(error) });
+      return res.status(500).json({ error: `Failed to download video via Apify+S3: ${error.message || String(error)}` });
     }
   }
 
@@ -272,16 +301,14 @@ app.post("/clip", async (req, res) => {
     let sourceFile = null;
 
     if (useApify) {
-      try {
-        console.log(`[clip] Using Apify+S3 path for YouTube URL`);
-        const apifyResult = await downloadViaApify(url, quality === "1080p" ? "1080p" : "720p");
-        sourceFile = await fetchFromS3(apifyResult);
-      } catch (apifyErr) {
-        console.error("[clip] Apify+S3 failed, falling back to yt-dlp:", apifyErr.message);
-      }
+      logDebug("clip.path", { mode: "apify-s3", url, startSec, endSec, quality });
+      console.log(`[clip] Using Apify+S3 path for YouTube URL`);
+      const apifyResult = await downloadViaApify(url, quality === "1080p" ? "1080p" : "720p");
+      sourceFile = await fetchFromS3(apifyResult);
     }
 
     if (sourceFile) {
+      logDebug("ffmpeg.trim.request", { input: sourceFile, startSec, endSec, output: clipFile });
       // Trim the S3-downloaded file with ffmpeg
       await execCapture(
         "ffmpeg",
@@ -296,8 +323,12 @@ app.post("/clip", async (req, res) => {
         { timeout: 120_000 }
       );
       await unlink(sourceFile).catch(() => {});
+      logDebug("ffmpeg.trim.response", { output: clipFile });
     } else {
-      // yt-dlp path (non-YouTube or Apify fallback)
+      if (isYouTubeUrl(url)) {
+        throw new Error("YouTube clip requested but Apify+S3 did not produce a source file");
+      }
+      // yt-dlp path (non-YouTube only)
       let usedFallback = false;
       try {
         await execYtdlpWithRetry(
@@ -348,6 +379,7 @@ app.post("/clip", async (req, res) => {
     await unlink(clipFile).catch(() => {});
     await unlink(rawFile).catch(() => {});
     const detail = error.stderr || error.message || "Unknown error";
+    logDebug("clip.error", { url, startSec, endSec, quality, error: detail });
     console.error("Clip error:", detail);
     res.status(500).json({ error: `Failed to create clip: ${detail}` });
   }
@@ -393,6 +425,10 @@ app.get("/debug", async (_req, res) => {
     results.bgutil_pot_server = `ERROR: ${e.message}`;
   }
   res.json(results);
+});
+
+app.get("/debug/logs", (_req, res) => {
+  res.json({ items: debugEvents });
 });
 
 app.get("/health", (_req, res) => {

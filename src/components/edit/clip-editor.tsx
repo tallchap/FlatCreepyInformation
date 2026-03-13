@@ -36,6 +36,9 @@ export function ClipEditor() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [quality, setQuality] = useState<Quality>("720p");
   const { startDownload, hasActive: exporting } = useDownload();
+  const [debugOpen, setDebugOpen] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<any[]>([]);
+  const [debugLoading, setDebugLoading] = useState(false);
   const playerRef = useRef<any>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -213,6 +216,17 @@ export function ClipEditor() {
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
 
+  const loadDebugLogs = useCallback(async () => {
+    setDebugLoading(true);
+    try {
+      const resp = await fetch("/api/download-debug", { cache: "no-store" });
+      const data = await resp.json();
+      setDebugLogs(Array.isArray(data.items) ? data.items : []);
+    } finally {
+      setDebugLoading(false);
+    }
+  }, []);
+
   const handleExport = () => {
     if (!videoId || clipTooLong) return;
     const title = playerRef.current?.getVideoData?.()?.title || videoId;
@@ -358,6 +372,13 @@ export function ClipEditor() {
               <div className="flex-1" />
 
               <button
+                onClick={() => { setDebugOpen((v) => !v); if (!debugOpen) void loadDebugLogs(); }}
+                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
+              >
+                {debugOpen ? "Hide Debug" : "Show Debug"}
+              </button>
+
+              <button
                 onClick={handleExport}
                 disabled={exporting || clipTooLong}
                 className={btnClass}
@@ -370,6 +391,27 @@ export function ClipEditor() {
             </div>
 
           </div>
+
+          {debugOpen && (
+            <div className="bg-black text-green-300 rounded-xl p-4 text-xs font-mono overflow-auto max-h-[420px] space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="font-semibold text-green-200">Download service debug log</div>
+                <button
+                  onClick={() => void loadDebugLogs()}
+                  className="px-2 py-1 rounded border border-green-700 text-green-200 hover:bg-green-900/30"
+                >
+                  {debugLoading ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+              {debugLogs.length === 0 ? (
+                <div className="text-green-500">No debug events yet.</div>
+              ) : (
+                debugLogs.slice().reverse().map((entry, idx) => (
+                  <pre key={idx} className="whitespace-pre-wrap break-all border border-green-900 rounded p-3 bg-black/40">{JSON.stringify(entry, null, 2)}</pre>
+                ))
+              )}
+            </div>
+          )}
         </>
       )}
     </div>
