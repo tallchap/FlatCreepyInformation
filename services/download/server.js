@@ -1,8 +1,7 @@
 const express = require("express");
 const cors = require("cors");
 const { execFile } = require("child_process");
-const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
-const { readFile, unlink, writeFile } = require("fs/promises");
+const { readFile, unlink } = require("fs/promises");
 const { tmpdir } = require("os");
 const { join } = require("path");
 const crypto = require("crypto");
@@ -15,15 +14,10 @@ const DEMO_URL = "https://www.youtube.com/watch?v=EYg3fmaycZA";
 const PROXY_URL = process.env.WEBSHARE_PROXY_URL || "";
 const WEBSHARE_API_TOKEN = process.env.WEBSHARE_API_TOKEN || "";
 
-// Apify + S3 configuration
-const APIFY_TOKEN = process.env.APIFY_TOKEN || "";
-const AWS_ACCESS_KEY_ID = process.env.AWS_ACCESS_KEY_ID || "";
-const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || "";
-const AWS_REGION = process.env.AWS_REGION || "us-east-1";
-const S3_BUCKET = process.env.S3_BUCKET || "doom-debates-videos";
-
-const s3Configured = !!(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY && AWS_REGION && S3_BUCKET);
-const s3Client = s3Configured ? new S3Client({ region: AWS_REGION, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }) : null;
+// RapidAPI YouTube Info & Download API
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
+const RAPIDAPI_BASE = `https://${RAPIDAPI_HOST}/ajax`;
 
 
 const DEBUG_LOG_LIMIT = 200;
@@ -34,7 +28,8 @@ function redact(value) {
   return value
     .replace(/apify_api_[A-Za-z0-9]+/g, "apify_api_[REDACTED]")
     .replace(/AKIA[0-9A-Z]+/g, "AKIA[REDACTED]")
-    .replace(/([A-Za-z0-9_\-]{8,}):(\/[\/])?([A-Za-z0-9\/+_=\-]{8,})@/g, "[REDACTED]:$2[REDACTED]@");
+    .replace(/([A-Za-z0-9_\-]{8,}):(\/[\/])?([A-Za-z0-9\/+_=\-]{8,})@/g, "[REDACTED]:$2[REDACTED]@")
+    .replace(/e71c6f[a-f0-9]{10,}/g, "[RAPIDAPI_REDACTED]");
 }
 
 function logDebug(stage, details = {}) {
@@ -154,89 +149,144 @@ async function execYtdlpWithRetry(args, opts = {}, maxRetries = 5) {
   throw lastError;
 }
 
-// ─── Apify + S3 helpers ─────────────────────────────────────────────
+// ─── RapidAPI YouTube Download helpers ──────────────────────────────
 
-/**
- * Download a YouTube video via Apify actor into S3 and return the resulting file info.
- */
-async function downloadViaApify(videoUrl, preferredQuality = "720p") {
-  if (!APIFY_TOKEN) throw new Error("APIFY_TOKEN not configured");
-  if (!s3Configured) throw new Error("AWS S3 credentials not configured");
+const RAPIDAPI_HEADERS = {
+  "Content-Type": "application/json",
+  "x-rapidapi-host": RAPIDAPI_HOST,
+  "x-rapidapi-key": RAPIDAPI_KEY,
+};
 
-  const actorInput = {
-    videos: [{ url: videoUrl }],
-    preferredQuality,
-    s3AccessKeyId: AWS_ACCESS_KEY_ID,
-    s3SecretAccessKey: AWS_SECRET_ACCESS_KEY,
-    s3Bucket: S3_BUCKET,
-    s3Region: AWS_REGION,
-  };
-
-  logDebug("apify.request", { actor: "streamers/youtube-video-downloader", videoUrl, actorInput: { ...actorInput, s3AccessKeyId: "[REDACTED]", s3SecretAccessKey: "[REDACTED]" } });
-  console.log(`[apify] Starting streamers/youtube-video-downloader for ${videoUrl}`);
-  const response = await fetch(`https://api.apify.com/v2/acts/streamers~youtube-video-downloader/run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_TOKEN)}&timeout=900`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(actorInput),
-  });
-  if (!response.ok) {
-    const text = await response.text();
-    throw new Error(`Apify HTTP ${response.status}: ${text.slice(0, 500)}`);
-  }
-  const items = await response.json();
-  logDebug("apify.response", { ok: response.ok, itemCount: Array.isArray(items) ? items.length : null, firstItemKeys: Array.isArray(items) && items[0] ? Object.keys(items[0]) : [] });
-  if (!Array.isArray(items) || items.length === 0) {
-    throw new Error("Apify actor returned no items");
-  }
-
-  const item = items[0];
-  if (!item.downloadedFileUrl) {
-    throw new Error(`Apify actor output missing downloadedFileUrl. Keys: ${Object.keys(item).join(", ")}`);
-  }
-
-  return {
-    downloadedFileUrl: item.downloadedFileUrl,
-    fileKey: item.fileKey || null,
-    id: item.id || null,
-    raw: item,
-  };
+function mapQualityToFormat(quality) {
+  return quality === "1080p" ? "1080" : "720";
 }
 
 /**
- * Fetch an S3 object uploaded by Apify and save to local temp file.
+ * Poll a RapidAPI download job until it completes or times out.
+ * Returns the download_url on success.
  */
-async function fetchFromS3(apifyResult) {
-  if (!s3Client) throw new Error("AWS S3 credentials not configured");
-  if (!apifyResult.fileKey) throw new Error("Apify output missing fileKey");
-  const extMatch = apifyResult.fileKey.match(/\.([a-zA-Z0-9]+)$/);
-  const ext = extMatch ? extMatch[1] : 'mp4';
-  const localPath = join(tmpdir(), `s3-${crypto.randomUUID()}.${ext}`);
-  logDebug("s3.getObject.request", { bucket: S3_BUCKET, key: apifyResult.fileKey });
-  const response = await s3Client.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: apifyResult.fileKey }));
-  const chunks = [];
-  for await (const chunk of response.Body) chunks.push(chunk);
-  const buffer = Buffer.concat(chunks);
-  await writeFile(localPath, buffer);
-  console.log(`[s3] Downloaded ${apifyResult.fileKey} to ${localPath} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
-  logDebug("s3.getObject.response", { bucket: S3_BUCKET, key: apifyResult.fileKey, bytes: buffer.length, localPath });
-  return localPath;
+async function pollRapidAPIJob(jobId, timeoutMs = 300_000) {
+  const pollInterval = 3000;
+  const start = Date.now();
+
+  while (Date.now() - start < timeoutMs) {
+    const res = await fetch(`${RAPIDAPI_BASE}/progress.php?id=${encodeURIComponent(jobId)}`, {
+      headers: RAPIDAPI_HEADERS,
+    });
+    const data = await res.json();
+    logDebug("rapidapi.poll", { jobId, data });
+
+    if (data.download_url) {
+      return data.download_url;
+    }
+    if (data.status === "failed" || data.error) {
+      throw new Error(`RapidAPI job failed: ${data.error || JSON.stringify(data)}`);
+    }
+
+    await new Promise((r) => setTimeout(r, pollInterval));
+  }
+  throw new Error(`RapidAPI job timed out after ${timeoutMs / 1000}s`);
+}
+
+/**
+ * Download a YouTube clip via RapidAPI with native start/end time extraction.
+ * Returns a Buffer of the MP4 data.
+ */
+async function downloadClipViaRapidAPI(url, startSec, endSec, quality = "720p") {
+  if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not configured");
+
+  const format = mapQualityToFormat(quality);
+  const params = new URLSearchParams({
+    format,
+    url,
+    start_time: String(Math.round(startSec)),
+    end_time: String(Math.round(endSec)),
+  });
+
+  logDebug("rapidapi.download.request", { url, startSec, endSec, format });
+  console.log(`[rapidapi] Requesting clip: ${url} [${startSec}-${endSec}] @ ${format}p`);
+
+  const res = await fetch(`${RAPIDAPI_BASE}/download.php?${params}`, {
+    headers: RAPIDAPI_HEADERS,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`RapidAPI HTTP ${res.status}: ${text.slice(0, 500)}`);
+  }
+  const data = await res.json();
+  logDebug("rapidapi.download.response", { data });
+
+  if (data.download_url) {
+    // Direct download URL returned immediately
+    console.log(`[rapidapi] Got direct download URL`);
+    const dlRes = await fetch(data.download_url);
+    if (!dlRes.ok) throw new Error(`Failed to fetch download URL: HTTP ${dlRes.status}`);
+    return Buffer.from(await dlRes.arrayBuffer());
+  }
+
+  if (data.id) {
+    // Async job — poll for completion
+    console.log(`[rapidapi] Got job ID ${data.id}, polling...`);
+    const downloadUrl = await pollRapidAPIJob(data.id);
+    console.log(`[rapidapi] Job complete, fetching clip`);
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) throw new Error(`Failed to fetch download URL: HTTP ${dlRes.status}`);
+    return Buffer.from(await dlRes.arrayBuffer());
+  }
+
+  throw new Error(`Unexpected RapidAPI response: ${JSON.stringify(data).slice(0, 500)}`);
+}
+
+/**
+ * Download a full YouTube video via RapidAPI.
+ * Returns a Buffer of the MP4 data.
+ */
+async function downloadFullViaRapidAPI(url, quality = "720p") {
+  if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not configured");
+
+  const format = mapQualityToFormat(quality);
+  const params = new URLSearchParams({ format, url });
+
+  logDebug("rapidapi.download.request", { url, format, mode: "full" });
+  console.log(`[rapidapi] Requesting full video: ${url} @ ${format}p`);
+
+  const res = await fetch(`${RAPIDAPI_BASE}/download.php?${params}`, {
+    headers: RAPIDAPI_HEADERS,
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`RapidAPI HTTP ${res.status}: ${text.slice(0, 500)}`);
+  }
+  const data = await res.json();
+  logDebug("rapidapi.download.response", { data });
+
+  if (data.download_url) {
+    const dlRes = await fetch(data.download_url);
+    if (!dlRes.ok) throw new Error(`Failed to fetch download URL: HTTP ${dlRes.status}`);
+    return Buffer.from(await dlRes.arrayBuffer());
+  }
+
+  if (data.id) {
+    const downloadUrl = await pollRapidAPIJob(data.id);
+    const dlRes = await fetch(downloadUrl);
+    if (!dlRes.ok) throw new Error(`Failed to fetch download URL: HTTP ${dlRes.status}`);
+    return Buffer.from(await dlRes.arrayBuffer());
+  }
+
+  throw new Error(`Unexpected RapidAPI response: ${JSON.stringify(data).slice(0, 500)}`);
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────
 
 app.post("/download", async (req, res) => {
   const url = req.body.url || DEMO_URL;
-  const useApify = isYouTubeUrl(url) && !!APIFY_TOKEN && s3Configured;
+  const useRapidAPI = isYouTubeUrl(url) && !!RAPIDAPI_KEY;
 
-  if (useApify) {
+  if (useRapidAPI) {
     try {
-      logDebug("download.path", { mode: "apify-s3", url });
-      console.log(`[download] Using Apify+S3 path for YouTube URL`);
-      const apifyResult = await downloadViaApify(url, req.body.quality === "1080p" ? "1080p" : "720p");
-      const localPath = await fetchFromS3(apifyResult);
-
-      const data = await readFile(localPath);
-      await unlink(localPath).catch(() => {});
+      logDebug("download.path", { mode: "rapidapi", url });
+      console.log(`[download] Using RapidAPI path for YouTube URL`);
+      const data = await downloadFullViaRapidAPI(url, req.body.quality || "720p");
 
       res.set({
         "Content-Type": "video/mp4",
@@ -245,12 +295,13 @@ app.post("/download", async (req, res) => {
       });
       return res.send(data);
     } catch (error) {
-      logDebug("download.error", { mode: "apify-s3", url, error: error.message || String(error) });
-      return res.status(500).json({ error: `Failed to download video via Apify+S3: ${error.message || String(error)}` });
+      logDebug("download.rapidapi.failed", { url, error: error.message || String(error) });
+      console.log(`[download] RapidAPI failed, falling back to yt-dlp: ${error.message}`);
+      // fall through to yt-dlp
     }
   }
 
-  // yt-dlp fallback (or non-YouTube URLs)
+  // yt-dlp fallback
   const outfile = join(tmpdir(), `video-${crypto.randomUUID()}.mp4`);
   try {
     await execYtdlpWithRetry(
@@ -290,7 +341,7 @@ app.post("/clip", async (req, res) => {
   const uid = crypto.randomUUID();
   const clipFile = join(tmpdir(), `clip-${uid}.mp4`);
   const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
-  const useApify = isYouTubeUrl(url) && !!APIFY_TOKEN && s3Configured;
+  const useRapidAPI = isYouTubeUrl(url) && !!RAPIDAPI_KEY;
 
   // Quality-based format selection (for yt-dlp fallback)
   const fmt = quality === "1080p"
@@ -298,22 +349,52 @@ app.post("/clip", async (req, res) => {
     : "bestvideo[height<=720]+bestaudio/best[height<=720]";
 
   try {
-    let sourceFile = null;
+    // Primary path: RapidAPI with native clip extraction (no ffmpeg needed)
+    if (useRapidAPI) {
+      try {
+        logDebug("clip.path", { mode: "rapidapi", url, startSec, endSec, quality });
+        console.log(`[clip] Using RapidAPI path for YouTube URL`);
+        const data = await downloadClipViaRapidAPI(url, startSec, endSec, quality || "720p");
 
-    if (useApify) {
-      logDebug("clip.path", { mode: "apify-s3", url, startSec, endSec, quality });
-      console.log(`[clip] Using Apify+S3 path for YouTube URL`);
-      const apifyResult = await downloadViaApify(url, quality === "1080p" ? "1080p" : "720p");
-      sourceFile = await fetchFromS3(apifyResult);
+        res.set({
+          "Content-Type": "video/mp4",
+          "Content-Disposition": `attachment; filename="clip-${startSec}-${endSec}.mp4"`,
+          "Content-Length": data.byteLength.toString(),
+        });
+        return res.send(data);
+      } catch (rapidErr) {
+        logDebug("clip.rapidapi.failed", { error: rapidErr.message });
+        console.log(`[clip] RapidAPI failed, falling back to yt-dlp: ${rapidErr.message}`);
+        // fall through to yt-dlp
+      }
     }
 
-    if (sourceFile) {
-      logDebug("ffmpeg.trim.request", { input: sourceFile, startSec, endSec, output: clipFile });
-      // Trim the S3-downloaded file with ffmpeg
+    // Fallback: yt-dlp
+    let usedFallback = false;
+    try {
+      await execYtdlpWithRetry(
+        [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4",
+          "-o", clipFile,
+        ],
+        { timeout: 300_000 }
+      );
+    } catch (sectionsErr) {
+      console.log("--download-sections failed, falling back to full download:", sectionsErr.stderr?.slice(0, 500));
+      usedFallback = true;
+
+      await execYtdlpWithRetry(
+        [url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
+        { timeout: 300_000 }
+      );
+
       await execCapture(
         "ffmpeg",
         [
-          "-i", sourceFile,
+          "-i", rawFile,
           "-ss", String(startSec),
           "-to", String(endSec),
           "-c", "copy",
@@ -322,49 +403,8 @@ app.post("/clip", async (req, res) => {
         ],
         { timeout: 120_000 }
       );
-      await unlink(sourceFile).catch(() => {});
-      logDebug("ffmpeg.trim.response", { output: clipFile });
-    } else {
-      if (isYouTubeUrl(url)) {
-        throw new Error("YouTube clip requested but Apify+S3 did not produce a source file");
-      }
-      // yt-dlp path (non-YouTube only)
-      let usedFallback = false;
-      try {
-        await execYtdlpWithRetry(
-          [
-            url, "-f", fmt,
-            "--download-sections", `*${startSec}-${endSec}`,
-            "--force-keyframes-at-cuts",
-            "--merge-output-format", "mp4",
-            "-o", clipFile,
-          ],
-          { timeout: 300_000 }
-        );
-      } catch (sectionsErr) {
-        console.log("--download-sections failed, falling back to full download:", sectionsErr.stderr?.slice(0, 500));
-        usedFallback = true;
-
-        await execYtdlpWithRetry(
-          [url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile],
-          { timeout: 300_000 }
-        );
-
-        await execCapture(
-          "ffmpeg",
-          [
-            "-i", rawFile,
-            "-ss", String(startSec),
-            "-to", String(endSec),
-            "-c", "copy",
-            "-movflags", "+faststart",
-            clipFile,
-          ],
-          { timeout: 120_000 }
-        );
-      }
-      if (usedFallback) await unlink(rawFile).catch(() => {});
     }
+    if (usedFallback) await unlink(rawFile).catch(() => {});
 
     const data = await readFile(clipFile);
     await unlink(clipFile).catch(() => {});
@@ -391,10 +431,7 @@ app.get("/debug", async (_req, res) => {
     webshare_api: WEBSHARE_API_TOKEN ? "configured" : "not configured",
     residential_proxies: residentialProxies.length,
     residential_countries: [...new Set(residentialProxies.map(p => p.country))],
-    apify: APIFY_TOKEN ? "configured" : "not configured",
-    aws_s3: s3Configured ? "configured" : "not configured",
-    s3_bucket: S3_BUCKET,
-    aws_region: AWS_REGION,
+    rapidapi: RAPIDAPI_KEY ? "configured" : "not configured",
   };
   try {
     const ytdlp = await execCapture("yt-dlp", ["--version"], { timeout: 10_000 });
@@ -441,7 +478,6 @@ const PORT = process.env.PORT || 3001;
 fetchResidentialProxies().then(() => {
   app.listen(PORT, () => {
     console.log(`Download service running on port ${PORT}`);
-    console.log(`  Apify: ${APIFY_TOKEN ? "configured" : "NOT configured"}`);
-    console.log(`  S3:    ${s3Configured ? "configured" : "NOT configured"} (bucket: ${S3_BUCKET})`);
+    console.log(`  RapidAPI: ${RAPIDAPI_KEY ? "configured" : "NOT configured"}`);
   });
 });
