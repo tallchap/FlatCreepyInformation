@@ -278,6 +278,47 @@ app.get("/debug/logs", (_req, res) => {
   res.json({ items: debugEvents });
 });
 
+app.get("/debug/ytdlp-plugins", async (_req, res) => {
+  try {
+    const result = await execCapture("yt-dlp", [
+      "-v",
+      "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+      "--extractor-args", "youtube:player_client=mweb,web_safari",
+      "--print", "%(id)s",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+    ], { timeout: 30_000 });
+    res.json({ stdout: result.stdout, stderr: result.stderr });
+  } catch (e) {
+    res.json({ error: e.message, stdout: e.stdout || "", stderr: e.stderr || "" });
+  }
+});
+
+app.get("/debug/bgutil-test", async (_req, res) => {
+  try {
+    const http = require("http");
+    // Test the token generation endpoint directly
+    const result = await new Promise((resolve, reject) => {
+      const postData = JSON.stringify({ videoId: "dQw4w9WgXcQ" });
+      const req = http.request("http://127.0.0.1:4416/get_pot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(postData) },
+        timeout: 15000,
+      }, (r) => {
+        let body = "";
+        r.on("data", (d) => body += d);
+        r.on("end", () => resolve({ status: r.statusCode, body: body.slice(0, 500) }));
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+      req.write(postData);
+      req.end();
+    });
+    res.json(result);
+  } catch (e) {
+    res.json({ error: e.message });
+  }
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
