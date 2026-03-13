@@ -9,12 +9,8 @@ RUN apt-get update && apt-get install -y \
 # Deno (mandatory for yt-dlp YouTube JS challenges since Nov 2025)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
-# yt-dlp (latest)
-RUN curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
-    -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
-
-# bgutil PO token provider (yt-dlp plugin)
-RUN pip3 install --break-system-packages bgutil-ytdlp-pot-provider
+# yt-dlp + bgutil PO token provider (same Python env so plugin is discovered)
+RUN pip3 install --break-system-packages yt-dlp bgutil-ytdlp-pot-provider
 
 # bgutil PO token HTTP server
 RUN git clone --depth 1 \
@@ -35,7 +31,8 @@ RUN curl -fL https://github.com/pufferffish/wireproxy/releases/latest/download/w
 # Verify all binaries are real executables (not 404 HTML pages)
 RUN wgcf --help > /dev/null 2>&1 && echo "wgcf OK" && \
     wireproxy --help > /dev/null 2>&1 && echo "wireproxy OK" && \
-    yt-dlp --version && echo "yt-dlp OK"
+    yt-dlp --version && echo "yt-dlp OK" && \
+    python3 -c "import bgutil_ytdlp_pot_provider; print('bgutil plugin OK')"
 
 # WARP account generation happens at runtime (start.sh) since
 # build environment may have different network restrictions

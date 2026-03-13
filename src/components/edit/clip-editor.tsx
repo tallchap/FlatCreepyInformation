@@ -39,6 +39,7 @@ export function ClipEditor() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
+  const [debugCopied, setDebugCopied] = useState(false);
   const playerRef = useRef<any>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -398,10 +399,14 @@ export function ClipEditor() {
                 <div className="font-semibold text-green-200">Download service debug log</div>
                 <div className="flex gap-2">
                   <button
-                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2))}
+                    onClick={() => {
+                      navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2));
+                      setDebugCopied(true);
+                      setTimeout(() => setDebugCopied(false), 1500);
+                    }}
                     className="px-2 py-1 rounded border border-green-700 text-green-200 hover:bg-green-900/30"
                   >
-                    Copy
+                    {debugCopied ? "Copied!" : "Copy"}
                   </button>
                   <button
                     onClick={() => void loadDebugLogs()}
