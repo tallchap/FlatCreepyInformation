@@ -2,6 +2,8 @@
 
 import { useCallback, useRef, useState, useMemo } from "react";
 
+const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
+
 interface TimelineProps {
   duration: number;
   startSec: number;
@@ -174,6 +176,37 @@ export function Timeline({
           Timeline
         </span>
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400 mr-0.5">Start</span>
+            <button
+              onClick={() => onStartChange(Math.max(0, startSec - FRAME_STEP))}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
+            >
+              -2f
+            </button>
+            <button
+              onClick={() => onStartChange(Math.min(endSec - 0.01, startSec + FRAME_STEP))}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
+            >
+              +2f
+            </button>
+          </div>
+          <div className="flex items-center gap-1">
+            <span className="text-[10px] text-gray-400 mr-0.5">End</span>
+            <button
+              onClick={() => onEndChange(Math.max(startSec + 0.01, endSec - FRAME_STEP))}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
+            >
+              -2f
+            </button>
+            <button
+              onClick={() => onEndChange(Math.min(duration, endSec + FRAME_STEP))}
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
+            >
+              +2f
+            </button>
+          </div>
+          <div className="w-px h-4 bg-gray-200" />
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleZoomChange(zoom - 1)}

@@ -25,7 +25,6 @@ function formatDuration(sec: number): string {
 }
 
 const MAX_CLIP_SEC = 11 * 60;
-const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
 
 export function ClipEditor() {
   const [url, setUrl] = useState("");
@@ -353,15 +352,6 @@ export function ClipEditor() {
                 From Start
               </button>
               <button
-                onClick={() => handleSeek(Math.max(0, playheadSec - FRAME_STEP))}
-                className={btnClass}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                -2f
-              </button>
-              <button
                 onClick={handlePlayPause}
                 className={`${btnClass} min-w-[80px]`}
                 style={{ backgroundColor: DINO_RED }}
@@ -369,15 +359,6 @@ export function ClipEditor() {
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
                 {isPlaying ? "Pause" : "Play"}
-              </button>
-              <button
-                onClick={() => handleSeek(Math.min(duration, playheadSec + FRAME_STEP))}
-                className={btnClass}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                +2f
               </button>
               <button
                 onClick={handleLast5}
