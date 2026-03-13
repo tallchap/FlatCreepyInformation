@@ -46,6 +46,45 @@ function logDebug(stage, details = {}) {
   return entry;
 }
 
+// ─── bgutil PO token helper ─────────────────────────────────────────
+
+function extractVideoId(url) {
+  try {
+    const u = new URL(url);
+    if (u.hostname.includes("youtube.com")) return u.searchParams.get("v");
+    if (u.hostname === "youtu.be") return u.pathname.slice(1);
+  } catch {}
+  return null;
+}
+
+function fetchPOToken(videoId) {
+  return new Promise((resolve, reject) => {
+    const http = require("http");
+    const postData = JSON.stringify(videoId ? { content_binding: videoId } : {});
+    const req = http.request("http://127.0.0.1:4416/get_pot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Content-Length": Buffer.byteLength(postData) },
+      timeout: 30000,
+    }, (r) => {
+      let body = "";
+      r.on("data", (d) => body += d);
+      r.on("end", () => {
+        try {
+          const data = JSON.parse(body);
+          if (data.error) return reject(new Error(data.error));
+          resolve({ poToken: data.poToken, contentBinding: data.contentBinding });
+        } catch (e) {
+          reject(new Error(`bgutil parse error: ${body.slice(0, 200)}`));
+        }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("bgutil timeout")); });
+    req.write(postData);
+    req.end();
+  });
+}
+
 // ─── yt-dlp helpers ─────────────────────────────────────────────────
 
 function execCapture(cmd, args, opts = {}) {
@@ -66,23 +105,40 @@ function execCapture(cmd, args, opts = {}) {
   });
 }
 
-function ytdlpBaseArgs() {
-  const args = [
-    "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
-    "--extractor-args", "youtube:player_client=web",
+function ytdlpBaseArgs(poToken) {
+  const args = [];
+  if (warpAvailable) {
+    args.push("--proxy", WARP_PROXY);
+  }
+  if (poToken) {
+    args.push("--extractor-args", `youtube:player_client=web;po_token=web+${poToken}`);
+  } else {
+    args.push("--extractor-args", "youtube:player_client=web");
+  }
+  args.push(
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
     "--retries", "10",
     "--retry-sleep", "5",
-  ];
-  if (warpAvailable) {
-    args.unshift("--proxy", WARP_PROXY);
-  }
+  );
   return args;
 }
 
-async function execYtdlp(args, opts = {}) {
-  const fullArgs = [...ytdlpBaseArgs(), ...args];
+async function execYtdlp(url, args, opts = {}) {
+  // Fetch PO token from bgutil before calling yt-dlp
+  let poToken = null;
+  const videoId = extractVideoId(url);
+  if (videoId) {
+    try {
+      const tokenData = await fetchPOToken(videoId);
+      poToken = tokenData.poToken;
+      logDebug("pot.fetched", { videoId, tokenLength: poToken?.length });
+    } catch (e) {
+      logDebug("pot.error", { videoId, error: e.message });
+    }
+  }
+
+  const fullArgs = [...ytdlpBaseArgs(poToken), ...args];
   const start = Date.now();
   logDebug("ytdlp.exec", { args: fullArgs.join(" ") });
 
@@ -110,7 +166,7 @@ app.post("/download", async (req, res) => {
   try {
     logDebug("download.start", { url, quality });
 
-    await execYtdlp([
+    await execYtdlp(url, [
       url,
       "-f", `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]`,
       "--merge-output-format", "mp4",
@@ -160,7 +216,7 @@ app.post("/clip", async (req, res) => {
     // Primary: yt-dlp --download-sections (downloads only needed DASH segments)
     let usedFallback = false;
     try {
-      await execYtdlp([
+      await execYtdlp(url, [
         url, "-f", fmt,
         "--download-sections", `*${startSec}-${endSec}`,
         "--force-keyframes-at-cuts",
@@ -173,7 +229,7 @@ app.post("/clip", async (req, res) => {
       usedFallback = true;
 
       // Fallback: download full video, then ffmpeg trim
-      await execYtdlp([
+      await execYtdlp(url, [
         url, "-f", fmt,
         "--merge-output-format", "mp4",
         "-o", rawFile,
