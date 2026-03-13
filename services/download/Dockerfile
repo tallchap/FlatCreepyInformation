@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # yt-dlp (latest)
-RUN curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
+RUN curl -fL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp \
     -o /usr/local/bin/yt-dlp && chmod a+rx /usr/local/bin/yt-dlp
 
 # bgutil PO token provider (yt-dlp plugin)
@@ -21,13 +21,21 @@ RUN git clone --depth 1 \
     https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /opt/bgutil && \
     cd /opt/bgutil/server && npm ci && npx tsc
 
-# wgcf (Cloudflare WARP config generator)
-RUN curl -L https://github.com/ViRb3/wgcf/releases/latest/download/wgcf_linux_amd64 \
-    -o /usr/local/bin/wgcf && chmod a+rx /usr/local/bin/wgcf
+# wgcf (Cloudflare WARP config generator) — asset name is versioned
+RUN WGCF_URL=$(curl -sL -o /dev/null -w '%{url_effective}' \
+      "https://github.com/ViRb3/wgcf/releases/latest") && \
+    WGCF_VER=$(basename "$WGCF_URL") && \
+    curl -fL "https://github.com/ViRb3/wgcf/releases/download/${WGCF_VER}/wgcf_${WGCF_VER#v}_linux_amd64" \
+      -o /usr/local/bin/wgcf && chmod a+rx /usr/local/bin/wgcf
 
 # wireproxy (userspace WireGuard -> SOCKS5, no NET_ADMIN needed)
-RUN curl -L https://github.com/pufferffish/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz \
+RUN curl -fL https://github.com/pufferffish/wireproxy/releases/latest/download/wireproxy_linux_amd64.tar.gz \
     | tar xz -C /usr/local/bin wireproxy && chmod a+rx /usr/local/bin/wireproxy
+
+# Verify all binaries are real executables (not 404 HTML pages)
+RUN wgcf --help > /dev/null 2>&1 && echo "wgcf OK" && \
+    wireproxy --help > /dev/null 2>&1 && echo "wireproxy OK" && \
+    yt-dlp --version && echo "yt-dlp OK"
 
 # WARP account generation happens at runtime (start.sh) since
 # build environment may have different network restrictions
