@@ -396,12 +396,20 @@ export function ClipEditor() {
             <div className="bg-black text-green-300 rounded-xl p-4 text-xs font-mono overflow-auto max-h-[420px] space-y-3">
               <div className="flex items-center justify-between">
                 <div className="font-semibold text-green-200">Download service debug log</div>
-                <button
-                  onClick={() => void loadDebugLogs()}
-                  className="px-2 py-1 rounded border border-green-700 text-green-200 hover:bg-green-900/30"
-                >
-                  {debugLoading ? "Refreshing..." : "Refresh"}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2))}
+                    className="px-2 py-1 rounded border border-green-700 text-green-200 hover:bg-green-900/30"
+                  >
+                    Copy
+                  </button>
+                  <button
+                    onClick={() => void loadDebugLogs()}
+                    className="px-2 py-1 rounded border border-green-700 text-green-200 hover:bg-green-900/30"
+                  >
+                    {debugLoading ? "Refreshing..." : "Refresh"}
+                  </button>
+                </div>
               </div>
               {debugLogs.length === 0 ? (
                 <div className="text-green-500">No debug events yet.</div>
