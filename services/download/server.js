@@ -226,12 +226,12 @@ app.post("/clip", async (req, res) => {
       ], { timeout: 300_000 });
 
       logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
+      const duration = endSec - startSec;
       await execCapture("ffmpeg", [
-        "-i", rawFile,
         "-ss", String(startSec),
-        "-to", String(endSec),
-        "-c:v", "libx264", "-crf", "23",
-        "-c:a", "aac",
+        "-i", rawFile,
+        "-t", String(duration),
+        "-c", "copy",
         "-movflags", "+faststart",
         clipFile,
       ], { timeout: 120_000 });
