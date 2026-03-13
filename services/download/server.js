@@ -1,30 +1,29 @@
 const express = require("express");
 const cors = require("cors");
+const { execFile } = require("child_process");
+const { readFile, unlink } = require("fs/promises");
+const { tmpdir } = require("os");
+const { join } = require("path");
+const crypto = require("crypto");
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
-// RapidAPI YouTube Info & Download API
-const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
-const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
-const RAPIDAPI_BASE = `https://${RAPIDAPI_HOST}/ajax`;
+const WARP_PROXY = "socks5://127.0.0.1:1080";
 
 const DEBUG_LOG_LIMIT = 200;
 const debugEvents = [];
-
-function redact(value) {
-  if (typeof value !== "string") return value;
-  return value
-    .replace(/e71c6f[a-f0-9]{10,}/g, "[RAPIDAPI_REDACTED]")
-    .replace(/([A-Za-z0-9_\-]{8,}):(\/[\/])?([A-Za-z0-9\/+_=\-]{8,})@/g, "[REDACTED]:$2[REDACTED]@");
-}
 
 function logDebug(stage, details = {}) {
   const entry = {
     ts: new Date().toISOString(),
     stage,
-    details: JSON.parse(JSON.stringify(details, (_k, v) => typeof v === "string" ? redact(v) : v)),
+    details: JSON.parse(JSON.stringify(details, (_k, v) => {
+      if (typeof v !== "string") return v;
+      // Redact proxy credentials
+      return v.replace(/([A-Za-z0-9_\-]{8,}):(\/[\/])?([A-Za-z0-9\/+_=\-]{8,})@/g, "[REDACTED]:$2[REDACTED]@");
+    })),
   };
   debugEvents.push(entry);
   if (debugEvents.length > DEBUG_LOG_LIMIT) debugEvents.shift();
@@ -32,148 +31,52 @@ function logDebug(stage, details = {}) {
   return entry;
 }
 
-function isYouTubeUrl(url) {
-  return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
+// ─── yt-dlp helpers ─────────────────────────────────────────────────
+
+function execCapture(cmd, args, opts = {}) {
+  return new Promise((resolve, reject) => {
+    const proc = execFile(cmd, args, opts, (error) => {
+      if (error) {
+        error.stderr = stderrChunks.join("");
+        error.stdout = stdoutChunks.join("");
+        reject(error);
+      } else {
+        resolve({ stdout: stdoutChunks.join(""), stderr: stderrChunks.join("") });
+      }
+    });
+    const stderrChunks = [];
+    const stdoutChunks = [];
+    if (proc.stderr) proc.stderr.on("data", (d) => stderrChunks.push(d.toString()));
+    if (proc.stdout) proc.stdout.on("data", (d) => stdoutChunks.push(d.toString()));
+  });
 }
 
-// ─── RapidAPI YouTube Download helpers ──────────────────────────────
-
-const RAPIDAPI_HEADERS = {
-  "Content-Type": "application/json",
-  "x-rapidapi-host": RAPIDAPI_HOST,
-  "x-rapidapi-key": RAPIDAPI_KEY,
-};
-
-function mapQualityToFormat(quality) {
-  return quality === "1080p" ? "1080" : "720";
+function ytdlpBaseArgs() {
+  return [
+    "--proxy", WARP_PROXY,
+    "--extractor-args", "youtube:player_client=mweb,web_safari",
+    "--sleep-interval", "5",
+    "--max-sleep-interval", "10",
+    "--retries", "10",
+    "--retry-sleep", "5",
+  ];
 }
 
-/**
- * Poll a RapidAPI download job using the direct progress URL.
- * Returns the download_url on success.
- */
-async function pollRapidAPIJob(progressUrl, timeoutMs = 300_000) {
-  const pollInterval = 3000;
+async function execYtdlp(args, opts = {}) {
+  const fullArgs = [...ytdlpBaseArgs(), ...args];
   const start = Date.now();
-  let attempt = 0;
+  logDebug("ytdlp.exec", { args: fullArgs.join(" ") });
 
-  while (Date.now() - start < timeoutMs) {
-    attempt++;
+  try {
+    const result = await execCapture("yt-dlp", fullArgs, opts);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    try {
-      const res = await fetch(progressUrl);
-      const data = await res.json();
-      logDebug("rapidapi.poll", { attempt, elapsed: `${elapsed}s`, httpStatus: res.status, progressUrl, data });
-
-      if (data.download_url) {
-        return data.download_url;
-      }
-      if (data.status === "failed" || data.error) {
-        throw new Error(`RapidAPI job failed: ${data.error || JSON.stringify(data)}`);
-      }
-    } catch (err) {
-      if (err.message?.includes("RapidAPI job failed")) throw err;
-      logDebug("rapidapi.poll.error", { attempt, elapsed: `${elapsed}s`, progressUrl, error: err.message });
-    }
-
-    await new Promise((r) => setTimeout(r, pollInterval));
+    logDebug("ytdlp.success", { elapsed: `${elapsed}s`, stderr: result.stderr.slice(0, 500) });
+    return result;
+  } catch (e) {
+    const elapsed = ((Date.now() - start) / 1000).toFixed(1);
+    logDebug("ytdlp.error", { elapsed: `${elapsed}s`, stderr: (e.stderr || "").slice(0, 1000), message: e.message });
+    throw e;
   }
-  throw new Error(`RapidAPI job timed out after ${timeoutMs / 1000}s`);
-}
-
-/**
- * Fetch a download URL and return its contents as a Buffer.
- * Logs byte count on completion.
- */
-async function fetchDownloadUrl(downloadUrl) {
-  logDebug("rapidapi.fetch.start", { downloadUrl });
-  const dlRes = await fetch(downloadUrl);
-  if (!dlRes.ok) throw new Error(`Failed to fetch download: HTTP ${dlRes.status}`);
-  const buffer = Buffer.from(await dlRes.arrayBuffer());
-  logDebug("rapidapi.fetch.complete", { bytes: buffer.byteLength, mb: (buffer.byteLength / 1024 / 1024).toFixed(1) });
-  return buffer;
-}
-
-/**
- * Handle the RapidAPI download response: either direct URL or async job polling.
- */
-async function handleRapidAPIResponse(data) {
-  if (data.download_url) {
-    console.log(`[rapidapi] Got direct download URL`);
-    return fetchDownloadUrl(data.download_url);
-  }
-
-  if (data.id) {
-    const progressUrl = data.progress_url || `https://p.savenow.to/api/progress?id=${data.id}`;
-    logDebug("rapidapi.poll.start", { jobId: data.id, progressUrl });
-    console.log(`[rapidapi] Got job ID ${data.id}, polling ${progressUrl}`);
-    const downloadUrl = await pollRapidAPIJob(progressUrl);
-    console.log(`[rapidapi] Job complete, fetching clip`);
-    return fetchDownloadUrl(downloadUrl);
-  }
-
-  throw new Error(`Unexpected RapidAPI response: ${JSON.stringify(data).slice(0, 500)}`);
-}
-
-/**
- * Download a YouTube clip via RapidAPI with native start/end time extraction.
- * Returns a Buffer of the MP4 data.
- */
-async function downloadClipViaRapidAPI(url, startSec, endSec, quality = "720p") {
-  if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not configured");
-
-  const format = mapQualityToFormat(quality);
-  const params = new URLSearchParams({
-    format,
-    url,
-    start_time: String(Math.round(startSec)),
-    end_time: String(Math.round(endSec)),
-  });
-
-  logDebug("rapidapi.download.request", { url, startSec, endSec, format });
-  console.log(`[rapidapi] Requesting clip: ${url} [${startSec}-${endSec}] @ ${format}p`);
-
-  const res = await fetch(`${RAPIDAPI_BASE}/download.php?${params}`, {
-    headers: RAPIDAPI_HEADERS,
-  });
-  logDebug("rapidapi.download.httpStatus", { status: res.status, statusText: res.statusText });
-  if (!res.ok) {
-    const text = await res.text();
-    logDebug("rapidapi.download.httpError", { status: res.status, body: text.slice(0, 500) });
-    throw new Error(`RapidAPI HTTP ${res.status}: ${text.slice(0, 500)}`);
-  }
-  const data = await res.json();
-  logDebug("rapidapi.download.response", { data });
-
-  return handleRapidAPIResponse(data);
-}
-
-/**
- * Download a full YouTube video via RapidAPI.
- * Returns a Buffer of the MP4 data.
- */
-async function downloadFullViaRapidAPI(url, quality = "720p") {
-  if (!RAPIDAPI_KEY) throw new Error("RAPIDAPI_KEY not configured");
-
-  const format = mapQualityToFormat(quality);
-  const params = new URLSearchParams({ format, url });
-
-  logDebug("rapidapi.download.request", { url, format, mode: "full" });
-  console.log(`[rapidapi] Requesting full video: ${url} @ ${format}p`);
-
-  const res = await fetch(`${RAPIDAPI_BASE}/download.php?${params}`, {
-    headers: RAPIDAPI_HEADERS,
-  });
-  logDebug("rapidapi.download.httpStatus", { status: res.status, statusText: res.statusText });
-  if (!res.ok) {
-    const text = await res.text();
-    logDebug("rapidapi.download.httpError", { status: res.status, body: text.slice(0, 500) });
-    throw new Error(`RapidAPI HTTP ${res.status}: ${text.slice(0, 500)}`);
-  }
-  const data = await res.json();
-  logDebug("rapidapi.download.response", { data });
-
-  return handleRapidAPIResponse(data);
 }
 
 // ─── Endpoints ───────────────────────────────────────────────────────
@@ -181,11 +84,23 @@ async function downloadFullViaRapidAPI(url, quality = "720p") {
 app.post("/download", async (req, res) => {
   const url = req.body.url;
   if (!url) return res.status(400).json({ error: "Missing url" });
-  if (!RAPIDAPI_KEY) return res.status(503).json({ error: "RAPIDAPI_KEY not configured" });
+
+  const quality = req.body.quality === "1080p" ? 1080 : 720;
+  const outfile = join(tmpdir(), `video-${crypto.randomUUID()}.mp4`);
 
   try {
-    logDebug("download.path", { mode: "rapidapi", url });
-    const data = await downloadFullViaRapidAPI(url, req.body.quality || "720p");
+    logDebug("download.start", { url, quality });
+
+    await execYtdlp([
+      url,
+      "-f", `bestvideo[height<=${quality}]+bestaudio/best[height<=${quality}]`,
+      "--merge-output-format", "mp4",
+      "-o", outfile,
+    ], { timeout: 300_000 });
+
+    const data = await readFile(outfile);
+    await unlink(outfile).catch(() => {});
+    logDebug("download.complete", { bytes: data.byteLength, mb: (data.byteLength / 1024 / 1024).toFixed(1) });
 
     res.set({
       "Content-Type": "video/mp4",
@@ -194,9 +109,11 @@ app.post("/download", async (req, res) => {
     });
     res.send(data);
   } catch (error) {
-    logDebug("download.error", { url, error: error.message || String(error) });
-    console.error("Download error:", error.message);
-    res.status(500).json({ error: `Download failed: ${error.message}` });
+    await unlink(outfile).catch(() => {});
+    const detail = error.stderr || error.message || "Unknown error";
+    logDebug("download.error", { url, error: detail.slice(0, 1000) });
+    console.error("Download error:", detail.slice(0, 500));
+    res.status(500).json({ error: `Download failed: ${detail.slice(0, 500)}` });
   }
 });
 
@@ -206,18 +123,58 @@ app.post("/clip", async (req, res) => {
   if (!url || startSec == null || endSec == null) {
     return res.status(400).json({ error: "Missing url, startSec, or endSec" });
   }
-  if (!RAPIDAPI_KEY) {
-    return res.status(503).json({ error: "RAPIDAPI_KEY not configured" });
-  }
 
   const maxClip = 11 * 60;
   if (endSec - startSec > maxClip) {
     return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
   }
 
+  const uid = crypto.randomUUID();
+  const clipFile = join(tmpdir(), `clip-${uid}.mp4`);
+  const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
+  const heightLimit = quality === "1080p" ? 1080 : 720;
+  const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
+
   try {
-    logDebug("clip.path", { mode: "rapidapi", url, startSec, endSec, quality });
-    const data = await downloadClipViaRapidAPI(url, startSec, endSec, quality || "720p");
+    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p` });
+
+    // Primary: yt-dlp --download-sections (downloads only needed DASH segments)
+    let usedFallback = false;
+    try {
+      await execYtdlp([
+        url, "-f", fmt,
+        "--download-sections", `*${startSec}-${endSec}`,
+        "--force-keyframes-at-cuts",
+        "--merge-output-format", "mp4",
+        "-o", clipFile,
+      ], { timeout: 300_000 });
+    } catch (sectionsErr) {
+      logDebug("clip.sections-failed", { error: (sectionsErr.stderr || sectionsErr.message || "").slice(0, 500) });
+      console.log("--download-sections failed, falling back to full download + ffmpeg trim");
+      usedFallback = true;
+
+      // Fallback: download full video, then ffmpeg trim
+      await execYtdlp([
+        url, "-f", fmt,
+        "--merge-output-format", "mp4",
+        "-o", rawFile,
+      ], { timeout: 300_000 });
+
+      logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
+      await execCapture("ffmpeg", [
+        "-i", rawFile,
+        "-ss", String(startSec),
+        "-to", String(endSec),
+        "-c", "copy",
+        "-movflags", "+faststart",
+        clipFile,
+      ], { timeout: 120_000 });
+    }
+    if (usedFallback) await unlink(rawFile).catch(() => {});
+
+    const data = await readFile(clipFile);
+    await unlink(clipFile).catch(() => {});
+    logDebug("clip.complete", { bytes: data.byteLength, mb: (data.byteLength / 1024 / 1024).toFixed(1), usedFallback });
 
     res.set({
       "Content-Type": "video/mp4",
@@ -226,17 +183,76 @@ app.post("/clip", async (req, res) => {
     });
     res.send(data);
   } catch (error) {
-    logDebug("clip.error", { url, startSec, endSec, quality, error: error.message || String(error) });
-    console.error("Clip error:", error.message);
-    res.status(500).json({ error: `Clip failed: ${error.message}` });
+    await unlink(clipFile).catch(() => {});
+    await unlink(rawFile).catch(() => {});
+    const detail = error.stderr || error.message || "Unknown error";
+    logDebug("clip.error", { url, startSec, endSec, quality, error: detail.slice(0, 1000) });
+    console.error("Clip error:", detail.slice(0, 500));
+    res.status(500).json({ error: `Clip failed: ${detail.slice(0, 500)}` });
   }
 });
 
 app.get("/debug", async (_req, res) => {
-  res.json({
-    rapidapi: RAPIDAPI_KEY ? "configured" : "not configured",
-    debug_events: debugEvents.length,
-  });
+  const results = { debug_events: debugEvents.length };
+
+  // yt-dlp version
+  try {
+    const ytdlp = await execCapture("yt-dlp", ["--version"], { timeout: 10_000 });
+    results.ytdlp = ytdlp.stdout.trim();
+  } catch (e) {
+    results.ytdlp = `ERROR: ${e.stderr || e.message}`;
+  }
+
+  // ffmpeg version
+  try {
+    const ffmpeg = await execCapture("ffmpeg", ["-version"], { timeout: 10_000 });
+    results.ffmpeg = ffmpeg.stdout.split("\n")[0];
+  } catch (e) {
+    results.ffmpeg = `ERROR: ${e.stderr || e.message}`;
+  }
+
+  // Deno version
+  try {
+    const deno = await execCapture("deno", ["--version"], { timeout: 10_000 });
+    results.deno = deno.stdout.split("\n")[0];
+  } catch (e) {
+    results.deno = `ERROR: ${e.stderr || e.message}`;
+  }
+
+  // wireproxy / WARP status (check if SOCKS5 proxy is reachable)
+  try {
+    const net = require("net");
+    const warpCheck = await new Promise((resolve, reject) => {
+      const sock = net.connect(1080, "127.0.0.1", () => {
+        sock.destroy();
+        resolve("reachable on :1080");
+      });
+      sock.on("error", reject);
+      sock.setTimeout(3000, () => { sock.destroy(); reject(new Error("timeout")); });
+    });
+    results.wireproxy = warpCheck;
+  } catch (e) {
+    results.wireproxy = `ERROR: ${e.message}`;
+  }
+
+  // bgutil PO token server
+  try {
+    const http = require("http");
+    const potCheck = await new Promise((resolve, reject) => {
+      const req = http.get("http://127.0.0.1:4416/", { timeout: 3000 }, (r) => {
+        let body = "";
+        r.on("data", (d) => body += d);
+        r.on("end", () => resolve({ status: r.statusCode, body: body.slice(0, 200) }));
+      });
+      req.on("error", reject);
+      req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+    });
+    results.bgutil_pot_server = potCheck;
+  } catch (e) {
+    results.bgutil_pot_server = `ERROR: ${e.message}`;
+  }
+
+  res.json(results);
 });
 
 app.get("/debug/logs", (_req, res) => {
@@ -250,5 +266,5 @@ app.get("/health", (_req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Download service running on port ${PORT}`);
-  console.log(`  RapidAPI: ${RAPIDAPI_KEY ? "configured" : "NOT configured"}`);
+  console.log(`  WARP proxy: ${WARP_PROXY}`);
 });
