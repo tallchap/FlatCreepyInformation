@@ -1,12 +1,11 @@
 const express = require("express");
 const cors = require("cors");
 const { execFile } = require("child_process");
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
 const { readFile, unlink, writeFile } = require("fs/promises");
 const { tmpdir } = require("os");
 const { join } = require("path");
 const crypto = require("crypto");
-const { ApifyClient } = require("apify-client");
-const { S3Client, GetObjectCommand, HeadObjectCommand } = require("@aws-sdk/client-s3");
 
 const app = express();
 app.use(cors());
@@ -23,16 +22,8 @@ const AWS_SECRET_ACCESS_KEY = process.env.AWS_SECRET_ACCESS_KEY || "";
 const AWS_REGION = process.env.AWS_REGION || "us-east-1";
 const S3_BUCKET = process.env.S3_BUCKET || "doom-debates-videos";
 
-const apifyClient = APIFY_TOKEN ? new ApifyClient({ token: APIFY_TOKEN }) : null;
-const s3Client = (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY)
-  ? new S3Client({
-      region: AWS_REGION,
-      credentials: {
-        accessKeyId: AWS_ACCESS_KEY_ID,
-        secretAccessKey: AWS_SECRET_ACCESS_KEY,
-      },
-    })
-  : null;
+const s3Configured = !!(AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY && AWS_REGION && S3_BUCKET);
+const s3Client = s3Configured ? new S3Client({ region: AWS_REGION, credentials: { accessKeyId: AWS_ACCESS_KEY_ID, secretAccessKey: AWS_SECRET_ACCESS_KEY } }) : null;
 
 function isYouTubeUrl(url) {
   return /^https?:\/\/(www\.)?(youtube\.com|youtu\.be)\//i.test(url);
@@ -142,142 +133,64 @@ async function execYtdlpWithRetry(args, opts = {}, maxRetries = 5) {
 // ─── Apify + S3 helpers ─────────────────────────────────────────────
 
 /**
- * Download a YouTube video via Apify actor into S3, return the S3 key.
- * The actor streamers/youtube-video-downloader uploads directly to S3
- * via its output, and we store the result in our bucket.
+ * Download a YouTube video via Apify actor into S3 and return the resulting file info.
  */
-async function downloadViaApify(videoUrl) {
-  if (!apifyClient) throw new Error("APIFY_TOKEN not configured");
-  if (!s3Client) throw new Error("AWS S3 credentials not configured");
+async function downloadViaApify(videoUrl, preferredQuality = "720p") {
+  if (!APIFY_TOKEN) throw new Error("APIFY_TOKEN not configured");
+  if (!s3Configured) throw new Error("AWS S3 credentials not configured");
 
-  const videoId = extractVideoId(videoUrl);
-  if (!videoId) throw new Error("Could not extract YouTube video ID from URL");
+  const actorInput = {
+    videos: [{ url: videoUrl }],
+    preferredQuality,
+    s3AccessKeyId: AWS_ACCESS_KEY_ID,
+    s3SecretAccessKey: AWS_SECRET_ACCESS_KEY,
+    s3Bucket: S3_BUCKET,
+    s3Region: AWS_REGION,
+  };
 
-  const s3Key = `apify-downloads/${videoId}.mp4`;
-
-  // Check if we already have this video in S3 (cache hit)
-  try {
-    await s3Client.send(new HeadObjectCommand({ Bucket: S3_BUCKET, Key: s3Key }));
-    console.log(`[apify] S3 cache hit for ${videoId}`);
-    return s3Key;
-  } catch {
-    // Not in S3 yet, proceed with download
-  }
-
-  console.log(`[apify] Starting actor run for ${videoId}...`);
-  const run = await apifyClient.actor("streamers/youtube-video-downloader").call({
-    urls: [videoUrl],
-    quality: "highest",
-  }, {
-    timeoutSecs: 600,
-    waitSecs: 600,
+  console.log(`[apify] Starting streamers/youtube-video-downloader for ${videoUrl}`);
+  const response = await fetch(`https://api.apify.com/v2/acts/streamers~youtube-video-downloader/run-sync-get-dataset-items?token=${encodeURIComponent(APIFY_TOKEN)}&timeout=900`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(actorInput),
   });
-
-  console.log(`[apify] Actor run finished: ${run.id}, status: ${run.status}`);
-
-  if (run.status !== "SUCCEEDED") {
-    throw new Error(`Apify actor run failed with status: ${run.status}`);
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Apify HTTP ${response.status}: ${text.slice(0, 500)}`);
   }
-
-  // Get the dataset items — actor stores download results there
-  const { items } = await apifyClient.dataset(run.defaultDatasetId).listItems();
-
-  if (!items || items.length === 0) {
+  const items = await response.json();
+  if (!Array.isArray(items) || items.length === 0) {
     throw new Error("Apify actor returned no items");
   }
 
   const item = items[0];
-
-  // The actor typically provides a download URL in the output
-  // We need to download the video and upload to our S3 bucket
-  const videoDownloadUrl = item.url || item.videoUrl || item.downloadUrl || item.mediaUrl;
-
-  if (!videoDownloadUrl) {
-    // Check if the actor stored the file in key-value store
-    const kvStoreId = run.defaultKeyValueStoreId;
-    if (kvStoreId) {
-      console.log(`[apify] Checking key-value store ${kvStoreId} for video file...`);
-      const store = apifyClient.keyValueStore(kvStoreId);
-      // Try common key names the actor might use
-      for (const key of ["OUTPUT", "video", `${videoId}.mp4`, `${videoId}`]) {
-        try {
-          const record = await store.getRecord(key, { buffer: true });
-          if (record && record.value) {
-            console.log(`[apify] Found video in KV store under key "${key}", uploading to S3...`);
-            const { Upload } = require("@aws-sdk/lib-storage");
-            const { S3Client: S3C } = require("@aws-sdk/client-s3");
-            // Use PutObject via stream
-            const { PutObjectCommand } = require("@aws-sdk/client-s3");
-            await s3Client.send(new PutObjectCommand({
-              Bucket: S3_BUCKET,
-              Key: s3Key,
-              Body: Buffer.from(record.value),
-              ContentType: "video/mp4",
-            }));
-            console.log(`[apify] Uploaded to S3: ${s3Key}`);
-            return s3Key;
-          }
-        } catch {
-          continue;
-        }
-      }
-    }
-    throw new Error(`Apify actor output missing video URL. Keys: ${Object.keys(item).join(", ")}`);
+  if (!item.downloadedFileUrl) {
+    throw new Error(`Apify actor output missing downloadedFileUrl. Keys: ${Object.keys(item).join(", ")}`);
   }
 
-  // Download from the URL the actor provided and upload to S3
-  console.log(`[apify] Downloading video from actor output URL...`);
-  const https = require("https");
-  const http = require("http");
-  const fetchModule = videoDownloadUrl.startsWith("https") ? https : http;
-
-  const videoBuffer = await new Promise((resolve, reject) => {
-    fetchModule.get(videoDownloadUrl, (response) => {
-      if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
-        // Follow redirect
-        const rmod = response.headers.location.startsWith("https") ? https : http;
-        rmod.get(response.headers.location, (r2) => {
-          const chunks = [];
-          r2.on("data", (c) => chunks.push(c));
-          r2.on("end", () => resolve(Buffer.concat(chunks)));
-          r2.on("error", reject);
-        }).on("error", reject);
-        return;
-      }
-      const chunks = [];
-      response.on("data", (c) => chunks.push(c));
-      response.on("end", () => resolve(Buffer.concat(chunks)));
-      response.on("error", reject);
-    }).on("error", reject);
-  });
-
-  console.log(`[apify] Downloaded ${(videoBuffer.length / 1024 / 1024).toFixed(1)} MB, uploading to S3...`);
-  const { PutObjectCommand } = require("@aws-sdk/client-s3");
-  await s3Client.send(new PutObjectCommand({
-    Bucket: S3_BUCKET,
-    Key: s3Key,
-    Body: videoBuffer,
-    ContentType: "video/mp4",
-  }));
-
-  console.log(`[apify] Uploaded to S3: ${s3Key}`);
-  return s3Key;
+  return {
+    downloadedFileUrl: item.downloadedFileUrl,
+    fileKey: item.fileKey || null,
+    id: item.id || null,
+    raw: item,
+  };
 }
 
 /**
- * Fetch a video from S3 and save to a local temp file.
+ * Fetch an S3 object uploaded by Apify and save to local temp file.
  */
-async function fetchFromS3(s3Key) {
-  const localPath = join(tmpdir(), `s3-${crypto.randomUUID()}.mp4`);
-  const response = await s3Client.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: s3Key }));
-
-  // Stream to file
+async function fetchFromS3(apifyResult) {
+  if (!s3Client) throw new Error("AWS S3 credentials not configured");
+  if (!apifyResult.fileKey) throw new Error("Apify output missing fileKey");
+  const extMatch = apifyResult.fileKey.match(/\.([a-zA-Z0-9]+)$/);
+  const ext = extMatch ? extMatch[1] : 'mp4';
+  const localPath = join(tmpdir(), `s3-${crypto.randomUUID()}.${ext}`);
+  const response = await s3Client.send(new GetObjectCommand({ Bucket: S3_BUCKET, Key: apifyResult.fileKey }));
   const chunks = [];
-  for await (const chunk of response.Body) {
-    chunks.push(chunk);
-  }
-  await writeFile(localPath, Buffer.concat(chunks));
-  console.log(`[s3] Downloaded ${s3Key} to ${localPath} (${(Buffer.concat(chunks).length / 1024 / 1024).toFixed(1)} MB)`);
+  for await (const chunk of response.Body) chunks.push(chunk);
+  const buffer = Buffer.concat(chunks);
+  await writeFile(localPath, buffer);
+  console.log(`[s3] Downloaded ${apifyResult.fileKey} to ${localPath} (${(buffer.length / 1024 / 1024).toFixed(1)} MB)`);
   return localPath;
 }
 
@@ -285,13 +198,13 @@ async function fetchFromS3(s3Key) {
 
 app.post("/download", async (req, res) => {
   const url = req.body.url || DEMO_URL;
-  const useApify = isYouTubeUrl(url) && apifyClient && s3Client;
+  const useApify = isYouTubeUrl(url) && !!APIFY_TOKEN && s3Configured;
 
   if (useApify) {
     try {
       console.log(`[download] Using Apify+S3 path for YouTube URL`);
-      const s3Key = await downloadViaApify(url);
-      const localPath = await fetchFromS3(s3Key);
+      const apifyResult = await downloadViaApify(url, req.body.quality === "1080p" ? "1080p" : "720p");
+      const localPath = await fetchFromS3(apifyResult);
 
       const data = await readFile(localPath);
       await unlink(localPath).catch(() => {});
@@ -348,7 +261,7 @@ app.post("/clip", async (req, res) => {
   const uid = crypto.randomUUID();
   const clipFile = join(tmpdir(), `clip-${uid}.mp4`);
   const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
-  const useApify = isYouTubeUrl(url) && apifyClient && s3Client;
+  const useApify = isYouTubeUrl(url) && !!APIFY_TOKEN && s3Configured;
 
   // Quality-based format selection (for yt-dlp fallback)
   const fmt = quality === "1080p"
@@ -361,8 +274,8 @@ app.post("/clip", async (req, res) => {
     if (useApify) {
       try {
         console.log(`[clip] Using Apify+S3 path for YouTube URL`);
-        const s3Key = await downloadViaApify(url);
-        sourceFile = await fetchFromS3(s3Key);
+        const apifyResult = await downloadViaApify(url, quality === "1080p" ? "1080p" : "720p");
+        sourceFile = await fetchFromS3(apifyResult);
       } catch (apifyErr) {
         console.error("[clip] Apify+S3 failed, falling back to yt-dlp:", apifyErr.message);
       }
@@ -447,7 +360,7 @@ app.get("/debug", async (_req, res) => {
     residential_proxies: residentialProxies.length,
     residential_countries: [...new Set(residentialProxies.map(p => p.country))],
     apify: APIFY_TOKEN ? "configured" : "not configured",
-    aws_s3: (AWS_ACCESS_KEY_ID && AWS_SECRET_ACCESS_KEY) ? "configured" : "not configured",
+    aws_s3: s3Configured ? "configured" : "not configured",
     s3_bucket: S3_BUCKET,
     aws_region: AWS_REGION,
   };
@@ -493,6 +406,6 @@ fetchResidentialProxies().then(() => {
   app.listen(PORT, () => {
     console.log(`Download service running on port ${PORT}`);
     console.log(`  Apify: ${APIFY_TOKEN ? "configured" : "NOT configured"}`);
-    console.log(`  S3:    ${s3Client ? "configured" : "NOT configured"} (bucket: ${S3_BUCKET})`);
+    console.log(`  S3:    ${s3Configured ? "configured" : "NOT configured"} (bucket: ${S3_BUCKET})`);
   });
 });
