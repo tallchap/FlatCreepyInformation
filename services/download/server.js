@@ -230,7 +230,8 @@ app.post("/clip", async (req, res) => {
         "-i", rawFile,
         "-ss", String(startSec),
         "-to", String(endSec),
-        "-c", "copy",
+        "-c:v", "libx264", "-crf", "23",
+        "-c:a", "aac",
         "-movflags", "+faststart",
         clipFile,
       ], { timeout: 120_000 });
