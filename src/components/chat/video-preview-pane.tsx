@@ -55,7 +55,7 @@ export function VideoPreviewPane({ videoId, startSec, title }: Props) {
             className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-md transition-colors"
             style={{ backgroundColor: "#DC2626" }}
           >
-            Clip Video
+            Snip It
           </Link>
         </div>
       </CardContent>

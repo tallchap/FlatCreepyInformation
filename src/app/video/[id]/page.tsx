@@ -107,7 +107,7 @@ export default async function VideoPage({
           className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
           style={{ backgroundColor: "#DC2626" }}
         >
-          Clip Video
+          Snip It
         </a>
       </div>
 
