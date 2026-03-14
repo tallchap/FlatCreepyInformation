@@ -51,7 +51,7 @@ function ClipCard({
         </span>
       </div>
       <div className="p-2">
-        <p className="text-[11px] font-medium text-gray-800 line-clamp-2 leading-snug">
+        <p className="text-sm font-medium text-gray-800 line-clamp-2 leading-snug">
           {clip.title}
         </p>
         {active && (

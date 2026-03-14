@@ -83,11 +83,11 @@ export function ClipsPage({
           )}
           {episodeOpen && (
             <Link
-              href={`/vizard/${videoId}`}
+              href="/edit"
               onClick={(e) => e.stopPropagation()}
               className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
             >
-              Snip It ✂️
+              Snip It
             </Link>
           )}
         </button>
@@ -164,7 +164,7 @@ export function ClipsPage({
             )}
           </div>
           {activeClip && (
-            <h3 className="text-base font-bold text-gray-900 mt-1">
+            <h3 className="text-xl font-bold text-gray-900 mt-1">
               {activeClip.title}
             </h3>
           )}
