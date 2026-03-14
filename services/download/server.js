@@ -111,6 +111,11 @@ function ytdlpBaseArgs({ useProxy = false } = {}) {
     args.push("--proxy", WARP_PROXY);
   }
   args.push(
+    "--extractor-args", "youtube:player_client=mweb;fetch_pot=always",
+    "--extractor-args", "youtubepot-bgutilhttp:base_url=http://127.0.0.1:4416",
+    "--remote-components", "ejs:github",
+  );
+  args.push(
     "--sleep-interval", "5",
     "--max-sleep-interval", "10",
     "--retries", "10",

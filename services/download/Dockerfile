@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y \
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh
 
 # yt-dlp + bgutil PO token provider (same Python env so plugin is discovered)
-RUN pip3 install --break-system-packages yt-dlp bgutil-ytdlp-pot-provider
+RUN pip3 install --break-system-packages "yt-dlp>=2026.03.13" bgutil-ytdlp-pot-provider
 
 # bgutil PO token HTTP server
 RUN git clone --depth 1 \
