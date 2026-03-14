@@ -46,6 +46,19 @@ export function ClipEditor() {
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const videoContainerRef = useRef<HTMLDivElement>(null);
+  const [videoHeight, setVideoHeight] = useState<number | null>(null);
+
+  // Track video container height for transcript matching
+  useEffect(() => {
+    const el = videoContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => {
+      setVideoHeight(entry.contentRect.height);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [videoId]);
 
   // Auto-load from ?v= query param
   useEffect(() => {
@@ -289,13 +302,13 @@ export function ClipEditor() {
       {videoId && (
         <>
           {/* Player + Transcript side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch">
-            <div className="lg:col-span-3">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+            <div className="lg:col-span-3" ref={videoContainerRef}>
               <div className="aspect-video bg-black rounded-xl overflow-hidden">
                 <div id="clip-player" className="w-full h-full" />
               </div>
             </div>
-            <div className="lg:col-span-2 min-h-0">
+            <div className="lg:col-span-2" style={videoHeight ? { height: videoHeight } : undefined}>
               <TranscriptPanel
                 videoId={videoId}
                 startSec={startSec}
