@@ -176,37 +176,6 @@ export function Timeline({
           Timeline
         </span>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-400 mr-0.5">Start</span>
-            <button
-              onClick={() => onStartChange(Math.max(0, startSec - FRAME_STEP))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
-            >
-              -2f
-            </button>
-            <button
-              onClick={() => onStartChange(Math.min(endSec - 0.01, startSec + FRAME_STEP))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
-            >
-              +2f
-            </button>
-          </div>
-          <div className="flex items-center gap-1">
-            <span className="text-[10px] text-gray-400 mr-0.5">End</span>
-            <button
-              onClick={() => onEndChange(Math.max(startSec + 0.01, endSec - FRAME_STEP))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
-            >
-              -2f
-            </button>
-            <button
-              onClick={() => onEndChange(Math.min(duration, endSec + FRAME_STEP))}
-              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-[10px] font-bold text-gray-500 hover:bg-gray-100"
-            >
-              +2f
-            </button>
-          </div>
-          <div className="w-px h-4 bg-gray-200" />
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleZoomChange(zoom - 1)}
@@ -332,6 +301,50 @@ export function Timeline({
           {tickLabels.map((t, i) => (
             <span key={i}>{t}</span>
           ))}
+        </div>
+
+        {/* Start/End frame-nudge buttons aligned with markers */}
+        <div className="relative h-7 mt-1">
+          {startVisible && (
+            <div
+              className="absolute flex items-center gap-0.5 z-10"
+              style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
+            >
+              <span className="text-[10px] text-[#99cc66] font-semibold mr-0.5">Start</span>
+              <button
+                onClick={() => onStartChange(Math.max(0, startSec - FRAME_STEP))}
+                className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
+              >
+                -2f
+              </button>
+              <button
+                onClick={() => onStartChange(Math.min(endSec - 0.01, startSec + FRAME_STEP))}
+                className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
+              >
+                +2f
+              </button>
+            </div>
+          )}
+          {endVisible && (
+            <div
+              className="absolute flex items-center gap-0.5 z-10"
+              style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
+            >
+              <span className="text-[10px] text-red-500 font-semibold mr-0.5">End</span>
+              <button
+                onClick={() => onEndChange(Math.max(startSec + 0.01, endSec - FRAME_STEP))}
+                className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
+              >
+                -2f
+              </button>
+              <button
+                onClick={() => onEndChange(Math.min(duration, endSec + FRAME_STEP))}
+                className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
+              >
+                +2f
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Draggable minimap when zoomed */}
