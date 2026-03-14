@@ -81,13 +81,15 @@ export function ClipsPage({
               {videoMeta.videoLength}
             </span>
           )}
-          <Link
-            href={`/vizard/${videoId}`}
-            onClick={(e) => e.stopPropagation()}
-            className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
-          >
-            Snip It ✂️
-          </Link>
+          {episodeOpen && (
+            <Link
+              href={`/vizard/${videoId}`}
+              onClick={(e) => e.stopPropagation()}
+              className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
+            >
+              Snip It ✂️
+            </Link>
+          )}
         </button>
 
         {episodeOpen && (
