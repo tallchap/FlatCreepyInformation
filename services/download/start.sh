@@ -12,7 +12,7 @@ if [ ! -f /etc/wireproxy.conf ]; then
     if wgcf generate 2>&1; then
       echo "wgcf generate succeeded"
       mv wgcf-profile.conf /etc/wireproxy.conf
-      printf '\n[Socks5]\nBindAddress = 127.0.0.1:1080\n' >> /etc/wireproxy.conf
+      printf '\n[Socks5]\nBindAddress = 127.0.0.1:1080\n[http]\nBindAddress = 127.0.0.1:8080\n' >> /etc/wireproxy.conf
       echo "WARP config generated"
     else
       echo "WARNING: wgcf generate failed (exit $?)"

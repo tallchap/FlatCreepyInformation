@@ -10,16 +10,16 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const WARP_PROXY = "socks5://127.0.0.1:1080";
+const WARP_PROXY = "http://127.0.0.1:8080";
 let warpAvailable = false;
 
-// Check if WARP proxy is reachable at startup
+// Check if WARP HTTP proxy is reachable at startup
 setTimeout(() => {
   const net = require("net");
-  const sock = net.connect(1080, "127.0.0.1", () => {
+  const sock = net.connect(8080, "127.0.0.1", () => {
     sock.destroy();
     warpAvailable = true;
-    console.log("WARP proxy detected on :1080 — will route yt-dlp through WARP");
+    console.log("WARP HTTP proxy detected on :8080 — will route yt-dlp through WARP");
   });
   sock.on("error", () => {
     console.log("WARP proxy not available — yt-dlp will use direct connection");
@@ -213,26 +213,43 @@ app.post("/clip", async (req, res) => {
   try {
     logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable });
 
-    // Strategy: try direct connection first (full format range), then
-    // WARP proxy as fallback (may get lower quality due to SABR).
-    // --download-sections only works without proxy (ffmpeg can't use SOCKS5).
+    // Strategy: WARP HTTP proxy + --download-sections (fast, avoids bot detection).
+    // HTTP proxy works with ffmpeg (unlike SOCKS5). Falls back to full download + trim.
     let downloaded = false;
 
-    // Attempt 1: direct, with --download-sections
-    try {
-      await execYtdlp(url, [
-        url, "-f", fmt,
-        "--download-sections", `*${startSec}-${endSec}`,
-        "--force-keyframes-at-cuts",
-        "--merge-output-format", "mp4",
-        "-o", clipFile,
-      ], { timeout: 300_000, useProxy: false });
-      downloaded = true;
-    } catch (directErr) {
-      logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+    // Attempt 1: WARP proxy + --download-sections (fast clip)
+    if (warpAvailable) {
+      try {
+        await execYtdlp(url, [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4",
+          "-o", clipFile,
+        ], { timeout: 300_000, useProxy: true });
+        downloaded = true;
+      } catch (warpClipErr) {
+        logDebug("clip.warp-clip-failed", { error: (warpClipErr.stderr || warpClipErr.message || "").slice(0, 500) });
+      }
     }
 
-    // Attempt 2: WARP proxy, full download + ffmpeg trim
+    // Attempt 2: direct, with --download-sections (works when IP isn't blocked)
+    if (!downloaded) {
+      try {
+        await execYtdlp(url, [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4",
+          "-o", clipFile,
+        ], { timeout: 300_000, useProxy: false });
+        downloaded = true;
+      } catch (directErr) {
+        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+      }
+    }
+
+    // Attempt 3: WARP proxy, full download + ffmpeg trim (last resort)
     if (!downloaded && warpAvailable) {
       try {
         await execYtdlp(url, [
@@ -254,11 +271,11 @@ app.post("/clip", async (req, res) => {
         await unlink(rawFile).catch(() => {});
         downloaded = true;
       } catch (warpErr) {
-        logDebug("clip.warp-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 500) });
+        logDebug("clip.warp-full-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 500) });
       }
     }
 
-    // Attempt 3: direct, full download + ffmpeg trim (no sections, no proxy)
+    // Attempt 4: direct, full download + ffmpeg trim (no proxy, last resort)
     if (!downloaded) {
       await execYtdlp(url, [
         url, "-f", fmt,
