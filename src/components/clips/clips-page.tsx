@@ -84,10 +84,7 @@ export function ClipsPage({
           <Link
             href={`/vizard/${videoId}`}
             onClick={(e) => e.stopPropagation()}
-            className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-md transition-colors"
-            style={{ color: "#DC2626" }}
-            onMouseEnter={(e) => (e.currentTarget.style.color = "#B91C1C")}
-            onMouseLeave={(e) => (e.currentTarget.style.color = "#DC2626")}
+            className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
           >
             Snip It ✂️
           </Link>
@@ -156,10 +153,7 @@ export function ClipsPage({
               <a
                 href={activeClip.gcsUrl}
                 download
-                className="ml-auto text-xs font-semibold px-2.5 py-1 rounded-md transition-colors"
-                style={{ color: "#DC2626" }}
-                onMouseEnter={(e) => (e.currentTarget.style.color = "#B91C1C")}
-                onMouseLeave={(e) => (e.currentTarget.style.color = "#DC2626")}
+                className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
               >
                 Download ↓
               </a>
