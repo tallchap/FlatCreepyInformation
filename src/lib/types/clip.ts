@@ -33,4 +33,5 @@ export type VizardResponse = {
   videos: VizardClip[];
   projectId: number;
   projectName?: string;
+  creditsUsed?: number;
 };
