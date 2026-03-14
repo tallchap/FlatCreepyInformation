@@ -193,7 +193,6 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: Tran
       <div
         ref={containerRef}
         className="overflow-y-auto flex-1 p-3 space-y-0.5"
-        style={{ maxHeight: 360 }}
       >
         {lines.map((line, i) => {
           const inRange = line.start >= startSec && line.start < endSec;

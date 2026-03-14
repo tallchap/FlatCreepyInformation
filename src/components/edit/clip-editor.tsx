@@ -289,13 +289,13 @@ export function ClipEditor() {
       {videoId && (
         <>
           {/* Player + Transcript side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-stretch">
             <div className="lg:col-span-3">
               <div className="aspect-video bg-black rounded-xl overflow-hidden">
                 <div id="clip-player" className="w-full h-full" />
               </div>
             </div>
-            <div className="lg:col-span-2">
+            <div className="lg:col-span-2 min-h-0">
               <TranscriptPanel
                 videoId={videoId}
                 startSec={startSec}
