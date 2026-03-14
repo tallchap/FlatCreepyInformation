@@ -37,7 +37,7 @@ function ClipCard({
           className="w-full h-full object-cover"
         />
         {/* Dark overlay + snippysaurus logo */}
-        <div className="absolute inset-0 bg-black/55 flex items-center justify-center">
+        <div className="absolute inset-0 bg-black/65 flex items-center justify-center">
           <Image
             src="/snippysaurus-logo.png"
             alt=""

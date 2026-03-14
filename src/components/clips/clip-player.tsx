@@ -33,7 +33,7 @@ export function ClipPlayer({
         onPlay={() => setHasStarted(true)}
       />
       {/* Snippysaurus logo overlay */}
-      <div className="absolute inset-0 bg-black/45 flex items-center justify-center pointer-events-none">
+      <div className="absolute inset-0 bg-black/65 flex items-center justify-center pointer-events-none">
         <Image
           src="/snippysaurus-logo.png"
           alt="Snippysaurus"
