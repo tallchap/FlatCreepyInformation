@@ -204,19 +204,29 @@ export function Timeline({
           </div>
           <div className="w-px h-4 bg-gray-200" />
           <div className="flex items-center gap-1">
-            {SPEED_OPTIONS.map((rate) => (
-              <button
-                key={rate}
-                onClick={() => onPlaybackRateChange(rate)}
-                className={`px-1.5 h-6 flex items-center justify-center rounded text-[10px] font-bold transition-colors ${
-                  playbackRate === rate
-                    ? "bg-gray-800 text-white"
-                    : "border border-gray-300 text-gray-500 hover:bg-gray-100"
-                }`}
-              >
-                {rate}x
-              </button>
-            ))}
+            <button
+              onClick={() => {
+                const idx = SPEED_OPTIONS.indexOf(playbackRate);
+                if (idx > 0) onPlaybackRateChange(SPEED_OPTIONS[idx - 1]);
+              }}
+              disabled={SPEED_OPTIONS.indexOf(playbackRate) <= 0}
+              className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              &#x00AB;
+            </button>
+            <span className="text-xs font-mono text-gray-600 w-8 text-center">
+              {playbackRate}x
+            </span>
+            <button
+              onClick={() => {
+                const idx = SPEED_OPTIONS.indexOf(playbackRate);
+                if (idx < SPEED_OPTIONS.length - 1) onPlaybackRateChange(SPEED_OPTIONS[idx + 1]);
+              }}
+              disabled={SPEED_OPTIONS.indexOf(playbackRate) >= SPEED_OPTIONS.length - 1}
+              className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              &#x00BB;
+            </button>
           </div>
           <span className="text-xs text-gray-400">
             Total: {formatTime(duration)}
@@ -263,15 +273,6 @@ export function Timeline({
               />
             ))}
           </div>
-
-          {/* Hint when no handles placed */}
-          {!handlesPlaced && (
-            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
-              <span className="text-xs text-gray-400 bg-white/80 px-3 py-1 rounded-md">
-                Click to set clip start
-              </span>
-            </div>
-          )}
 
           {/* Selected region */}
           {handlesPlaced && regionWidth > 0 && (
