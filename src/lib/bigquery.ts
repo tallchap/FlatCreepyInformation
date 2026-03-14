@@ -359,3 +359,34 @@ export async function fetchTranscript(id: string) {
   if (!rows?.length || !rows[0].Search_Doc_1) return [];
   return parseLegacyTranscript(rows[0].Search_Doc_1 as string);
 }
+
+/* ── Clips ── */
+
+import type { Clip } from "@/lib/types/clip";
+
+const CLIPS_TABLE = "youtubetranscripts-429803.reptranscripts.clips";
+
+export async function fetchVideoClips(videoId: string): Promise<Clip[]> {
+  const [rows] = await bigQuery.query({
+    query: `SELECT clip_id, video_id, title, category, duration_ms, viral_score,
+                   viral_reason, transcript, speaker, gcs_url, vizard_editor_url
+            FROM \`${CLIPS_TABLE}\`
+            WHERE video_id = @videoId
+            ORDER BY category ASC`,
+    params: { videoId },
+  });
+
+  return (rows || []).map((r: any) => ({
+    clipId: r.clip_id,
+    videoId: r.video_id,
+    title: r.title,
+    category: r.category,
+    durationMs: r.duration_ms,
+    viralScore: r.viral_score ?? null,
+    viralReason: r.viral_reason ?? null,
+    transcript: r.transcript ?? null,
+    speaker: r.speaker ?? null,
+    gcsUrl: r.gcs_url,
+    vizardEditorUrl: r.vizard_editor_url ?? null,
+  }));
+}
