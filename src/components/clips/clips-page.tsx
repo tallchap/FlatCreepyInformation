@@ -154,6 +154,8 @@ export function ClipsPage({
             {activeClip && (
               <a
                 href={activeClip.gcsUrl}
+                target="_blank"
+                rel="noopener noreferrer"
                 download
                 className="ml-auto bg-[#DC2626] hover:bg-[#B91C1C] text-white text-xs font-semibold px-3 py-1.5 rounded-md transition-colors"
               >
