@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import type { Clip } from "@/lib/types/clip";
 import { ClipPlayer } from "./clip-player";
 import { ClipsStrip } from "./clips-strip";
@@ -80,6 +81,13 @@ export function ClipsPage({
               {videoMeta.videoLength}
             </span>
           )}
+          <Link
+            href={`/vizard/${videoId}`}
+            onClick={(e) => e.stopPropagation()}
+            className="ml-auto text-xs font-semibold text-blue-600 hover:text-blue-800 px-2.5 py-1 rounded-md hover:bg-blue-50 transition-colors"
+          >
+            Snip It ✂️
+          </Link>
         </button>
 
         {episodeOpen && (
@@ -140,6 +148,15 @@ export function ClipsPage({
                 {displayClips.length} clip
                 {displayClips.length !== 1 ? "s" : ""}
               </span>
+            )}
+            {activeClip && (
+              <a
+                href={activeClip.gcsUrl}
+                download
+                className="ml-auto text-xs font-semibold text-blue-600 hover:text-blue-800 px-2.5 py-1 rounded-md hover:bg-blue-50 transition-colors"
+              >
+                Download ↓
+              </a>
             )}
           </div>
           {activeClip && (
