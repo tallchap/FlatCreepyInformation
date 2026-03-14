@@ -24,7 +24,7 @@ function ClipCard({
   return (
     <button
       onClick={onClick}
-      className={`flex-shrink-0 w-[200px] rounded-lg overflow-hidden border bg-white text-left transition-all cursor-pointer ${
+      className={`flex-shrink-0 w-[400px] rounded-lg overflow-hidden border bg-white text-left transition-all cursor-pointer ${
         active
           ? "border-blue-500 ring-2 ring-blue-200 shadow-md"
           : "border-gray-200 hover:border-blue-300 hover:shadow-md"
@@ -41,8 +41,8 @@ function ClipCard({
           <Image
             src="/snippysaurus-logo.png"
             alt=""
-            width={28}
-            height={28}
+            width={48}
+            height={48}
             className="rounded"
           />
         </div>
