@@ -1,10 +1,14 @@
 FROM node:20-slim
 
-# System deps
+# System deps (ffmpeg installed separately below for full codec support)
 RUN apt-get update && apt-get install -y \
-    python3 python3-pip ffmpeg curl git unzip \
+    python3 python3-pip curl git unzip xz-utils \
     build-essential pkg-config && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# Static ffmpeg with libx264/libx265 (apt ffmpeg lacks these encoders)
+RUN curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
+    | tar xJ --strip-components=1 -C /usr/local/bin/ --wildcards '*/ffmpeg' '*/ffprobe'
 
 # Deno (mandatory for yt-dlp YouTube JS challenges since Nov 2025)
 RUN curl -fsSL https://deno.land/install.sh | DENO_INSTALL=/usr/local sh

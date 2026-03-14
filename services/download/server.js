@@ -350,9 +350,11 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
         await execCapture("ffmpeg", [
           "-ss", String(startSec), "-i", downloadUrl,
-          "-t", String(duration), "-c", "copy",
+          "-t", String(duration),
+          "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+          "-c:a", "aac", "-b:a", "128k",
           "-movflags", "+faststart", "-y", clipFile,
-        ], { timeout: 120_000 });
+        ], { timeout: 300_000 });
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
@@ -387,9 +389,11 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
       const duration = endSec - startSec;
       await execCapture("ffmpeg", [
         "-ss", String(startSec), "-i", rawFile,
-        "-t", String(duration), "-c", "copy",
+        "-t", String(duration),
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", clipFile,
-      ], { timeout: 120_000 });
+      ], { timeout: 300_000 });
       await unlink(rawFile).catch(() => {});
     }
 
