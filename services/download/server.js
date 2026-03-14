@@ -12,20 +12,68 @@ app.use(express.json());
 
 const WARP_PROXY = "http://127.0.0.1:8080";
 let warpAvailable = false;
+const startupState = { warp: {}, bgutil: {}, ytdlp: {}, wireproxyConf: null };
 
-// Check if WARP HTTP proxy is reachable at startup
-setTimeout(() => {
-  const net = require("net");
-  const sock = net.connect(8080, "127.0.0.1", () => {
-    sock.destroy();
+// Probe a TCP port, returns true/false
+function probePort(port, host = "127.0.0.1", timeoutMs = 2000) {
+  return new Promise((resolve) => {
+    const net = require("net");
+    const sock = net.connect(port, host, () => { sock.destroy(); resolve(true); });
+    sock.on("error", () => resolve(false));
+    sock.setTimeout(timeoutMs, () => { sock.destroy(); resolve(false); });
+  });
+}
+
+// Startup diagnostics — runs after services have had time to start
+setTimeout(async () => {
+  const fs = require("fs");
+  const http = require("http");
+
+  // Check WARP ports
+  const socks5Up = await probePort(1080);
+  const httpUp = await probePort(8080);
+  startupState.warp = { socks5_1080: socks5Up, http_8080: httpUp };
+
+  if (httpUp) {
     warpAvailable = true;
-    console.log("WARP HTTP proxy detected on :8080 — will route yt-dlp through WARP");
-  });
-  sock.on("error", () => {
+    console.log("WARP HTTP proxy detected on :8080");
+  } else if (socks5Up) {
+    console.log("WARP SOCKS5 on :1080 but HTTP :8080 not available");
+  } else {
     console.log("WARP proxy not available — yt-dlp will use direct connection");
-  });
-  sock.setTimeout(2000, () => { sock.destroy(); });
-}, 1000);
+  }
+
+  // Check bgutil PO token server
+  try {
+    const pingData = await new Promise((resolve, reject) => {
+      http.get("http://127.0.0.1:4416/ping", (res) => {
+        let body = "";
+        res.on("data", (c) => body += c);
+        res.on("end", () => { try { resolve(JSON.parse(body)); } catch { resolve(body); } });
+      }).on("error", reject).setTimeout(3000, () => reject(new Error("timeout")));
+    });
+    startupState.bgutil = { status: "up", ...pingData };
+  } catch (e) {
+    startupState.bgutil = { status: "down", error: e.message };
+  }
+
+  // Check yt-dlp version
+  try {
+    const result = await execCapture("yt-dlp", ["--version"], { timeout: 5000 });
+    startupState.ytdlp = { version: result.stdout.trim() };
+  } catch (e) {
+    startupState.ytdlp = { error: e.message };
+  }
+
+  // Read wireproxy config
+  try {
+    startupState.wireproxyConf = fs.readFileSync("/etc/wireproxy.conf", "utf8");
+  } catch {
+    startupState.wireproxyConf = "(not found)";
+  }
+
+  logDebug("startup.diagnostics", startupState);
+}, 2000);
 
 const DEBUG_LOG_LIMIT = 200;
 const debugEvents = [];
@@ -133,7 +181,7 @@ async function execYtdlp(url, args, opts = {}) {
   try {
     const result = await execCapture("yt-dlp", fullArgs, execOpts);
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
-    logDebug("ytdlp.success", { elapsed: `${elapsed}s`, stderr: result.stderr.slice(0, 500) });
+    logDebug("ytdlp.success", { elapsed: `${elapsed}s`, stderr: result.stderr.slice(0, 2000) });
     return result;
   } catch (e) {
     const elapsed = ((Date.now() - start) / 1000).toFixed(1);
@@ -165,7 +213,7 @@ app.post("/download", async (req, res) => {
     try {
       await execYtdlp(url, dlArgs, { timeout: 300_000, useProxy: false });
     } catch (directErr) {
-      logDebug("download.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+      logDebug("download.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 2000) });
       if (warpAvailable) {
         await execYtdlp(url, dlArgs, { timeout: 300_000, useProxy: true });
       } else {
@@ -187,8 +235,8 @@ app.post("/download", async (req, res) => {
     await unlink(outfile).catch(() => {});
     const detail = error.stderr || error.message || "Unknown error";
     logDebug("download.error", { url, error: detail.slice(0, 1000) });
-    console.error("Download error:", detail.slice(0, 500));
-    res.status(500).json({ error: `Download failed: ${detail.slice(0, 500)}` });
+    console.error("Download error:", detail.slice(0, 2000));
+    res.status(500).json({ error: `Download failed: ${detail.slice(0, 2000)}` });
   }
 });
 
@@ -229,7 +277,7 @@ app.post("/clip", async (req, res) => {
         ], { timeout: 300_000, useProxy: true });
         downloaded = true;
       } catch (warpClipErr) {
-        logDebug("clip.warp-clip-failed", { error: (warpClipErr.stderr || warpClipErr.message || "").slice(0, 500) });
+        logDebug("clip.warp-clip-failed", { error: (warpClipErr.stderr || warpClipErr.message || "").slice(0, 2000) });
       }
     }
 
@@ -245,7 +293,7 @@ app.post("/clip", async (req, res) => {
         ], { timeout: 300_000, useProxy: false });
         downloaded = true;
       } catch (directErr) {
-        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 500) });
+        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 2000) });
       }
     }
 
@@ -271,7 +319,7 @@ app.post("/clip", async (req, res) => {
         await unlink(rawFile).catch(() => {});
         downloaded = true;
       } catch (warpErr) {
-        logDebug("clip.warp-full-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 500) });
+        logDebug("clip.warp-full-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 2000) });
       }
     }
 
@@ -311,8 +359,8 @@ app.post("/clip", async (req, res) => {
     await unlink(rawFile).catch(() => {});
     const detail = error.stderr || error.message || "Unknown error";
     logDebug("clip.error", { url, startSec, endSec, quality, error: detail.slice(0, 1000) });
-    console.error("Clip error:", detail.slice(0, 500));
-    res.status(500).json({ error: `Clip failed: ${detail.slice(0, 500)}` });
+    console.error("Clip error:", detail.slice(0, 2000));
+    res.status(500).json({ error: `Clip failed: ${detail.slice(0, 2000)}` });
   }
 });
 
@@ -388,6 +436,32 @@ app.post("/debug/logs/clear", (_req, res) => {
   res.json({ cleared: true });
 });
 
+app.get("/debug/system", async (_req, res) => {
+  const fs = require("fs");
+  const info = { ...startupState };
+
+  // Live port probes
+  info.live = {
+    socks5_1080: await probePort(1080),
+    http_8080: await probePort(8080),
+    bgutil_4416: await probePort(4416),
+  };
+  info.warpAvailable = warpAvailable;
+  info.debugEventCount = debugEvents.length;
+
+  // Read wireproxy config
+  try { info.wireproxyConf = fs.readFileSync("/etc/wireproxy.conf", "utf8"); }
+  catch { info.wireproxyConf = "(not found)"; }
+
+  // yt-dlp version
+  try {
+    const r = await execCapture("yt-dlp", ["--version"], { timeout: 5000 });
+    info.ytdlpVersion = r.stdout.trim();
+  } catch (e) { info.ytdlpVersion = `error: ${e.message}`; }
+
+  res.json(info);
+});
+
 app.get("/debug/ytdlp-plugins", async (_req, res) => {
   try {
     const result = await execCapture("yt-dlp", [
@@ -416,7 +490,7 @@ app.get("/debug/bgutil-test", async (_req, res) => {
       }, (r) => {
         let body = "";
         r.on("data", (d) => body += d);
-        r.on("end", () => resolve({ status: r.statusCode, body: body.slice(0, 500) }));
+        r.on("end", () => resolve({ status: r.statusCode, body: body.slice(0, 2000) }));
       });
       req.on("error", reject);
       req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });

@@ -40,6 +40,7 @@ export function ClipEditor() {
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugCopied, setDebugCopied] = useState(false);
+  const [systemInfo, setSystemInfo] = useState<any>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
@@ -458,8 +459,20 @@ export function ClipEditor() {
                   >
                     Clear
                   </button>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch("/api/download-system");
+                      setSystemInfo(await res.json());
+                    }}
+                    className="px-2 py-1 rounded border border-blue-700 text-blue-300 hover:bg-blue-900/30"
+                  >
+                    System Info
+                  </button>
                 </div>
               </div>
+              {systemInfo && (
+                <pre className="whitespace-pre-wrap break-all border border-blue-900 rounded p-3 bg-blue-950/30 text-blue-200">{JSON.stringify(systemInfo, null, 2)}</pre>
+              )}
               {debugLogs.length === 0 ? (
                 <div className="text-green-500">No debug events yet.</div>
               ) : (
