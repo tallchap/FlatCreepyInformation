@@ -151,7 +151,7 @@ export function ClipsPage({
                 {displayClips.length !== 1 ? "s" : ""}
               </span>
             )}
-            {activeClip && episodeOpen && (
+            {activeClip && (
               <a
                 href={activeClip.gcsUrl}
                 download
