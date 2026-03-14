@@ -325,6 +325,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     let downloaded = false;
 
     // Attempt 1: RapidAPI (no timeout limit — runs in background)
+    const rapidRaw = join(tmpdir(), `rapid-raw-${jobId}.mp4`);
     if (RAPIDAPI_KEY) {
       try {
         const videoId = extractVideoId(url);
@@ -347,18 +348,27 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
 
         job.progress = 70;
         const duration = endSec - startSec;
-        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+        logDebug("rapidapi.downloading", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+
+        // Download full video to local file first (curl has working HTTPS via system CA store)
+        await execCapture("curl", [
+          "-fL", "-o", rapidRaw, downloadUrl,
+        ], { timeout: 300_000 });
+
+        logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
         await execCapture("ffmpeg", [
-          "-ss", String(startSec), "-i", downloadUrl,
+          "-ss", String(startSec), "-i", rapidRaw,
           "-t", String(duration),
           "-c:v", "libx264", "-crf", "18", "-preset", "fast",
           "-c:a", "aac", "-b:a", "128k",
           "-movflags", "+faststart", "-y", clipFile,
         ], { timeout: 300_000 });
+        await unlink(rapidRaw).catch(() => {});
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
-        logDebug("rapidapi.failed", { error: (rapidErr.stderr || rapidErr.message || "").slice(0, 2000) });
+        await unlink(rapidRaw).catch(() => {});
+        logDebug("rapidapi.failed", { error: (rapidErr.stderr || "").slice(0, 2000), message: (rapidErr.message || "").slice(0, 500) });
       }
     }
 
