@@ -449,6 +449,15 @@ export function ClipEditor() {
                   >
                     {debugLoading ? "Refreshing..." : "Refresh"}
                   </button>
+                  <button
+                    onClick={async () => {
+                      await fetch("/api/download-debug", { method: "DELETE" });
+                      setDebugLogs([]);
+                    }}
+                    className="px-2 py-1 rounded border border-red-700 text-red-300 hover:bg-red-900/30"
+                  >
+                    Clear
+                  </button>
                 </div>
               </div>
               {debugLogs.length === 0 ? (

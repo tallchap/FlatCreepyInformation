@@ -383,6 +383,11 @@ app.get("/debug/logs", (_req, res) => {
   res.json({ items: debugEvents });
 });
 
+app.post("/debug/logs/clear", (_req, res) => {
+  debugEvents.length = 0;
+  res.json({ cleared: true });
+});
+
 app.get("/debug/ytdlp-plugins", async (_req, res) => {
   try {
     const result = await execCapture("yt-dlp", [
