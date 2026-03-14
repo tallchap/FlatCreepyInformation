@@ -14,6 +14,63 @@ const WARP_PROXY = "http://127.0.0.1:8080";
 let warpAvailable = false;
 const startupState = { warp: {}, bgutil: {}, ytdlp: {}, wireproxyConf: null };
 
+// RapidAPI YouTube download
+const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
+const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
+const downloadUrlCache = new Map(); // videoId → { url, expiresAt }
+
+async function rapidApiDownload(videoUrl, quality) {
+  const https = require("https");
+  const format = quality === "1080p" ? "1080" : "720";
+  const params = new URLSearchParams({
+    format,
+    add_info: "0",
+    url: videoUrl,
+    allow_extended_duration: "false",
+    no_merge: "false",
+  });
+
+  // Step 1: Request download
+  const initRes = await new Promise((resolve, reject) => {
+    https.get(`https://${RAPIDAPI_HOST}/ajax/download.php?${params}`, {
+      headers: {
+        "Content-Type": "application/json",
+        "x-rapidapi-host": RAPIDAPI_HOST,
+        "x-rapidapi-key": RAPIDAPI_KEY,
+      },
+    }, (res) => {
+      let body = "";
+      res.on("data", (c) => body += c);
+      res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+    }).on("error", reject);
+  });
+
+  if (!initRes.success) throw new Error(`RapidAPI init failed: ${initRes.message}`);
+  logDebug("rapidapi.requested", { id: initRes.id, progress_url: initRes.progress_url });
+
+  // Step 2: Poll progress
+  const progressUrl = initRes.progress_url;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    await new Promise(r => setTimeout(r, 2000));
+    const progress = await new Promise((resolve, reject) => {
+      https.get(progressUrl, (res) => {
+        let body = "";
+        res.on("data", (c) => body += c);
+        res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+      }).on("error", reject);
+    });
+    if (progress.success === 1 && progress.download_url) {
+      logDebug("rapidapi.ready", { download_url: progress.download_url });
+      return progress.download_url;
+    }
+    if (progress.text === "Error" || progress.progress < 0) {
+      throw new Error(`RapidAPI processing failed: ${progress.text}`);
+    }
+  }
+  throw new Error("RapidAPI download timed out (120s)");
+}
+
 // Probe a TCP port, returns true/false
 function probePort(port, host = "127.0.0.1", timeoutMs = 2000) {
   return new Promise((resolve) => {
@@ -259,29 +316,51 @@ app.post("/clip", async (req, res) => {
   const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
 
   try {
-    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable });
+    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable, rapidapi: !!RAPIDAPI_KEY });
 
-    // Strategy: WARP HTTP proxy + --download-sections (fast, avoids bot detection).
-    // HTTP proxy works with ffmpeg (unlike SOCKS5). Falls back to full download + trim.
     let downloaded = false;
 
-    // Attempt 1: WARP proxy + --download-sections (fast clip)
-    if (warpAvailable) {
+    // Attempt 1: RapidAPI download + ffmpeg seek/trim (bypasses YouTube bot detection)
+    if (RAPIDAPI_KEY && !downloaded) {
       try {
-        await execYtdlp(url, [
-          url, "-f", fmt,
-          "--download-sections", `*${startSec}-${endSec}`,
-          "--force-keyframes-at-cuts",
-          "--merge-output-format", "mp4",
-          "-o", clipFile,
-        ], { timeout: 300_000, useProxy: true });
+        const videoId = extractVideoId(url);
+        let downloadUrl;
+
+        // Check cache first (download URLs expire, cache for 1 hour)
+        const cached = videoId && downloadUrlCache.get(`${videoId}-${heightLimit}`);
+        if (cached && cached.expiresAt > Date.now()) {
+          downloadUrl = cached.url;
+          logDebug("rapidapi.cache-hit", { videoId });
+        } else {
+          logDebug("rapidapi.starting", { url, quality: `${heightLimit}p` });
+          downloadUrl = await rapidApiDownload(url, quality);
+          if (videoId) {
+            downloadUrlCache.set(`${videoId}-${heightLimit}`, {
+              url: downloadUrl,
+              expiresAt: Date.now() + 3600_000, // 1 hour
+            });
+          }
+        }
+
+        // ffmpeg seek + trim from remote URL (byte-range supported, no full download)
+        const duration = endSec - startSec;
+        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+        await execCapture("ffmpeg", [
+          "-ss", String(startSec),
+          "-i", downloadUrl,
+          "-t", String(duration),
+          "-c", "copy",
+          "-movflags", "+faststart",
+          "-y", clipFile,
+        ], { timeout: 120_000 });
         downloaded = true;
-      } catch (warpClipErr) {
-        logDebug("clip.warp-clip-failed", { error: (warpClipErr.stderr || warpClipErr.message || "").slice(0, 2000) });
+        logDebug("rapidapi.clip-success", { clipFile });
+      } catch (rapidErr) {
+        logDebug("rapidapi.failed", { error: (rapidErr.stderr || rapidErr.message || "").slice(0, 2000) });
       }
     }
 
-    // Attempt 2: direct, with --download-sections (works when IP isn't blocked)
+    // Attempt 2: yt-dlp direct with --download-sections (works when IP isn't blocked)
     if (!downloaded) {
       try {
         await execYtdlp(url, [
@@ -297,33 +376,7 @@ app.post("/clip", async (req, res) => {
       }
     }
 
-    // Attempt 3: WARP proxy, full download + ffmpeg trim (last resort)
-    if (!downloaded && warpAvailable) {
-      try {
-        await execYtdlp(url, [
-          url, "-f", fmt,
-          "--merge-output-format", "mp4",
-          "-o", rawFile,
-        ], { timeout: 300_000, useProxy: true });
-
-        logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
-        const duration = endSec - startSec;
-        await execCapture("ffmpeg", [
-          "-ss", String(startSec),
-          "-i", rawFile,
-          "-t", String(duration),
-          "-c", "copy",
-          "-movflags", "+faststart",
-          clipFile,
-        ], { timeout: 120_000 });
-        await unlink(rawFile).catch(() => {});
-        downloaded = true;
-      } catch (warpErr) {
-        logDebug("clip.warp-full-failed", { error: (warpErr.stderr || warpErr.message || "").slice(0, 2000) });
-      }
-    }
-
-    // Attempt 4: direct, full download + ffmpeg trim (no proxy, last resort)
+    // Attempt 3: yt-dlp direct, full download + ffmpeg trim (last resort)
     if (!downloaded) {
       await execYtdlp(url, [
         url, "-f", fmt,
