@@ -14,13 +14,6 @@ type VideoMeta = {
   speakers: string | null;
 };
 
-function formatDuration(ms: number) {
-  const s = Math.round(ms / 1000);
-  const m = Math.floor(s / 60);
-  const sec = s % 60;
-  return `${m}:${sec.toString().padStart(2, "0")}`;
-}
-
 function filterDisplayClips(clips: Clip[]): Clip[] {
   // Keep all ai_safety clips
   const safety = clips.filter((c) => c.category === "ai_safety");
@@ -47,29 +40,14 @@ export function ClipsPage({
 }) {
   const displayClips = filterDisplayClips(clips);
   const [activeClip, setActiveClip] = useState<Clip | null>(null);
+  const [episodeOpen, setEpisodeOpen] = useState(true);
+  const [episodeTranscriptOpen, setEpisodeTranscriptOpen] = useState(true);
+  const [clipTranscriptOpen, setClipTranscriptOpen] = useState(true);
 
   return (
-    <div className="space-y-3">
-      {/* Now playing bar */}
-      {activeClip && (
-        <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 rounded-lg px-4 py-2 text-sm text-blue-800">
-          <span className="font-semibold whitespace-nowrap">
-            ▶ Now Playing Clip:
-          </span>
-          <span className="truncate flex-1">&ldquo;{activeClip.title}&rdquo;</span>
-          <button
-            onClick={() => setActiveClip(null)}
-            className="text-blue-600 hover:text-blue-800 font-semibold whitespace-nowrap underline text-xs"
-          >
-            ← Back to Full Video
-          </button>
-        </div>
-      )}
-
+    <div className="space-y-3 max-w-4xl">
       {/* Title */}
-      <div className="flex items-start justify-between gap-3">
-        <h1 className="text-lg font-bold text-gray-900">{videoMeta.title}</h1>
-      </div>
+      <h1 className="text-lg font-bold text-gray-900">{videoMeta.title}</h1>
 
       {/* Compact metadata */}
       <div className="flex flex-wrap gap-3 text-xs text-gray-500">
@@ -79,18 +57,31 @@ export function ClipsPage({
         {videoMeta.speakers && <span>{videoMeta.speakers}</span>}
       </div>
 
-      {/* Main 2-column layout */}
-      <div className="grid grid-cols-1 xl:grid-cols-[1fr_360px] gap-4">
-        {/* Left column: Player + Clips */}
-        <div className="space-y-3">
-          {/* Player */}
-          {activeClip ? (
-            <ClipPlayer
-              gcsUrl={activeClip.gcsUrl}
-              durationMs={activeClip.durationMs}
-              videoId={videoId}
-            />
-          ) : (
+      {/* ═══ Full Episode Section (collapsible) ═══ */}
+      <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
+        <button
+          onClick={() => setEpisodeOpen(!episodeOpen)}
+          className="flex items-center gap-2.5 w-full px-4 py-3 text-left hover:bg-gray-50 transition-colors"
+        >
+          <span
+            className={`text-xs text-gray-400 transition-transform ${
+              episodeOpen ? "" : "-rotate-90"
+            }`}
+          >
+            ▼
+          </span>
+          <span className="text-[13px] font-bold text-gray-700">
+            Full Episode
+          </span>
+          {videoMeta.videoLength && (
+            <span className="text-[11px] text-gray-400">
+              {videoMeta.videoLength}
+            </span>
+          )}
+        </button>
+
+        {episodeOpen && (
+          <div className="px-4 pb-4">
             <div className="w-full aspect-video rounded-xl shadow-lg overflow-hidden">
               <iframe
                 id={`player-${videoId}`}
@@ -101,36 +92,107 @@ export function ClipsPage({
                 allowFullScreen
               />
             </div>
-          )}
 
-          {/* Clips strip */}
-          <ClipsStrip
-            clips={displayClips}
-            videoId={videoId}
-            videoLength={videoMeta.videoLength}
-            activeClipId={activeClip?.clipId ?? null}
-            onSelectClip={(clip) => setActiveClip(clip)}
-            onSelectFullVideo={() => setActiveClip(null)}
-          />
-        </div>
-
-        {/* Right column: Transcript */}
-        <div className="xl:sticky xl:top-4 self-start">
-          <div className="bg-white border border-gray-200 rounded-xl overflow-hidden shadow-sm">
-            <div className="px-3 py-2 border-b border-gray-100 bg-gray-50 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            {/* Episode transcript toggle */}
+            <button
+              onClick={() => setEpisodeTranscriptOpen(!episodeTranscriptOpen)}
+              className="flex items-center gap-2 mt-3 pt-2 border-t border-gray-100 w-full text-left"
+            >
+              <span
+                className={`text-[10px] text-gray-400 transition-transform ${
+                  episodeTranscriptOpen ? "" : "-rotate-90"
+                }`}
+              >
+                ▼
+              </span>
+              <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
                 Transcript
               </span>
-              {activeClip && (
-                <span className="text-[10px] font-semibold text-blue-600">
-                  Clip segment
-                </span>
-              )}
-            </div>
-            <TranscriptPane
+            </button>
+            {episodeTranscriptOpen && (
+              <TranscriptPane
+                videoId={videoId}
+                height={300}
+                playerSyncKey="full"
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ═══ Clips Section ═══ */}
+      <div
+        className={`bg-white border rounded-xl overflow-hidden ${
+          activeClip ? "border-blue-200" : "border-gray-200"
+        }`}
+      >
+        <div
+          className={`flex items-center gap-2.5 px-4 py-3 ${
+            activeClip ? "bg-blue-50" : ""
+          }`}
+        >
+          <span className="text-[13px] font-bold text-gray-700">
+            Viral Clips
+          </span>
+          {activeClip ? (
+            <span className="text-[11px] text-blue-500 font-medium">
+              Playing: &ldquo;{activeClip.title}&rdquo;
+            </span>
+          ) : (
+            <span className="text-[11px] text-gray-400">
+              {displayClips.length} clip
+              {displayClips.length !== 1 ? "s" : ""}
+            </span>
+          )}
+        </div>
+
+        <div className="px-4 pb-4">
+          {/* Clip player or placeholder */}
+          {activeClip ? (
+            <ClipPlayer
+              gcsUrl={activeClip.gcsUrl}
+              durationMs={activeClip.durationMs}
               videoId={videoId}
-              height={500}
-              playerSyncKey={activeClip?.clipId ?? "full"}
+            />
+          ) : (
+            <div className="w-full aspect-video bg-gray-50 border-2 border-dashed border-gray-200 rounded-xl flex items-center justify-center text-sm text-gray-400">
+              Select a clip to play
+            </div>
+          )}
+
+          {/* Clip transcript toggle */}
+          {activeClip && (
+            <>
+              <button
+                onClick={() => setClipTranscriptOpen(!clipTranscriptOpen)}
+                className="flex items-center gap-2 mt-3 pt-2 border-t border-gray-100 w-full text-left"
+              >
+                <span
+                  className={`text-[10px] text-gray-400 transition-transform ${
+                    clipTranscriptOpen ? "" : "-rotate-90"
+                  }`}
+                >
+                  ▼
+                </span>
+                <span className="text-[11px] font-bold uppercase tracking-wider text-gray-500">
+                  Clip Transcript
+                </span>
+              </button>
+              {clipTranscriptOpen && activeClip.transcript && (
+                <div className="mt-2 text-sm text-gray-600 leading-relaxed max-h-[200px] overflow-y-auto">
+                  {activeClip.transcript}
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Clips carousel */}
+          <div className="mt-3">
+            <ClipsStrip
+              clips={displayClips}
+              videoId={videoId}
+              activeClipId={activeClip?.clipId ?? null}
+              onSelectClip={(clip) => setActiveClip(clip)}
             />
           </div>
         </div>

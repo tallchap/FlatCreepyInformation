@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Image from "next/image";
 
 function formatDuration(ms: number) {
   const s = Math.round(ms / 1000);
@@ -31,8 +32,18 @@ export function ClipPlayer({
         className="w-full h-full object-contain"
         onPlay={() => setHasStarted(true)}
       />
+      {/* Snippysaurus logo overlay */}
+      <div className="absolute inset-0 bg-black/45 flex items-center justify-center pointer-events-none">
+        <Image
+          src="/snippysaurus-logo.png"
+          alt="Snippysaurus"
+          width={64}
+          height={64}
+          className="rounded-[10px]"
+        />
+      </div>
       {/* Clip label overlay */}
-      <div className="absolute top-3 left-3 bg-red-500/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wide pointer-events-none">
+      <div className="absolute top-3 left-3 bg-blue-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wide pointer-events-none z-10">
         Clip · {formatDuration(durationMs)}
       </div>
     </div>
