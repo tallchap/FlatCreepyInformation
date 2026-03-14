@@ -459,6 +459,10 @@ app.get("/debug/system", async (_req, res) => {
     info.ytdlpVersion = r.stdout.trim();
   } catch (e) { info.ytdlpVersion = `error: ${e.message}`; }
 
+  // Startup log from start.sh
+  try { info.startupLog = fs.readFileSync("/tmp/startup.log", "utf8"); }
+  catch { info.startupLog = "(not found)"; }
+
   res.json(info);
 });
 
