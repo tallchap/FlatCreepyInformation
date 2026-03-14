@@ -129,22 +129,23 @@ export function ClipsPage({
         }`}
       >
         <div
-          className={`flex items-center gap-2.5 px-4 py-3 ${
-            activeClip ? "bg-blue-50" : ""
-          }`}
+          className={`px-4 py-3 ${activeClip ? "bg-blue-50" : ""}`}
         >
-          <span className="text-[13px] font-bold text-gray-700">
-            Viral Clips
-          </span>
-          {activeClip ? (
-            <span className="text-[11px] text-blue-500 font-medium">
-              Playing: &ldquo;{activeClip.title}&rdquo;
+          <div className="flex items-center gap-2.5">
+            <span className="text-[13px] font-bold text-gray-700">
+              Clips
             </span>
-          ) : (
-            <span className="text-[11px] text-gray-400">
-              {displayClips.length} clip
-              {displayClips.length !== 1 ? "s" : ""}
-            </span>
+            {!activeClip && (
+              <span className="text-[11px] text-gray-400">
+                {displayClips.length} clip
+                {displayClips.length !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+          {activeClip && (
+            <h3 className="text-base font-bold text-gray-900 mt-1">
+              {activeClip.title}
+            </h3>
           )}
         </div>
 
