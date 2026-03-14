@@ -39,7 +39,9 @@ export function ClipsPage({
   clips: Clip[];
 }) {
   const displayClips = filterDisplayClips(clips);
-  const [activeClip, setActiveClip] = useState<Clip | null>(null);
+  const [activeClip, setActiveClip] = useState<Clip | null>(
+    displayClips[0] ?? null,
+  );
   const [episodeOpen, setEpisodeOpen] = useState(true);
   const [episodeTranscriptOpen, setEpisodeTranscriptOpen] = useState(true);
   const [clipTranscriptOpen, setClipTranscriptOpen] = useState(true);
