@@ -21,6 +21,21 @@ function formatDuration(ms: number) {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
+function filterDisplayClips(clips: Clip[]): Clip[] {
+  // Keep all ai_safety clips
+  const safety = clips.filter((c) => c.category === "ai_safety");
+  // Keep only the single highest-scoring viral clip (must be >= 9)
+  const viral = clips
+    .filter((c) => c.category === "viral")
+    .sort((a, b) => (b.viralScore ?? 0) - (a.viralScore ?? 0));
+  const topViral = viral[0];
+  const result = [...safety];
+  if (topViral && (topViral.viralScore ?? 0) >= 9) {
+    result.unshift(topViral);
+  }
+  return result;
+}
+
 export function ClipsPage({
   videoId,
   videoMeta,
@@ -30,6 +45,7 @@ export function ClipsPage({
   videoMeta: VideoMeta;
   clips: Clip[];
 }) {
+  const displayClips = filterDisplayClips(clips);
   const [activeClip, setActiveClip] = useState<Clip | null>(null);
 
   return (
@@ -89,7 +105,7 @@ export function ClipsPage({
 
           {/* Clips strip */}
           <ClipsStrip
-            clips={clips}
+            clips={displayClips}
             videoId={videoId}
             videoLength={videoMeta.videoLength}
             activeClipId={activeClip?.clipId ?? null}

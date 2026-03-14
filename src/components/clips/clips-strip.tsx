@@ -52,15 +52,6 @@ function ClipCard({
         <span className="absolute bottom-1.5 right-1.5 bg-black/75 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded">
           {formatDuration(clip.durationMs)}
         </span>
-        <span
-          className={`absolute top-1.5 left-1.5 text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide ${
-            clip.category === "viral"
-              ? "bg-red-500/90 text-white"
-              : "bg-blue-500/90 text-white"
-          }`}
-        >
-          {clip.category === "viral" ? "Most Viral" : "AI Safety"}
-        </span>
       </div>
       <div className="p-2">
         <p className="text-[11px] font-medium text-gray-800 line-clamp-2 leading-snug">
