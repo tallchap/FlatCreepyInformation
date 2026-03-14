@@ -3,6 +3,7 @@
 import { useCallback, useRef, useState, useMemo } from "react";
 
 const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 interface TimelineProps {
   duration: number;
@@ -12,6 +13,8 @@ interface TimelineProps {
   onStartChange: (sec: number) => void;
   onEndChange: (sec: number) => void;
   onSeek: (sec: number) => void;
+  playbackRate: number;
+  onPlaybackRateChange: (rate: number) => void;
 }
 
 function formatTime(sec: number): string {
@@ -34,6 +37,8 @@ export function Timeline({
   onStartChange,
   onEndChange,
   onSeek,
+  playbackRate,
+  onPlaybackRateChange,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
@@ -194,6 +199,22 @@ export function Timeline({
             >
               +
             </button>
+          </div>
+          <div className="w-px h-4 bg-gray-200" />
+          <div className="flex items-center gap-1">
+            {SPEED_OPTIONS.map((rate) => (
+              <button
+                key={rate}
+                onClick={() => onPlaybackRateChange(rate)}
+                className={`px-1.5 h-6 flex items-center justify-center rounded text-[10px] font-bold transition-colors ${
+                  playbackRate === rate
+                    ? "bg-gray-800 text-white"
+                    : "border border-gray-300 text-gray-500 hover:bg-gray-100"
+                }`}
+              >
+                {rate}x
+              </button>
+            ))}
           </div>
           <span className="text-xs text-gray-400">
             Total: {formatTime(duration)}

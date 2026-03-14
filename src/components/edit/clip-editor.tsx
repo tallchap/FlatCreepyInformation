@@ -40,6 +40,7 @@ export function ClipEditor() {
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugCopied, setDebugCopied] = useState(false);
+  const [playbackRate, setPlaybackRate] = useState(1);
   const playerRef = useRef<any>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -77,7 +78,7 @@ export function ClipEditor() {
         videoId,
         width: "100%",
         height: "100%",
-        playerVars: { rel: 0, modestbranding: 1 },
+        playerVars: { rel: 0, modestbranding: 1, iv_load_policy: 3, disablekb: 1 },
         events: {
           onReady: (e: any) => {
             playerReadyRef.current = true;
@@ -207,6 +208,11 @@ export function ClipEditor() {
     startAutoPause();
   };
 
+  const handlePlaybackRateChange = (rate: number) => {
+    setPlaybackRate(rate);
+    if (playerReadyRef.current) playerRef.current?.setPlaybackRate(rate);
+  };
+
   const handleTranscriptClick = (sec: number) => {
     const mid = (startSec + endSec) / 2;
     if (sec < mid) {
@@ -295,6 +301,8 @@ export function ClipEditor() {
             onStartChange={handleStartChange}
             onEndChange={handleEndChange}
             onSeek={handleSeek}
+            playbackRate={playbackRate}
+            onPlaybackRateChange={handlePlaybackRateChange}
           />
 
           {/* Controls */}
