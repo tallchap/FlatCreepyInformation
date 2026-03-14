@@ -15,6 +15,7 @@ interface TimelineProps {
   onSeek: (sec: number) => void;
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
+  handlesPlaced: boolean;
 }
 
 function formatTime(sec: number): string {
@@ -39,6 +40,7 @@ export function Timeline({
   onSeek,
   playbackRate,
   onPlaybackRateChange,
+  handlesPlaced,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
@@ -145,7 +147,7 @@ export function Timeline({
   };
 
   const handleZoomChange = (newZoom: number) => {
-    const clamped = Math.max(1, Math.min(20, newZoom));
+    const clamped = Math.max(1, Math.min(50, newZoom));
     if (clamped === 1) {
       setPanCenter(null);
     } else if (panCenter === null) {
@@ -194,7 +196,7 @@ export function Timeline({
             </span>
             <button
               onClick={() => handleZoomChange(zoom + 1)}
-              disabled={zoom >= 20}
+              disabled={zoom >= 50}
               className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               +
@@ -224,7 +226,7 @@ export function Timeline({
 
       <div className="relative pt-7 pb-2">
         {/* Precise time labels above handles */}
-        {startVisible && (
+        {handlesPlaced && startVisible && (
           <div
             className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30 font-mono"
             style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
@@ -232,7 +234,7 @@ export function Timeline({
             {formatTimePrecise(startSec)}
           </div>
         )}
-        {endVisible && (
+        {handlesPlaced && endVisible && (
           <div
             className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30 font-mono"
             style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
@@ -262,8 +264,17 @@ export function Timeline({
             ))}
           </div>
 
+          {/* Hint when no handles placed */}
+          {!handlesPlaced && (
+            <div className="absolute inset-0 flex items-center justify-center z-10 pointer-events-none">
+              <span className="text-xs text-gray-400 bg-white/80 px-3 py-1 rounded-md">
+                Click to set clip start
+              </span>
+            </div>
+          )}
+
           {/* Selected region */}
-          {regionWidth > 0 && (
+          {handlesPlaced && regionWidth > 0 && (
             <div
               className="absolute top-0 bottom-0 bg-[#99cc66]/25"
               style={{
@@ -293,7 +304,7 @@ export function Timeline({
           </div>
 
           {/* Start handle */}
-          {startVisible && (
+          {handlesPlaced && startVisible && (
             <div
               data-handle="start"
               className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-[#99cc66] rounded cursor-ew-resize z-10 flex items-center justify-center"
@@ -305,7 +316,7 @@ export function Timeline({
           )}
 
           {/* End handle */}
-          {endVisible && (
+          {handlesPlaced && endVisible && (
             <div
               data-handle="end"
               className="absolute top-[-4px] bottom-[-4px] w-3.5 bg-red-500 rounded cursor-ew-resize z-10 flex items-center justify-center"
@@ -325,7 +336,7 @@ export function Timeline({
         </div>
 
         {/* Start/End frame-nudge buttons aligned with markers */}
-        <div className="relative h-7 mt-1">
+        {handlesPlaced && <div className="relative h-7 mt-1">
           {startVisible && (
             <div
               className="absolute flex items-center gap-0.5 z-10"
@@ -366,7 +377,7 @@ export function Timeline({
               </button>
             </div>
           )}
-        </div>
+        </div>}
 
         {/* Draggable minimap when zoomed */}
         {zoom > 1 && (
@@ -378,13 +389,13 @@ export function Timeline({
             onPointerUp={handlePointerUp}
           >
             {/* Selection region on minimap */}
-            <div
+            {handlesPlaced && <div
               className="absolute top-0 bottom-0 bg-[#99cc66]/40 pointer-events-none"
               style={{
                 left: `${(startSec / duration) * 100}%`,
                 width: `${((endSec - startSec) / duration) * 100}%`,
               }}
-            />
+            />}
             {/* Viewport indicator — draggable */}
             <div
               className="absolute top-0 bottom-0 border-2 border-gray-500 rounded-full bg-white/40 cursor-grab active:cursor-grabbing pointer-events-none"

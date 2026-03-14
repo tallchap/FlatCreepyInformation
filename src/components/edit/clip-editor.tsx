@@ -41,6 +41,7 @@ export function ClipEditor() {
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugCopied, setDebugCopied] = useState(false);
   const [playbackRate, setPlaybackRate] = useState(1);
+  const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -84,8 +85,9 @@ export function ClipEditor() {
             playerReadyRef.current = true;
             const dur = e.target.getDuration();
             setDuration(dur);
+            setHandlesPlaced(false);
             setStartSec(0);
-            setEndSec(Math.min(dur, 60));
+            setEndSec(0);
             setPlayheadSec(0);
           },
         },
@@ -165,10 +167,15 @@ export function ClipEditor() {
 
   const handleSeek = useCallback(
     (sec: number) => {
+      if (!handlesPlaced) {
+        setHandlesPlaced(true);
+        setStartSec(sec);
+        setEndSec(Math.min(duration, sec + 10));
+      }
       setPlayheadSec(sec);
       if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
     },
-    [],
+    [handlesPlaced, duration],
   );
 
   // Auto-pause at endSec helper
@@ -214,11 +221,17 @@ export function ClipEditor() {
   };
 
   const handleTranscriptClick = (sec: number) => {
-    const mid = (startSec + endSec) / 2;
-    if (sec < mid) {
-      setStartSec(Math.min(sec, endSec - 0.01));
+    if (!handlesPlaced) {
+      setHandlesPlaced(true);
+      setStartSec(sec);
+      setEndSec(Math.min(duration, sec + 10));
     } else {
-      setEndSec(Math.max(sec, startSec + 0.01));
+      const mid = (startSec + endSec) / 2;
+      if (sec < mid) {
+        setStartSec(Math.min(sec, endSec - 0.01));
+      } else {
+        setEndSec(Math.max(sec, startSec + 0.01));
+      }
     }
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
@@ -303,6 +316,7 @@ export function ClipEditor() {
             onSeek={handleSeek}
             playbackRate={playbackRate}
             onPlaybackRateChange={handlePlaybackRateChange}
+            handlesPlaced={handlesPlaced}
           />
 
           {/* Controls */}
