@@ -210,7 +210,7 @@ export function Timeline({
                 if (idx > 0) onPlaybackRateChange(SPEED_OPTIONS[idx - 1]);
               }}
               disabled={SPEED_OPTIONS.indexOf(playbackRate) <= 0}
-              className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               &#x00AB;
             </button>
@@ -223,7 +223,7 @@ export function Timeline({
                 if (idx < SPEED_OPTIONS.length - 1) onPlaybackRateChange(SPEED_OPTIONS[idx + 1]);
               }}
               disabled={SPEED_OPTIONS.indexOf(playbackRate) >= SPEED_OPTIONS.length - 1}
-              className="text-xs text-gray-500 hover:text-gray-800 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="w-6 h-6 flex items-center justify-center rounded border border-gray-300 text-xs font-bold text-gray-500 hover:bg-gray-100 disabled:opacity-30 disabled:cursor-not-allowed"
             >
               &#x00BB;
             </button>
