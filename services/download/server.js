@@ -50,7 +50,7 @@ async function rapidApiDownload(videoUrl, quality) {
 
   // Step 2: Poll progress
   const progressUrl = initRes.progress_url;
-  const deadline = Date.now() + 120_000;
+  const deadline = Date.now() + 600_000; // 10 minutes — runs in background, no HTTP timeout
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000));
     const progress = await new Promise((resolve, reject) => {
@@ -297,6 +297,118 @@ app.post("/download", async (req, res) => {
   }
 });
 
+// ─── Async clip job system ──────────────────────────────────────────
+const clipJobs = new Map(); // jobId → { status, progress, error, clipFile, createdAt }
+
+// Auto-cleanup old jobs every 5 minutes
+setInterval(() => {
+  const cutoff = Date.now() - 30 * 60_000;
+  for (const [id, job] of clipJobs) {
+    if (job.createdAt < cutoff) {
+      if (job.clipFile) unlink(job.clipFile).catch(() => {});
+      clipJobs.delete(id);
+    }
+  }
+}, 5 * 60_000);
+
+async function processClipJob(jobId, { url, startSec, endSec, quality }) {
+  const job = clipJobs.get(jobId);
+  if (!job) return;
+
+  const heightLimit = quality === "1080p" ? 1080 : 720;
+  const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
+  const rawFile = join(tmpdir(), `raw-${jobId}.mp4`);
+  const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
+
+  try {
+    logDebug("clip.start", { jobId, url, startSec, endSec, quality: `${heightLimit}p`, rapidapi: !!RAPIDAPI_KEY });
+    let downloaded = false;
+
+    // Attempt 1: RapidAPI (no timeout limit — runs in background)
+    if (RAPIDAPI_KEY) {
+      try {
+        const videoId = extractVideoId(url);
+        let downloadUrl;
+
+        const cached = videoId && downloadUrlCache.get(`${videoId}-${heightLimit}`);
+        if (cached && cached.expiresAt > Date.now()) {
+          downloadUrl = cached.url;
+          logDebug("rapidapi.cache-hit", { videoId });
+        } else {
+          job.progress = 5;
+          logDebug("rapidapi.starting", { url, quality: `${heightLimit}p` });
+          downloadUrl = await rapidApiDownload(url, quality);
+          if (videoId) {
+            downloadUrlCache.set(`${videoId}-${heightLimit}`, {
+              url: downloadUrl, expiresAt: Date.now() + 3600_000,
+            });
+          }
+        }
+
+        job.progress = 70;
+        const duration = endSec - startSec;
+        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+        await execCapture("ffmpeg", [
+          "-ss", String(startSec), "-i", downloadUrl,
+          "-t", String(duration), "-c", "copy",
+          "-movflags", "+faststart", "-y", clipFile,
+        ], { timeout: 120_000 });
+        downloaded = true;
+        logDebug("rapidapi.clip-success", { jobId });
+      } catch (rapidErr) {
+        logDebug("rapidapi.failed", { error: (rapidErr.stderr || rapidErr.message || "").slice(0, 2000) });
+      }
+    }
+
+    // Attempt 2: yt-dlp direct with --download-sections
+    if (!downloaded) {
+      try {
+        job.progress = 30;
+        await execYtdlp(url, [
+          url, "-f", fmt,
+          "--download-sections", `*${startSec}-${endSec}`,
+          "--force-keyframes-at-cuts",
+          "--merge-output-format", "mp4", "-o", clipFile,
+        ], { timeout: 300_000, useProxy: false });
+        downloaded = true;
+      } catch (directErr) {
+        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 2000) });
+      }
+    }
+
+    // Attempt 3: yt-dlp full download + ffmpeg trim
+    if (!downloaded) {
+      job.progress = 30;
+      await execYtdlp(url, [
+        url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile,
+      ], { timeout: 300_000, useProxy: false });
+
+      job.progress = 80;
+      const duration = endSec - startSec;
+      await execCapture("ffmpeg", [
+        "-ss", String(startSec), "-i", rawFile,
+        "-t", String(duration), "-c", "copy",
+        "-movflags", "+faststart", clipFile,
+      ], { timeout: 120_000 });
+      await unlink(rawFile).catch(() => {});
+    }
+
+    const { size } = require("fs").statSync(clipFile);
+    job.status = "ready";
+    job.progress = 100;
+    job.clipFile = clipFile;
+    job.fileSize = size;
+    logDebug("clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1) });
+  } catch (error) {
+    await unlink(clipFile).catch(() => {});
+    await unlink(rawFile).catch(() => {});
+    const detail = error.stderr || error.message || "Unknown error";
+    job.status = "failed";
+    job.error = detail.slice(0, 2000);
+    logDebug("clip.error", { jobId, url, error: detail.slice(0, 1000) });
+  }
+}
+
 app.post("/clip", async (req, res) => {
   const { url, startSec, endSec, quality } = req.body;
 
@@ -309,111 +421,36 @@ app.post("/clip", async (req, res) => {
     return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
   }
 
-  const uid = crypto.randomUUID();
-  const clipFile = join(tmpdir(), `clip-${uid}.mp4`);
-  const rawFile = join(tmpdir(), `raw-${uid}.mp4`);
-  const heightLimit = quality === "1080p" ? 1080 : 720;
-  const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
+  const jobId = crypto.randomUUID();
+  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now() });
+
+  // Start background processing (don't await)
+  processClipJob(jobId, { url, startSec, endSec, quality }).catch(() => {});
+
+  res.json({ jobId });
+});
+
+app.get("/clip/:jobId", (req, res) => {
+  const job = clipJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  res.json({ status: job.status, progress: job.progress, error: job.error, fileSize: job.fileSize || null });
+});
+
+app.get("/clip/:jobId/file", async (req, res) => {
+  const job = clipJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: "Job not found" });
+  if (job.status !== "ready") return res.status(409).json({ error: "Clip not ready" });
 
   try {
-    logDebug("clip.start", { url, startSec, endSec, quality: `${heightLimit}p`, warp: warpAvailable, rapidapi: !!RAPIDAPI_KEY });
-
-    let downloaded = false;
-
-    // Attempt 1: RapidAPI download + ffmpeg seek/trim (bypasses YouTube bot detection)
-    if (RAPIDAPI_KEY && !downloaded) {
-      try {
-        const videoId = extractVideoId(url);
-        let downloadUrl;
-
-        // Check cache first (download URLs expire, cache for 1 hour)
-        const cached = videoId && downloadUrlCache.get(`${videoId}-${heightLimit}`);
-        if (cached && cached.expiresAt > Date.now()) {
-          downloadUrl = cached.url;
-          logDebug("rapidapi.cache-hit", { videoId });
-        } else {
-          logDebug("rapidapi.starting", { url, quality: `${heightLimit}p` });
-          downloadUrl = await rapidApiDownload(url, quality);
-          if (videoId) {
-            downloadUrlCache.set(`${videoId}-${heightLimit}`, {
-              url: downloadUrl,
-              expiresAt: Date.now() + 3600_000, // 1 hour
-            });
-          }
-        }
-
-        // ffmpeg seek + trim from remote URL (byte-range supported, no full download)
-        const duration = endSec - startSec;
-        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
-        await execCapture("ffmpeg", [
-          "-ss", String(startSec),
-          "-i", downloadUrl,
-          "-t", String(duration),
-          "-c", "copy",
-          "-movflags", "+faststart",
-          "-y", clipFile,
-        ], { timeout: 120_000 });
-        downloaded = true;
-        logDebug("rapidapi.clip-success", { clipFile });
-      } catch (rapidErr) {
-        logDebug("rapidapi.failed", { error: (rapidErr.stderr || rapidErr.message || "").slice(0, 2000) });
-      }
-    }
-
-    // Attempt 2: yt-dlp direct with --download-sections (works when IP isn't blocked)
-    if (!downloaded) {
-      try {
-        await execYtdlp(url, [
-          url, "-f", fmt,
-          "--download-sections", `*${startSec}-${endSec}`,
-          "--force-keyframes-at-cuts",
-          "--merge-output-format", "mp4",
-          "-o", clipFile,
-        ], { timeout: 300_000, useProxy: false });
-        downloaded = true;
-      } catch (directErr) {
-        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 2000) });
-      }
-    }
-
-    // Attempt 3: yt-dlp direct, full download + ffmpeg trim (last resort)
-    if (!downloaded) {
-      await execYtdlp(url, [
-        url, "-f", fmt,
-        "--merge-output-format", "mp4",
-        "-o", rawFile,
-      ], { timeout: 300_000, useProxy: false });
-
-      logDebug("clip.ffmpeg-trim", { input: rawFile, startSec, endSec });
-      const duration = endSec - startSec;
-      await execCapture("ffmpeg", [
-        "-ss", String(startSec),
-        "-i", rawFile,
-        "-t", String(duration),
-        "-c", "copy",
-        "-movflags", "+faststart",
-        clipFile,
-      ], { timeout: 120_000 });
-      await unlink(rawFile).catch(() => {});
-    }
-
-    const data = await readFile(clipFile);
-    await unlink(clipFile).catch(() => {});
-    logDebug("clip.complete", { bytes: data.byteLength, mb: (data.byteLength / 1024 / 1024).toFixed(1) });
-
+    const data = await readFile(job.clipFile);
     res.set({
       "Content-Type": "video/mp4",
-      "Content-Disposition": `attachment; filename="clip-${startSec}-${endSec}.mp4"`,
+      "Content-Disposition": `attachment; filename="clip.mp4"`,
       "Content-Length": data.byteLength.toString(),
     });
     res.send(data);
-  } catch (error) {
-    await unlink(clipFile).catch(() => {});
-    await unlink(rawFile).catch(() => {});
-    const detail = error.stderr || error.message || "Unknown error";
-    logDebug("clip.error", { url, startSec, endSec, quality, error: detail.slice(0, 1000) });
-    console.error("Clip error:", detail.slice(0, 2000));
-    res.status(500).json({ error: `Clip failed: ${detail.slice(0, 2000)}` });
+  } catch (e) {
+    res.status(500).json({ error: "File read failed" });
   }
 });
 

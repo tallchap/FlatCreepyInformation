@@ -43,7 +43,6 @@ function loadFromStorage(): DownloadItem[] {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const items: DownloadItem[] = JSON.parse(raw);
-    // Reset any stale "downloading" items from a previous session
     return items.map((d) =>
       d.status === "downloading" ? { ...d, status: "error" as const, error: "Interrupted", progress: 0 } : d,
     );
@@ -61,12 +60,10 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const downloadsRef = useRef(downloads);
   downloadsRef.current = downloads;
 
-  // Load from localStorage on mount
   useEffect(() => {
     setDownloads(loadFromStorage());
   }, []);
 
-  // Persist to localStorage on change
   useEffect(() => {
     if (downloads.length > 0) saveToStorage(downloads);
   }, [downloads]);
@@ -92,27 +89,10 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
       setDownloads((prev) => [item, ...prev].slice(0, MAX_ITEMS));
 
-      // Fake progress animation based on clip length
-      const clipDuration = params.endSec - params.startSec;
-      // Estimate: ~2s per second of clip for download+trim, cap at 120s
-      const estimatedMs = Math.min(clipDuration * 2000, 120000);
-      const progressInterval = setInterval(() => {
-        setDownloads((prev) => {
-          const d = prev.find((x) => x.id === id);
-          if (!d || d.status !== "downloading") {
-            clearInterval(progressInterval);
-            return prev;
-          }
-          // Ease toward 90%
-          const newProgress = d.progress + (90 - d.progress) * 0.05;
-          return prev.map((x) => (x.id === id ? { ...x, progress: Math.min(90, newProgress) } : x));
-        });
-      }, estimatedMs / 50);
-
-      // Do the actual fetch
       (async () => {
         try {
-          const resp = await fetch("/api/clip", {
+          // Step 1: Start the clip job
+          const startResp = await fetch("/api/clip", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
@@ -123,25 +103,73 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             }),
           });
 
-          clearInterval(progressInterval);
-
-          if (!resp.ok) {
-            const err = await resp.json().catch(() => ({ error: "Export failed" }));
+          if (!startResp.ok) {
+            const err = await startResp.json().catch(() => ({ error: "Export failed" }));
             updateItem(id, { status: "error", error: err.error || "Export failed", progress: 0 });
             return;
           }
 
-          const blob = await resp.blob();
-          updateItem(id, { status: "complete", progress: 100 });
+          const { jobId } = await startResp.json();
+          if (!jobId) {
+            updateItem(id, { status: "error", error: "No job ID returned", progress: 0 });
+            return;
+          }
 
-          // Trigger browser download
-          const a = document.createElement("a");
-          a.href = URL.createObjectURL(blob);
-          a.download = `clip-${params.videoId}-${Math.round(params.startSec)}-${Math.round(params.endSec)}.mp4`;
-          a.click();
-          URL.revokeObjectURL(a.href);
+          updateItem(id, { progress: 5 });
+
+          // Step 2: Poll for status
+          const pollInterval = 3000;
+          const maxPollTime = 15 * 60_000; // 15 minutes max
+          const pollStart = Date.now();
+
+          while (Date.now() - pollStart < maxPollTime) {
+            await new Promise((r) => setTimeout(r, pollInterval));
+
+            // Check if this download was dismissed
+            const current = downloadsRef.current.find((d) => d.id === id);
+            if (!current || current.status !== "downloading") return;
+
+            const statusResp = await fetch(`/api/clip-status?jobId=${jobId}`);
+            if (!statusResp.ok) continue;
+
+            const status = await statusResp.json();
+
+            if (status.status === "ready") {
+              updateItem(id, { progress: 95 });
+
+              // Step 3: Download the clip file
+              const fileResp = await fetch(`/api/clip-download?jobId=${jobId}`);
+              if (!fileResp.ok) {
+                const err = await fileResp.json().catch(() => ({ error: "Download failed" }));
+                updateItem(id, { status: "error", error: err.error || "Download failed", progress: 0 });
+                return;
+              }
+
+              const blob = await fileResp.blob();
+              updateItem(id, { status: "complete", progress: 100 });
+
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = `clip-${params.videoId}-${Math.round(params.startSec)}-${Math.round(params.endSec)}.mp4`;
+              a.click();
+              URL.revokeObjectURL(a.href);
+              return;
+            }
+
+            if (status.status === "failed") {
+              updateItem(id, { status: "error", error: status.error || "Clip processing failed", progress: 0 });
+              return;
+            }
+
+            // Update progress from backend
+            if (status.progress != null) {
+              updateItem(id, { progress: Math.min(90, status.progress) });
+            }
+          }
+
+          // Timed out
+          updateItem(id, { status: "error", error: "Processing timed out (15 min)", progress: 0 });
         } catch (err: any) {
-          clearInterval(progressInterval);
           updateItem(id, { status: "error", error: err.message || "Network error", progress: 0 });
         }
       })();
