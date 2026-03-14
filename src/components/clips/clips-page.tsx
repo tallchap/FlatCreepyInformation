@@ -114,7 +114,7 @@ export function ClipsPage({
             {episodeTranscriptOpen && (
               <TranscriptPane
                 videoId={videoId}
-                height={300}
+                height={100}
                 playerSyncKey="full"
               />
             )}
@@ -181,7 +181,7 @@ export function ClipsPage({
                 </span>
               </button>
               {clipTranscriptOpen && activeClip.transcript && (
-                <div className="mt-2 text-sm text-gray-600 leading-relaxed max-h-[200px] overflow-y-auto">
+                <div className="mt-2 text-sm text-gray-600 leading-relaxed max-h-[80px] overflow-y-auto">
                   {activeClip.transcript}
                 </div>
               )}

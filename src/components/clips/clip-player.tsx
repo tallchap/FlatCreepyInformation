@@ -32,8 +32,8 @@ export function ClipPlayer({
         className="w-full h-full object-contain"
         onPlay={() => setHasStarted(true)}
       />
-      {/* Snippysaurus logo overlay */}
-      <div className="absolute inset-0 bg-black/65 flex items-center justify-center pointer-events-none">
+      {/* Snippysaurus logo overlay — disappears on play */}
+      {!hasStarted && <div className="absolute inset-0 bg-black/60 flex items-center justify-center pointer-events-none">
         <Image
           src="/snippysaurus-logo.png"
           alt="Snippysaurus"
@@ -41,7 +41,7 @@ export function ClipPlayer({
           height={64}
           className="rounded-[10px]"
         />
-      </div>
+      </div>}
       {/* Clip label overlay */}
       <div className="absolute top-3 left-3 bg-blue-600/90 text-white text-[10px] font-bold px-2.5 py-1 rounded-md uppercase tracking-wide pointer-events-none z-10">
         Clip · {formatDuration(durationMs)}
