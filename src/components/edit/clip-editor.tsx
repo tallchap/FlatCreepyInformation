@@ -279,27 +279,6 @@ export function ClipEditor() {
         </p>
       </div>
 
-      {/* URL Input */}
-      <div>
-        <input
-          type="text"
-          placeholder="Paste YouTube URL or video ID and press Enter..."
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && handleLoad()}
-          onPaste={(e) => {
-            const pasted = e.clipboardData.getData("text");
-            if (extractVideoId(pasted)) {
-              e.preventDefault();
-              setUrl(pasted);
-              const id = extractVideoId(pasted);
-              if (id) setVideoId(id);
-            }
-          }}
-          className="w-full rounded-lg border border-gray-300 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-red-400"
-        />
-      </div>
-
       {videoId && (
         <>
           {/* Player + Transcript side by side */}
