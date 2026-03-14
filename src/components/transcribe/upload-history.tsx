@@ -22,11 +22,11 @@ import {
 import {
   ExternalLink,
   FileVideo,
-  FileText,
   Calendar,
   CheckCircle,
   XCircle,
 } from "lucide-react";
+import Link from "next/link";
 import {
   Card,
   CardContent,
@@ -40,6 +40,13 @@ import { cn } from "@/lib/utils";
 
 // Page size for pagination
 const PAGE_SIZE = 5;
+
+function extractVideoId(url: string): string | null {
+  const m = url.match(
+    /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([A-Za-z0-9_-]{11})/
+  );
+  return m?.[1] ?? null;
+}
 
 type PaginationItemType = {
   type: "number" | "ellipsis";
@@ -144,7 +151,7 @@ export function UploadHistoryTable() {
                 <TableRow>
                   <TableHead>Video Title</TableHead>
                   <TableHead>Date</TableHead>
-                  <TableHead>Google Doc</TableHead>
+                  <TableHead>Actions</TableHead>
                   <TableHead>Status</TableHead>
                 </TableRow>
               </TableHeader>
@@ -183,20 +190,14 @@ export function UploadHistoryTable() {
                       {formatDate(upload.uploadedAt)}
                     </TableCell>
                     <TableCell>
-                      {upload.googleDocUrl ? (
-                        <a
-                          href={upload.googleDocUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-blue-500 hover:underline flex items-center"
+                      {upload.status === "success" && upload.youtubeLink && extractVideoId(upload.youtubeLink) ? (
+                        <Link
+                          href={`/edit?v=${extractVideoId(upload.youtubeLink)}`}
+                          className="text-[#DC2626] hover:text-[#B91C1C] font-semibold text-sm"
                         >
-                          <FileText className="h-4 w-4 mr-1" />
-                          View Doc
-                          <ExternalLink className="h-3 w-3 ml-1" />
-                        </a>
-                      ) : (
-                        <span className="text-gray-400">None</span>
-                      )}
+                          Snip It
+                        </Link>
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <span
