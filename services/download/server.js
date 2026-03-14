@@ -26,7 +26,7 @@ async function rapidApiDownload(videoUrl, quality) {
     format,
     add_info: "0",
     url: videoUrl,
-    allow_extended_duration: "true",
+    allow_extended_duration: "1",
     no_merge: "false",
   });
 
