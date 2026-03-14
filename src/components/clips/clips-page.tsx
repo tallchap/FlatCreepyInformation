@@ -164,9 +164,16 @@ export function ClipsPage({
             )}
           </div>
           {activeClip && (
-            <h3 className="text-xl font-bold text-gray-900 mt-1">
-              {activeClip.title}
-            </h3>
+            <>
+              <h3 className="text-xl font-bold text-gray-900 mt-1">
+                {activeClip.title}
+              </h3>
+              {activeClip.viralReason && (
+                <p className="text-sm text-gray-500 mt-1">
+                  {activeClip.viralReason}
+                </p>
+              )}
+            </>
           )}
         </div>
 

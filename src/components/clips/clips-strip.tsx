@@ -54,6 +54,11 @@ function ClipCard({
         <p className="text-sm font-medium text-gray-800 line-clamp-2 leading-snug">
           {clip.title}
         </p>
+        {clip.viralReason && (
+          <p className="text-[10px] text-gray-500 line-clamp-2 mt-0.5">
+            {clip.viralReason}
+          </p>
+        )}
         {active && (
           <p className="text-[10px] text-blue-600 font-semibold mt-0.5">
             Playing
