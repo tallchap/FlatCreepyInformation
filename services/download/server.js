@@ -320,7 +320,7 @@ function execCapture(cmd, args, opts = {}) {
 async function getVideoMetadata(filePath) {
   try {
     const result = await execCapture("ffprobe", [
-      "-v", "quiet", "-print_format", "json",
+      "-v", "warning", "-print_format", "json",
       "-show_format", "-show_streams", filePath,
     ], { timeout: 10_000 });
     const data = JSON.parse(result.stdout);
@@ -329,8 +329,9 @@ async function getVideoMetadata(filePath) {
       duration_sec: parseFloat(data.format?.duration) || null,
       width: videoStream?.width || null,
       height: videoStream?.height || null,
+      warnings: result.stderr || "",
     };
-  } catch { return { duration_sec: null, width: null, height: null }; }
+  } catch { return { duration_sec: null, width: null, height: null, warnings: "" }; }
 }
 
 function ytdlpBaseArgs({ useProxy = false } = {}) {
@@ -488,6 +489,18 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
 
         // Grab source video metadata before trimming
         videoMeta = await getVideoMetadata(rapidRaw);
+
+        // Re-mux if container is corrupt (e.g. timescale not set)
+        if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
+          const remuxStart = Date.now();
+          const remuxFile = rapidRaw.replace(".mp4", "-remux.mp4");
+          job.stageDetail = "Re-muxing corrupt container...";
+          logDebug("rapidapi.remux-start", { warnings: videoMeta.warnings.trim() });
+          await execCapture("ffmpeg", ["-i", rapidRaw, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
+          await unlink(rapidRaw).catch(() => {});
+          require("fs").renameSync(remuxFile, rapidRaw);
+          logDebug("rapidapi.remux-done", { ms: Date.now() - remuxStart });
+        }
 
         // Step 2: ffmpeg seeks instantly on local file (-ss before -i = keyframe seek)
         job.stage = "trimming-clip";
