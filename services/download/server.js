@@ -371,17 +371,18 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         const duration = endSec - startSec;
         logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
 
-        // Use ffmpeg directly on the URL with -ss before -i for HTTP range seeking
+        // Use ffmpeg directly on the URL — -ss after -i for stream seeking
+        // (-ss before -i fails: HTTP byte-range seek produces empty output)
         // -tls_verify 0 bypasses CA cert issues with static ffmpeg builds
         await execCapture("ffmpeg", [
           "-tls_verify", "0",
-          "-ss", String(startSec),
           "-i", downloadUrl,
+          "-ss", String(startSec),
           "-t", String(duration),
           "-c:v", "libx264", "-crf", "18", "-preset", "fast",
           "-c:a", "aac", "-b:a", "128k",
           "-movflags", "+faststart", "-y", clipFile,
-        ], { timeout: 120_000 });
+        ], { timeout: 300_000 });
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
