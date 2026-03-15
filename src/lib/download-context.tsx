@@ -118,12 +118,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
           updateItem(id, { progress: 5 });
 
-          // Step 2: Poll for status
+          // Step 2: Poll for status — no hard timeout, backend controls lifecycle
           const pollInterval = 3000;
-          const maxPollTime = 15 * 60_000; // 15 minutes max
-          const pollStart = Date.now();
+          let consecutiveErrors = 0;
 
-          while (Date.now() - pollStart < maxPollTime) {
+          while (true) {
             await new Promise((r) => setTimeout(r, pollInterval));
 
             // Check if this download was dismissed
@@ -131,7 +130,15 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             if (!current || current.status !== "downloading") return;
 
             const statusResp = await fetch(`/api/clip-status?jobId=${jobId}`);
-            if (!statusResp.ok) continue;
+            if (!statusResp.ok) {
+              consecutiveErrors++;
+              if (consecutiveErrors >= 50) {
+                updateItem(id, { status: "error", error: "Lost connection to server", progress: 0 });
+                return;
+              }
+              continue;
+            }
+            consecutiveErrors = 0;
 
             const status = await statusResp.json();
 
@@ -170,9 +177,6 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               });
             }
           }
-
-          // Timed out
-          updateItem(id, { status: "error", error: "Processing timed out (15 min)", progress: 0 });
         } catch (err: any) {
           updateItem(id, { status: "error", error: err.message || "Network error", progress: 0 });
         }

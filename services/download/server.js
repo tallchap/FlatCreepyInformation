@@ -48,12 +48,15 @@ async function rapidApiDownload(videoUrl, quality, job) {
   if (!initRes.success) throw new Error(`RapidAPI init failed: ${initRes.message}`);
   logDebug("rapidapi.requested", { id: initRes.id, progress_url: initRes.progress_url });
 
-  // Step 2: Poll progress
+  // Step 2: Poll progress — no fixed timeout, stall detection instead
   const progressUrl = initRes.progress_url;
-  const deadline = Date.now() + 840_000; // 14 minutes — 1 min buffer before frontend's 15 min timeout
+  const STALL_TIMEOUT = 120_000; // 2 minutes without progress change = stalled
   let pollCount = 0;
   let lastProgress = null;
-  while (Date.now() < deadline) {
+  let lastProgressValue = -1;
+  let lastProgressChangeTime = Date.now();
+
+  while (true) {
     await new Promise(r => setTimeout(r, 2000));
     pollCount++;
     const progress = await new Promise((resolve, reject) => {
@@ -64,6 +67,12 @@ async function rapidApiDownload(videoUrl, quality, job) {
       }).on("error", reject);
     });
     lastProgress = progress;
+
+    // Track progress changes for stall detection
+    if (progress.progress !== lastProgressValue) {
+      lastProgressValue = progress.progress;
+      lastProgressChangeTime = Date.now();
+    }
 
     // Update job stage for frontend visibility
     if (job) {
@@ -83,10 +92,12 @@ async function rapidApiDownload(videoUrl, quality, job) {
     if (progress.text === "Error" || progress.progress < 0) {
       throw new Error(`RapidAPI processing failed: ${progress.text}`);
     }
+    // Stall detection: if progress hasn't changed in 2 minutes, give up
+    if (Date.now() - lastProgressChangeTime > STALL_TIMEOUT) {
+      logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 2}s`, stalledAt: lastProgressValue });
+      throw new Error(`RapidAPI stalled at ${lastProgressValue}% for 2min. Last: ${JSON.stringify(lastProgress)}`);
+    }
   }
-  // Log final state on timeout
-  logDebug("rapidapi.timeout", { lastProgress, pollCount, elapsed: `${pollCount * 2}s` });
-  throw new Error(`RapidAPI download timed out (14min). Last progress: ${JSON.stringify(lastProgress)}`);
 }
 
 // Probe a TCP port, returns true/false
