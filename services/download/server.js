@@ -96,12 +96,15 @@ async function rapidApiDownload(videoUrl, quality, job) {
 
   // Step 2: Poll progress — no fixed timeout, stall detection instead
   const progressUrl = initRes.progress_url;
-  const STALL_TIMEOUT = 480_000; // 8 minutes without progress change = stalled
+  const BASE_STALL = 240_000;      // 4 min base stall timeout
+  const STALL_EXTENSION = 60_000;  // +1 min per progress change (reward active jobs)
+  const MAX_STALL = 720_000;       // 12 min cap
   let pollCount = 0;
   let lastProgress = null;
   let lastProgressValue = -1;
   let lastProgressText = "";
   let lastProgressChangeTime = Date.now();
+  let progressChanges = 0;
 
   while (true) {
     await new Promise(r => setTimeout(r, 2000));
@@ -120,6 +123,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
       lastProgressValue = progress.progress;
       lastProgressText = progress.text;
       lastProgressChangeTime = Date.now();
+      progressChanges++;
     }
 
     // Update job stage for frontend visibility
@@ -140,10 +144,11 @@ async function rapidApiDownload(videoUrl, quality, job) {
     if (progress.text === "Error" || progress.progress < 0) {
       throw new Error(`RapidAPI processing failed: ${progress.text}`);
     }
-    // Stall detection: if progress hasn't changed in 2 minutes, give up
-    if (Date.now() - lastProgressChangeTime > STALL_TIMEOUT) {
-      logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 2}s`, stalledAt: lastProgressValue });
-      throw new Error(`RapidAPI stalled at ${lastProgressValue}% for 4min. Last: ${JSON.stringify(lastProgress)}`);
+    // Stall detection: dynamic timeout — jobs that made more progress get more patience
+    const dynamicTimeout = Math.min(BASE_STALL + progressChanges * STALL_EXTENSION, MAX_STALL);
+    if (Date.now() - lastProgressChangeTime > dynamicTimeout) {
+      logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 2}s`, stalledAt: lastProgressValue, progressChanges, dynamicTimeoutMin: (dynamicTimeout / 60_000).toFixed(1) });
+      throw new Error(`RapidAPI stalled at ${lastProgressValue}% for ${(dynamicTimeout / 60_000).toFixed(0)}min (${progressChanges} changes). Last: ${JSON.stringify(lastProgress)}`);
     }
   }
 }
