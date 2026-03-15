@@ -505,7 +505,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
-        logDebug("rapidapi.failed", { error: (rapidErr.stderr || "").slice(0, 2000), message: (rapidErr.message || "").slice(0, 500) });
+        logDebug("rapidapi.failed", { error: rapidErr.stderr || "", message: rapidErr.message || "" });
       }
     }
 
@@ -523,7 +523,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         ], { timeout: 300_000, useProxy: false });
         downloaded = true;
       } catch (directErr) {
-        logDebug("clip.direct-failed", { error: (directErr.stderr || directErr.message || "").slice(0, 2000) });
+        logDebug("clip.direct-failed", { error: directErr.stderr || directErr.message || "" });
       }
     }
 
@@ -582,8 +582,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     await unlink(rawFile).catch(() => {});
     const detail = error.stderr || error.message || "Unknown error";
     job.status = "failed";
-    job.error = detail.slice(0, 2000);
-    logDebug("clip.error", { jobId, url, error: detail.slice(0, 1000) });
+    job.error = detail;
+    logDebug("clip.error", { jobId, url, error: detail });
 
     logClipToBigQuery({
       job_id: jobId,
