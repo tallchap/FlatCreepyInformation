@@ -38,6 +38,7 @@ export function SpeakerVideosContainer({ speaker }: { speaker: string }) {
 
   const handlePageChange = useCallback(
     (page: number) => {
+      setVideoPage(page);
       const params = new URLSearchParams(searchParams.toString());
       if (page === 1) {
         params.delete("page");

@@ -39,22 +39,20 @@ export function VideoList({
     return groups;
   }, [videos]);
 
-  if (isLoading) {
-    return (
-      <div className="text-center py-8 text-gray-500">Loading videos...</div>
-    );
-  }
-
   return (
     <div className="space-y-4">
       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider px-1">
         <span className="text-blue-700 normal-case">{speaker}</span>
-        <span className="font-normal text-gray-400 normal-case ml-2">
-          ({total} {total === 1 ? "video" : "videos"})
-        </span>
+        {!isLoading && (
+          <span className="font-normal text-gray-400 normal-case ml-2">
+            ({total} {total === 1 ? "video" : "videos"})
+          </span>
+        )}
       </h2>
 
-      {groupedByYear.map((group) => (
+      {isLoading ? (
+        <div className="text-center py-8 text-gray-500">Loading videos...</div>
+      ) : groupedByYear.map((group) => (
         <div key={group.year} className="space-y-3">
           <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1">
             {group.year}
@@ -93,7 +91,7 @@ export function VideoList({
         </div>
       ))}
 
-      {videos.length === 0 && (
+      {!isLoading && videos.length === 0 && (
         <p className="text-center text-gray-500 py-4">
           No videos found.
         </p>
@@ -104,7 +102,7 @@ export function VideoList({
           <Button
             variant="outline"
             size="sm"
-            disabled={page <= 1}
+            disabled={isLoading || page <= 1}
             onClick={() => onPageChange(page - 1)}
           >
             <ChevronLeft size={16} />
@@ -116,7 +114,7 @@ export function VideoList({
           <Button
             variant="outline"
             size="sm"
-            disabled={page >= totalPages}
+            disabled={isLoading || page >= totalPages}
             onClick={() => onPageChange(page + 1)}
           >
             Next
