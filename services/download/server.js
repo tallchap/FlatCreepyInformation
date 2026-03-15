@@ -27,7 +27,15 @@ try {
   const { BigQuery } = require("@google-cloud/bigquery");
   const credJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
   if (credJson) {
-    const credentials = JSON.parse(credJson);
+    let credentials;
+    try { credentials = JSON.parse(credJson); } catch {
+      // Fix private_key newlines that break JSON.parse
+      const fixed = credJson.replace(
+        /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
+        (_m, key) => `"private_key":"${String(key).replace(/\n/g, "\\n")}","client_email"`,
+      );
+      credentials = JSON.parse(fixed);
+    }
     bigquery = new BigQuery({ projectId: BQ_PROJECT, credentials });
     console.log("BigQuery client initialized");
   }
