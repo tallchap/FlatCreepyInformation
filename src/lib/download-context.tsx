@@ -14,6 +14,7 @@ export type DownloadItem = {
   status: DownloadStatus;
   progress: number;
   error?: string;
+  stageDetail?: string;
   date: string;
 };
 
@@ -161,9 +162,12 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               return;
             }
 
-            // Update progress from backend
+            // Update progress and stage from backend
             if (status.progress != null) {
-              updateItem(id, { progress: Math.min(90, status.progress) });
+              updateItem(id, {
+                progress: Math.min(90, status.progress),
+                stageDetail: status.stageDetail || undefined,
+              });
             }
           }
 

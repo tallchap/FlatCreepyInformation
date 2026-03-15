@@ -19,7 +19,7 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
 const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
 const downloadUrlCache = new Map(); // videoId → { url, expiresAt }
 
-async function rapidApiDownload(videoUrl, quality) {
+async function rapidApiDownload(videoUrl, quality, job) {
   const https = require("https");
   const format = quality === "1080p" ? "1080" : "720";
   const params = new URLSearchParams({
@@ -51,8 +51,11 @@ async function rapidApiDownload(videoUrl, quality) {
   // Step 2: Poll progress
   const progressUrl = initRes.progress_url;
   const deadline = Date.now() + 600_000; // 10 minutes — runs in background, no HTTP timeout
+  let pollCount = 0;
+  let lastProgress = null;
   while (Date.now() < deadline) {
     await new Promise(r => setTimeout(r, 2000));
+    pollCount++;
     const progress = await new Promise((resolve, reject) => {
       https.get(progressUrl, (res) => {
         let body = "";
@@ -60,15 +63,30 @@ async function rapidApiDownload(videoUrl, quality) {
         res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
       }).on("error", reject);
     });
+    lastProgress = progress;
+
+    // Update job stage for frontend visibility
+    if (job) {
+      job.stage = "rapidapi-processing";
+      job.stageDetail = `RapidAPI: ${progress.progress}% — ${progress.text || "processing"}`;
+    }
+
+    // Log every 10 polls (~20s)
+    if (pollCount % 10 === 0) {
+      logDebug("rapidapi.polling", { progress: progress.progress, text: progress.text, pollCount, elapsed: `${pollCount * 2}s` });
+    }
+
     if (progress.success === 1 && progress.download_url) {
-      logDebug("rapidapi.ready", { download_url: progress.download_url });
+      logDebug("rapidapi.ready", { download_url: progress.download_url, pollCount, elapsed: `${pollCount * 2}s` });
       return progress.download_url;
     }
     if (progress.text === "Error" || progress.progress < 0) {
       throw new Error(`RapidAPI processing failed: ${progress.text}`);
     }
   }
-  throw new Error("RapidAPI download timed out (120s)");
+  // Log final state on timeout
+  logDebug("rapidapi.timeout", { lastProgress, pollCount, elapsed: `${pollCount * 2}s` });
+  throw new Error(`RapidAPI download timed out (10min). Last progress: ${JSON.stringify(lastProgress)}`);
 }
 
 // Probe a TCP port, returns true/false
@@ -337,8 +355,10 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
           logDebug("rapidapi.cache-hit", { videoId });
         } else {
           job.progress = 5;
+          job.stage = "rapidapi-processing";
+          job.stageDetail = "RapidAPI: requesting...";
           logDebug("rapidapi.starting", { url, quality: `${heightLimit}p` });
-          downloadUrl = await rapidApiDownload(url, quality);
+          downloadUrl = await rapidApiDownload(url, quality, job);
           if (videoId) {
             downloadUrlCache.set(`${videoId}-${heightLimit}`, {
               url: downloadUrl, expiresAt: Date.now() + 3600_000,
@@ -347,6 +367,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         }
 
         job.progress = 70;
+        job.stage = "downloading-video";
+        job.stageDetail = "Downloading video...";
         const duration = endSec - startSec;
         logDebug("rapidapi.downloading", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
 
@@ -355,6 +377,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
           "-fL", "-o", rapidRaw, downloadUrl,
         ], { timeout: 300_000 });
 
+        job.stage = "trimming-clip";
+        job.stageDetail = "Trimming clip...";
         logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
         await execCapture("ffmpeg", [
           "-ss", String(startSec), "-i", rapidRaw,
@@ -376,6 +400,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     if (!downloaded) {
       try {
         job.progress = 30;
+        job.stage = "ytdlp-fallback";
+        job.stageDetail = "yt-dlp: downloading section...";
         await execYtdlp(url, [
           url, "-f", fmt,
           "--download-sections", `*${startSec}-${endSec}`,
@@ -391,6 +417,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     // Attempt 3: yt-dlp full download + ffmpeg trim
     if (!downloaded) {
       job.progress = 30;
+      job.stage = "ytdlp-fallback";
+      job.stageDetail = "yt-dlp: full download...";
       await execYtdlp(url, [
         url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile,
       ], { timeout: 300_000, useProxy: false });
@@ -436,7 +464,7 @@ app.post("/clip", async (req, res) => {
   }
 
   const jobId = crypto.randomUUID();
-  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now() });
+  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
 
   // Start background processing (don't await)
   processClipJob(jobId, { url, startSec, endSec, quality }).catch(() => {});
@@ -447,7 +475,7 @@ app.post("/clip", async (req, res) => {
 app.get("/clip/:jobId", (req, res) => {
   const job = clipJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
-  res.json({ status: job.status, progress: job.progress, error: job.error, fileSize: job.fileSize || null });
+  res.json({ status: job.status, progress: job.progress, error: job.error, fileSize: job.fileSize || null, stage: job.stage || null, stageDetail: job.stageDetail || null });
 });
 
 app.get("/clip/:jobId/file", async (req, res) => {

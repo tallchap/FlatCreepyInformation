@@ -122,12 +122,17 @@ export function DownloadPanel() {
                   {formatTime(d.startSec)} - {formatTime(d.endSec)} &middot; {d.quality}
                 </p>
                 {d.status === "downloading" && (
-                  <div className="mt-1.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                    <div
-                      className="h-full bg-[#DC2626] rounded-full transition-all duration-500 ease-out"
-                      style={{ width: `${d.progress}%` }}
-                    />
-                  </div>
+                  <>
+                    <div className="mt-1.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-[#DC2626] rounded-full transition-all duration-500 ease-out"
+                        style={{ width: `${d.progress}%` }}
+                      />
+                    </div>
+                    {d.stageDetail && (
+                      <p className="text-[10px] text-gray-400 mt-0.5">{d.stageDetail}</p>
+                    )}
+                  </>
                 )}
                 {d.status === "error" && d.error && (
                   <p className="text-[11px] text-red-500 mt-0.5">{d.error}</p>
