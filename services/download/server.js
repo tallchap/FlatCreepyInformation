@@ -389,40 +389,27 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         }
 
         job.progress = 70;
-        job.stage = "trimming-clip";
-        job.stageDetail = "Seeking & trimming clip...";
+        job.stage = "downloading-video";
+        job.stageDetail = "Downloading video...";
         const duration = endSec - startSec;
-        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+        const rapidRaw = join(tmpdir(), `rapid-raw-${jobId}.mp4`);
+        logDebug("rapidapi.downloading", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
 
-        // Pipe curl→ffmpeg: curl handles HTTPS (static ffmpeg uses GnuTLS, can't skip cert verify)
-        // -ss after -i: ffmpeg reads through pipe to seek point, then encodes the clip
-        await new Promise((resolve, reject) => {
-          const { spawn } = require("child_process");
-          const curl = spawn("curl", ["-fL", downloadUrl]);
-          const ffmpeg = spawn("ffmpeg", [
-            "-i", "pipe:0",
-            "-ss", String(startSec),
-            "-t", String(duration),
-            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart", "-y", clipFile,
-          ]);
-          curl.stdout.pipe(ffmpeg.stdin);
-          // Suppress EPIPE errors when ffmpeg exits before curl finishes downloading
-          curl.stdout.on("error", () => {});
-          ffmpeg.stdin.on("error", () => {});
-          let stderr = "";
-          ffmpeg.stderr.on("data", (d) => stderr += d.toString());
-          curl.on("error", reject);
-          ffmpeg.on("error", reject);
-          curl.stderr.on("data", () => {}); // suppress curl progress
-          ffmpeg.on("close", (code) => {
-            curl.kill();
-            if (code === 0) resolve();
-            else { const err = new Error(`ffmpeg exited ${code}`); err.stderr = stderr; reject(err); }
-          });
-          setTimeout(() => { curl.kill(); ffmpeg.kill(); reject(new Error("curl|ffmpeg pipe timeout (5min)")); }, 300_000);
-        });
+        // Step 1: curl downloads full video to disk (handles HTTPS; static ffmpeg uses GnuTLS, can't)
+        await execCapture("curl", ["-fL", "-o", rapidRaw, downloadUrl], { timeout: 600_000 });
+
+        // Step 2: ffmpeg seeks instantly on local file (-ss before -i = keyframe seek)
+        job.stage = "trimming-clip";
+        job.stageDetail = "Trimming clip...";
+        logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
+        await execCapture("ffmpeg", [
+          "-ss", String(startSec), "-i", rapidRaw,
+          "-t", String(duration),
+          "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+          "-c:a", "aac", "-b:a", "128k",
+          "-movflags", "+faststart", "-y", clipFile,
+        ], { timeout: 120_000 });
+        await unlink(rapidRaw).catch(() => {});
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
