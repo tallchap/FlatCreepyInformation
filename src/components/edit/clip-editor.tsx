@@ -418,7 +418,14 @@ export function ClipEditor() {
                 <div className="flex gap-2">
                   <button
                     onClick={() => {
-                      navigator.clipboard.writeText(JSON.stringify(debugLogs, null, 2));
+                      const allData = {
+                        ...(clipStats ? { clipStats } : {}),
+                        ...(crashLog ? { crashLog } : {}),
+                        ...(renderInfo ? { renderInfo } : {}),
+                        ...(systemInfo ? { systemInfo } : {}),
+                        debugLogs,
+                      };
+                      navigator.clipboard.writeText(JSON.stringify(allData, null, 2));
                       setDebugCopied(true);
                       setTimeout(() => setDebugCopied(false), 1500);
                     }}
