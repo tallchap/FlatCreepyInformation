@@ -18,6 +18,32 @@ process.on("unhandledRejection", (reason) => {
   console.error("UNHANDLED REJECTION:", reason);
 });
 
+// BigQuery clip stats
+const BQ_PROJECT = "youtubetranscripts-429803";
+const BQ_DATASET = "reptranscripts";
+const BQ_TABLE = "clip_exports";
+let bigquery = null;
+try {
+  const { BigQuery } = require("@google-cloud/bigquery");
+  const credJson = process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON;
+  if (credJson) {
+    const credentials = JSON.parse(credJson);
+    bigquery = new BigQuery({ projectId: BQ_PROJECT, credentials });
+    console.log("BigQuery client initialized");
+  }
+} catch (e) {
+  console.log("BigQuery not available:", e.message);
+}
+
+async function logClipToBigQuery(row) {
+  if (!bigquery) return;
+  try {
+    await bigquery.dataset(BQ_DATASET).table(BQ_TABLE).insert([row]);
+  } catch (e) {
+    console.error("BigQuery insert error:", e.message);
+  }
+}
+
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -361,6 +387,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
   const rawFile = join(tmpdir(), `raw-${jobId}.mp4`);
   const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
 
+  const timings = { start: Date.now(), rapidapiDone: 0, downloadDone: 0, trimDone: 0 };
+
   try {
     logDebug("clip.start", { jobId, url, startSec, endSec, quality: `${heightLimit}p`, rapidapi: !!RAPIDAPI_KEY });
     let downloaded = false;
@@ -387,6 +415,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
             });
           }
         }
+        timings.rapidapiDone = Date.now();
 
         job.progress = 70;
         job.stage = "downloading-video";
@@ -397,6 +426,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
 
         // Step 1: curl downloads full video to disk (handles HTTPS; static ffmpeg uses GnuTLS, can't)
         await execCapture("curl", ["-fL", "-o", rapidRaw, downloadUrl], { timeout: 600_000 });
+        timings.downloadDone = Date.now();
 
         // Step 2: ffmpeg seeks instantly on local file (-ss before -i = keyframe seek)
         job.stage = "trimming-clip";
@@ -456,12 +486,32 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
       await unlink(rawFile).catch(() => {});
     }
 
+    timings.trimDone = Date.now();
     const { size } = require("fs").statSync(clipFile);
     job.status = "ready";
     job.progress = 100;
     job.clipFile = clipFile;
     job.fileSize = size;
-    logDebug("clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1) });
+    const totalSec = (Date.now() - timings.start) / 1000;
+    logDebug("clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1) });
+
+    logClipToBigQuery({
+      job_id: jobId,
+      video_id: extractVideoId(url) || "",
+      video_url: url,
+      start_sec: startSec,
+      end_sec: endSec,
+      clip_duration_sec: endSec - startSec,
+      quality: `${heightLimit}p`,
+      status: "complete",
+      error: null,
+      total_sec: totalSec,
+      rapidapi_sec: timings.rapidapiDone ? (timings.rapidapiDone - timings.start) / 1000 : null,
+      download_sec: timings.downloadDone ? (timings.downloadDone - (timings.rapidapiDone || timings.start)) / 1000 : null,
+      trim_sec: timings.trimDone ? (timings.trimDone - (timings.downloadDone || timings.start)) / 1000 : null,
+      file_size_bytes: size,
+      created_at: new Date(timings.start).toISOString(),
+    });
   } catch (error) {
     await unlink(clipFile).catch(() => {});
     await unlink(rawFile).catch(() => {});
@@ -469,6 +519,24 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     job.status = "failed";
     job.error = detail.slice(0, 2000);
     logDebug("clip.error", { jobId, url, error: detail.slice(0, 1000) });
+
+    logClipToBigQuery({
+      job_id: jobId,
+      video_id: extractVideoId(url) || "",
+      video_url: url,
+      start_sec: startSec,
+      end_sec: endSec,
+      clip_duration_sec: endSec - startSec,
+      quality: `${heightLimit}p`,
+      status: "failed",
+      error: detail.slice(0, 2000),
+      total_sec: (Date.now() - timings.start) / 1000,
+      rapidapi_sec: timings.rapidapiDone ? (timings.rapidapiDone - timings.start) / 1000 : null,
+      download_sec: null,
+      trim_sec: null,
+      file_size_bytes: null,
+      created_at: new Date(timings.start).toISOString(),
+    });
   }
 }
 
@@ -587,6 +655,24 @@ app.get("/debug/logs", (_req, res) => {
 app.get("/debug/crash", (_req, res) => {
   try { res.json({ crashLog: require("fs").readFileSync("/tmp/crash.log", "utf8") }); }
   catch { res.json({ crashLog: null }); }
+});
+
+app.get("/debug/clip-stats", async (_req, res) => {
+  if (!bigquery) return res.json({ error: "BigQuery not configured" });
+  try {
+    const [rows] = await bigquery.query({
+      query: `SELECT * FROM \`${BQ_PROJECT}.${BQ_DATASET}.${BQ_TABLE}\` ORDER BY created_at DESC LIMIT 50`,
+    });
+    const summary = {
+      total: rows.length,
+      completed: rows.filter((r) => r.status === "complete").length,
+      failed: rows.filter((r) => r.status === "failed").length,
+      avgTotalSec: rows.filter((r) => r.status === "complete" && r.total_sec).reduce((a, r) => a + r.total_sec, 0) / (rows.filter((r) => r.status === "complete").length || 1),
+    };
+    res.json({ summary, clips: rows });
+  } catch (e) {
+    res.json({ error: e.message });
+  }
 });
 
 app.post("/debug/logs/clear", (_req, res) => {

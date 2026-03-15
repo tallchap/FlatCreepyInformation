@@ -43,6 +43,7 @@ export function ClipEditor() {
   const [systemInfo, setSystemInfo] = useState<any>(null);
   const [renderInfo, setRenderInfo] = useState<any>(null);
   const [crashLog, setCrashLog] = useState<string | null>(null);
+  const [clipStats, setClipStats] = useState<any>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
@@ -468,8 +469,20 @@ export function ClipEditor() {
                   >
                     Crash Log
                   </button>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch("/api/download-clip-stats");
+                      setClipStats(await res.json());
+                    }}
+                    className="px-2 py-1 rounded border border-green-700 text-green-300 hover:bg-green-900/30"
+                  >
+                    Clip Stats
+                  </button>
                 </div>
               </div>
+              {clipStats && (
+                <pre className="whitespace-pre-wrap break-all border border-green-900 rounded p-3 bg-green-950/30 text-green-200">{JSON.stringify(clipStats, null, 2)}</pre>
+              )}
               {crashLog && (
                 <pre className="whitespace-pre-wrap break-all border border-orange-900 rounded p-3 bg-orange-950/30 text-orange-200">{crashLog}</pre>
               )}
