@@ -343,7 +343,6 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
     let downloaded = false;
 
     // Attempt 1: RapidAPI (no timeout limit — runs in background)
-    const rapidRaw = join(tmpdir(), `rapid-raw-${jobId}.mp4`);
     if (RAPIDAPI_KEY) {
       try {
         const videoId = extractVideoId(url);
@@ -367,31 +366,25 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         }
 
         job.progress = 70;
-        job.stage = "downloading-video";
-        job.stageDetail = "Downloading video...";
-        const duration = endSec - startSec;
-        logDebug("rapidapi.downloading", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
-
-        // Download full video to local file first (curl has working HTTPS via system CA store)
-        await execCapture("curl", [
-          "-fL", "-o", rapidRaw, downloadUrl,
-        ], { timeout: 300_000 });
-
         job.stage = "trimming-clip";
-        job.stageDetail = "Trimming clip...";
-        logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
+        job.stageDetail = "Seeking & trimming clip...";
+        const duration = endSec - startSec;
+        logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
+
+        // Use ffmpeg directly on the URL with -ss before -i for HTTP range seeking
+        // -tls_verify 0 bypasses CA cert issues with static ffmpeg builds
         await execCapture("ffmpeg", [
-          "-ss", String(startSec), "-i", rapidRaw,
+          "-tls_verify", "0",
+          "-ss", String(startSec),
+          "-i", downloadUrl,
           "-t", String(duration),
           "-c:v", "libx264", "-crf", "18", "-preset", "fast",
           "-c:a", "aac", "-b:a", "128k",
           "-movflags", "+faststart", "-y", clipFile,
-        ], { timeout: 300_000 });
-        await unlink(rapidRaw).catch(() => {});
+        ], { timeout: 120_000 });
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
-        await unlink(rapidRaw).catch(() => {});
         logDebug("rapidapi.failed", { error: (rapidErr.stderr || "").slice(0, 2000), message: (rapidErr.message || "").slice(0, 500) });
       }
     }
