@@ -419,6 +419,7 @@ setInterval(() => {
   const cutoff = Date.now() - 30 * 60_000;
   for (const [id, job] of clipJobs) {
     if (job.createdAt < cutoff) {
+      logDebug("cleanup.delete", { jobId: id, status: job.status, ageMin: Math.round((Date.now() - job.createdAt) / 60_000), hasClipFile: !!job.clipFile });
       if (job.clipFile) unlink(job.clipFile).catch(() => {});
       clipJobs.delete(id);
     }
