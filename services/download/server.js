@@ -589,7 +589,22 @@ app.post("/debug/logs/clear", (_req, res) => {
 
 app.get("/debug/system", async (_req, res) => {
   const fs = require("fs");
+  const os = require("os");
   const info = { ...startupState };
+
+  // Memory & resources
+  const mem = process.memoryUsage();
+  info.memory = {
+    rss_mb: Math.round(mem.rss / 1024 / 1024),
+    heapUsed_mb: Math.round(mem.heapUsed / 1024 / 1024),
+    heapTotal_mb: Math.round(mem.heapTotal / 1024 / 1024),
+    external_mb: Math.round(mem.external / 1024 / 1024),
+    totalSystem_mb: Math.round(os.totalmem() / 1024 / 1024),
+    freeSystem_mb: Math.round(os.freemem() / 1024 / 1024),
+  };
+  info.processUptime = Math.round(process.uptime());
+  info.cpus = os.cpus().length;
+  info.loadAvg = os.loadavg();
 
   // Live port probes
   info.live = {
@@ -615,6 +630,64 @@ app.get("/debug/system", async (_req, res) => {
   catch { info.startupLog = "(not found)"; }
 
   res.json(info);
+});
+
+// Render API diagnostics
+const RENDER_API_KEY = process.env.RENDER_API_KEY || "";
+const RENDER_SERVICE_ID = process.env.RENDER_SERVICE_ID || "";
+
+app.get("/debug/render", async (_req, res) => {
+  if (!RENDER_API_KEY || !RENDER_SERVICE_ID) {
+    return res.json({ error: "RENDER_API_KEY or RENDER_SERVICE_ID not configured" });
+  }
+  const https = require("https");
+  const os = require("os");
+
+  const result = {
+    memory: {
+      rss_mb: Math.round(process.memoryUsage().rss / 1024 / 1024),
+      totalSystem_mb: Math.round(os.totalmem() / 1024 / 1024),
+      freeSystem_mb: Math.round(os.freemem() / 1024 / 1024),
+    },
+    processUptime: Math.round(process.uptime()),
+    cpus: os.cpus().length,
+  };
+
+  try {
+    // Fetch service info
+    const svcData = await new Promise((resolve, reject) => {
+      https.get(`https://api.render.com/v1/services/${RENDER_SERVICE_ID}`, {
+        headers: { Authorization: `Bearer ${RENDER_API_KEY}` },
+      }, (r) => {
+        let body = "";
+        r.on("data", (c) => body += c);
+        r.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+      }).on("error", reject);
+    });
+    result.plan = svcData.serviceDetails?.plan || "unknown";
+
+    // Fetch recent deploys
+    const deploys = await new Promise((resolve, reject) => {
+      https.get(`https://api.render.com/v1/services/${RENDER_SERVICE_ID}/deploys?limit=5`, {
+        headers: { Authorization: `Bearer ${RENDER_API_KEY}` },
+      }, (r) => {
+        let body = "";
+        r.on("data", (c) => body += c);
+        r.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
+      }).on("error", reject);
+    });
+    result.deploys = deploys.map((d) => ({
+      id: d.deploy?.id,
+      status: d.deploy?.status,
+      trigger: d.deploy?.trigger,
+      commit: d.deploy?.commit?.id?.slice(0, 7),
+      created: d.deploy?.createdAt,
+    }));
+  } catch (e) {
+    result.error = e.message;
+  }
+
+  res.json(result);
 });
 
 app.get("/debug/ytdlp-plugins", async (_req, res) => {

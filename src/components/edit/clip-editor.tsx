@@ -41,6 +41,7 @@ export function ClipEditor() {
   const [debugLoading, setDebugLoading] = useState(false);
   const [debugCopied, setDebugCopied] = useState(false);
   const [systemInfo, setSystemInfo] = useState<any>(null);
+  const [renderInfo, setRenderInfo] = useState<any>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
@@ -447,8 +448,20 @@ export function ClipEditor() {
                   >
                     System Info
                   </button>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch("/api/download-render");
+                      setRenderInfo(await res.json());
+                    }}
+                    className="px-2 py-1 rounded border border-purple-700 text-purple-300 hover:bg-purple-900/30"
+                  >
+                    Resources
+                  </button>
                 </div>
               </div>
+              {renderInfo && (
+                <pre className="whitespace-pre-wrap break-all border border-purple-900 rounded p-3 bg-purple-950/30 text-purple-200">{JSON.stringify(renderInfo, null, 2)}</pre>
+              )}
               {systemInfo && (
                 <pre className="whitespace-pre-wrap break-all border border-blue-900 rounded p-3 bg-blue-950/30 text-blue-200">{JSON.stringify(systemInfo, null, 2)}</pre>
               )}
