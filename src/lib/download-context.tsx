@@ -129,8 +129,20 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             const current = downloadsRef.current.find((d) => d.id === id);
             if (!current || current.status !== "downloading") return;
 
-            const statusResp = await fetch(`/api/clip-status?jobId=${jobId}`);
-            if (!statusResp.ok) {
+            let status;
+            try {
+              const statusResp = await fetch(`/api/clip-status?jobId=${jobId}`);
+              if (!statusResp.ok) {
+                consecutiveErrors++;
+                if (consecutiveErrors >= 50) {
+                  updateItem(id, { status: "error", error: "Lost connection to server", progress: 0 });
+                  return;
+                }
+                continue;
+              }
+              consecutiveErrors = 0;
+              status = await statusResp.json();
+            } catch {
               consecutiveErrors++;
               if (consecutiveErrors >= 50) {
                 updateItem(id, { status: "error", error: "Lost connection to server", progress: 0 });
@@ -138,9 +150,6 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               }
               continue;
             }
-            consecutiveErrors = 0;
-
-            const status = await statusResp.json();
 
             if (status.status === "ready") {
               updateItem(id, { progress: 95 });
