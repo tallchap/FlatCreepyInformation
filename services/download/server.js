@@ -5,6 +5,18 @@ const { readFile, unlink } = require("fs/promises");
 const { tmpdir } = require("os");
 const { join } = require("path");
 const crypto = require("crypto");
+const fs = require("fs");
+
+// Crash logging — write to /tmp/crash.log before dying so next startup can show what happened
+process.on("uncaughtException", (err) => {
+  try { fs.appendFileSync("/tmp/crash.log", `[${new Date().toISOString()}] UNCAUGHT: ${err.stack || err}\n`); } catch {}
+  console.error("UNCAUGHT EXCEPTION:", err);
+  process.exit(1);
+});
+process.on("unhandledRejection", (reason) => {
+  try { fs.appendFileSync("/tmp/crash.log", `[${new Date().toISOString()}] UNHANDLED_REJECTION: ${reason}\n`); } catch {}
+  console.error("UNHANDLED REJECTION:", reason);
+});
 
 const app = express();
 app.use(cors());
@@ -396,6 +408,9 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
             "-movflags", "+faststart", "-y", clipFile,
           ]);
           curl.stdout.pipe(ffmpeg.stdin);
+          // Suppress EPIPE errors when ffmpeg exits before curl finishes downloading
+          curl.stdout.on("error", () => {});
+          ffmpeg.stdin.on("error", () => {});
           let stderr = "";
           ffmpeg.stderr.on("data", (d) => stderr += d.toString());
           curl.on("error", reject);
@@ -626,8 +641,12 @@ app.get("/debug/system", async (_req, res) => {
   } catch (e) { info.ytdlpVersion = `error: ${e.message}`; }
 
   // Startup log from start.sh
-  try { info.startupLog = fs.readFileSync("/tmp/startup.log", "utf8"); }
+  try { info.startupLog = require("fs").readFileSync("/tmp/startup.log", "utf8"); }
   catch { info.startupLog = "(not found)"; }
+
+  // Crash log from previous runs
+  try { info.crashLog = require("fs").readFileSync("/tmp/crash.log", "utf8"); }
+  catch { info.crashLog = null; }
 
   res.json(info);
 });
