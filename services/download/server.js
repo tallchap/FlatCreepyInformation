@@ -867,6 +867,23 @@ app.get("/debug/bgutil-test", async (_req, res) => {
   }
 });
 
+app.get("/debug/curl-test", async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).json({ error: "Missing ?url= parameter" });
+  try {
+    const result = await execCapture("curl", [
+      "-fL", "-o", "/dev/null",
+      "-w", '{"http_code":%{http_code},"size_download":%{size_download},"speed_download":%{speed_download},"time_total":%{time_total},"time_connect":%{time_connect},"time_starttransfer":%{time_starttransfer}}',
+      "--max-time", "15",
+      url,
+    ], { timeout: 20_000 });
+    const stats = JSON.parse(result.stdout);
+    res.json({ url, ...stats, stderr: result.stderr.slice(0, 500) });
+  } catch (e) {
+    res.json({ url, error: e.message, stderr: (e.stderr || "").slice(0, 1000) });
+  }
+});
+
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
