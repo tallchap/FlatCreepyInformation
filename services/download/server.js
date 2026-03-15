@@ -494,6 +494,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         job.stageDetail = "Trimming clip...";
         logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
         await execCapture("ffmpeg", [
+          "-err_detect", "ignore_err", "-fflags", "+genpts",
           "-ss", String(startSec), "-i", rapidRaw,
           "-t", String(duration),
           "-c:v", "libx264", "-crf", "18", "-preset", "fast",
@@ -538,6 +539,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
       job.progress = 80;
       const duration = endSec - startSec;
       await execCapture("ffmpeg", [
+        "-err_detect", "ignore_err", "-fflags", "+genpts",
         "-ss", String(startSec), "-i", rawFile,
         "-t", String(duration),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
