@@ -382,18 +382,32 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         const duration = endSec - startSec;
         logDebug("rapidapi.ffmpeg-trim", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
 
-        // Use ffmpeg directly on the URL — -ss after -i for stream seeking
-        // (-ss before -i fails: HTTP byte-range seek produces empty output)
-        // -tls_verify 0 bypasses CA cert issues with static ffmpeg builds
-        await execCapture("ffmpeg", [
-          "-tls_verify", "0",
-          "-i", downloadUrl,
-          "-ss", String(startSec),
-          "-t", String(duration),
-          "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-          "-c:a", "aac", "-b:a", "128k",
-          "-movflags", "+faststart", "-y", clipFile,
-        ], { timeout: 300_000 });
+        // Pipe curl→ffmpeg: curl handles HTTPS (static ffmpeg uses GnuTLS, can't skip cert verify)
+        // -ss after -i: ffmpeg reads through pipe to seek point, then encodes the clip
+        await new Promise((resolve, reject) => {
+          const { spawn } = require("child_process");
+          const curl = spawn("curl", ["-fL", downloadUrl]);
+          const ffmpeg = spawn("ffmpeg", [
+            "-i", "pipe:0",
+            "-ss", String(startSec),
+            "-t", String(duration),
+            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart", "-y", clipFile,
+          ]);
+          curl.stdout.pipe(ffmpeg.stdin);
+          let stderr = "";
+          ffmpeg.stderr.on("data", (d) => stderr += d.toString());
+          curl.on("error", reject);
+          ffmpeg.on("error", reject);
+          curl.stderr.on("data", () => {}); // suppress curl progress
+          ffmpeg.on("close", (code) => {
+            curl.kill();
+            if (code === 0) resolve();
+            else { const err = new Error(`ffmpeg exited ${code}`); err.stderr = stderr; reject(err); }
+          });
+          setTimeout(() => { curl.kill(); ffmpeg.kill(); reject(new Error("curl|ffmpeg pipe timeout (5min)")); }, 300_000);
+        });
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
       } catch (rapidErr) {
