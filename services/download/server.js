@@ -292,6 +292,22 @@ function execCapture(cmd, args, opts = {}) {
   });
 }
 
+async function getVideoMetadata(filePath) {
+  try {
+    const result = await execCapture("ffprobe", [
+      "-v", "quiet", "-print_format", "json",
+      "-show_format", "-show_streams", filePath,
+    ], { timeout: 10_000 });
+    const data = JSON.parse(result.stdout);
+    const videoStream = data.streams?.find(s => s.codec_type === "video");
+    return {
+      duration_sec: parseFloat(data.format?.duration) || null,
+      width: videoStream?.width || null,
+      height: videoStream?.height || null,
+    };
+  } catch { return { duration_sec: null, width: null, height: null }; }
+}
+
 function ytdlpBaseArgs({ useProxy = false } = {}) {
   const args = [];
   if (useProxy && warpAvailable) {
@@ -399,6 +415,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
 
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
+  let videoMeta = null;
   const rawFile = join(tmpdir(), `raw-${jobId}.mp4`);
   const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
 
@@ -442,6 +459,9 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         // Step 1: curl downloads full video to disk (handles HTTPS; static ffmpeg uses GnuTLS, can't)
         await execCapture("curl", ["-fL", "-o", rapidRaw, downloadUrl], { timeout: 600_000 });
         timings.downloadDone = Date.now();
+
+        // Grab source video metadata before trimming
+        videoMeta = await getVideoMetadata(rapidRaw);
 
         // Step 2: ffmpeg seeks instantly on local file (-ss before -i = keyframe seek)
         job.stage = "trimming-clip";
@@ -525,6 +545,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
       download_sec: timings.downloadDone ? (timings.downloadDone - (timings.rapidapiDone || timings.start)) / 1000 : null,
       trim_sec: timings.trimDone ? (timings.trimDone - (timings.downloadDone || timings.start)) / 1000 : null,
       file_size_bytes: size,
+      video_duration_sec: videoMeta?.duration_sec || null,
+      video_resolution: videoMeta?.width ? `${videoMeta.width}x${videoMeta.height}` : null,
       created_at: new Date(timings.start).toISOString(),
     });
   } catch (error) {
@@ -550,6 +572,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
       download_sec: null,
       trim_sec: null,
       file_size_bytes: null,
+      video_duration_sec: videoMeta?.duration_sec || null,
+      video_resolution: videoMeta?.width ? `${videoMeta.width}x${videoMeta.height}` : null,
       created_at: new Date(timings.start).toISOString(),
     });
   }
