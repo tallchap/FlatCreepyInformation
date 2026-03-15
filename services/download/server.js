@@ -728,7 +728,7 @@ app.get("/debug/clip-stats", async (_req, res) => {
   if (!bigquery) return res.json({ error: "BigQuery not configured" });
   try {
     const [rows] = await bigquery.query({
-      query: `SELECT * FROM \`${BQ_PROJECT}.${BQ_DATASET}.${BQ_TABLE}\` ORDER BY created_at DESC LIMIT 50`,
+      query: `SELECT * FROM \`${BQ_PROJECT}.${BQ_DATASET}.${BQ_TABLE}\` ORDER BY created_at DESC LIMIT 2`,
     });
     const summary = {
       total: rows.length,
