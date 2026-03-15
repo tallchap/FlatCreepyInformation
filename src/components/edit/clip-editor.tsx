@@ -42,6 +42,7 @@ export function ClipEditor() {
   const [debugCopied, setDebugCopied] = useState(false);
   const [systemInfo, setSystemInfo] = useState<any>(null);
   const [renderInfo, setRenderInfo] = useState<any>(null);
+  const [crashLog, setCrashLog] = useState<string | null>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
@@ -457,8 +458,21 @@ export function ClipEditor() {
                   >
                     Resources
                   </button>
+                  <button
+                    onClick={async () => {
+                      const res = await fetch("/api/download-crash");
+                      const data = await res.json();
+                      setCrashLog(data.crashLog || "(no crash log)");
+                    }}
+                    className="px-2 py-1 rounded border border-orange-700 text-orange-300 hover:bg-orange-900/30"
+                  >
+                    Crash Log
+                  </button>
                 </div>
               </div>
+              {crashLog && (
+                <pre className="whitespace-pre-wrap break-all border border-orange-900 rounded p-3 bg-orange-950/30 text-orange-200">{crashLog}</pre>
+              )}
               {renderInfo && (
                 <pre className="whitespace-pre-wrap break-all border border-purple-900 rounded p-3 bg-purple-950/30 text-purple-200">{JSON.stringify(renderInfo, null, 2)}</pre>
               )}

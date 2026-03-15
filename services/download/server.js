@@ -597,6 +597,11 @@ app.get("/debug/logs", (_req, res) => {
   res.json({ items: debugEvents });
 });
 
+app.get("/debug/crash", (_req, res) => {
+  try { res.json({ crashLog: require("fs").readFileSync("/tmp/crash.log", "utf8") }); }
+  catch { res.json({ crashLog: null }); }
+});
+
 app.post("/debug/logs/clear", (_req, res) => {
   debugEvents.length = 0;
   res.json({ cleared: true });
