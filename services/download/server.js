@@ -56,6 +56,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Log every incoming HTTP request
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on("finish", () => {
+    logDebug("http.request", { method: req.method, path: req.path, status: res.statusCode, ms: Date.now() - start });
+  });
+  next();
+});
+
 const WARP_PROXY = "http://127.0.0.1:8080";
 let warpAvailable = false;
 const startupState = { warp: {}, bgutil: {}, ytdlp: {}, wireproxyConf: null };
@@ -899,6 +908,12 @@ app.get("/debug/curl-test", async (req, res) => {
   } catch (e) {
     res.json({ url, error: e.message, stderr: (e.stderr || "").slice(0, 1000) });
   }
+});
+
+app.post("/debug/client-error", (req, res) => {
+  const { error, jobId, consecutiveErrors } = req.body || {};
+  logDebug("client.poll-error", { error, jobId, consecutiveErrors });
+  res.json({ logged: true });
 });
 
 app.get("/health", (_req, res) => {

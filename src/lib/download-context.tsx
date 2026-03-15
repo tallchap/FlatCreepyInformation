@@ -134,6 +134,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               const statusResp = await fetch(`/api/clip-status?jobId=${jobId}`);
               if (!statusResp.ok) {
                 consecutiveErrors++;
+                fetch("/api/download-client-error", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ error: `HTTP ${statusResp.status}`, jobId, consecutiveErrors }),
+                }).catch(() => {});
                 if (consecutiveErrors >= 50) {
                   updateItem(id, { status: "error", error: "Lost connection to server", progress: 0 });
                   return;
@@ -142,8 +147,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               }
               consecutiveErrors = 0;
               status = await statusResp.json();
-            } catch {
+            } catch (pollErr: any) {
               consecutiveErrors++;
+              fetch("/api/download-client-error", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ error: pollErr?.message || "Network error", jobId, consecutiveErrors }),
+              }).catch(() => {});
               if (consecutiveErrors >= 50) {
                 updateItem(id, { status: "error", error: "Lost connection to server", progress: 0 });
                 return;
