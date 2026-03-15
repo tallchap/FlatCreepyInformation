@@ -105,17 +105,33 @@ async function rapidApiDownload(videoUrl, quality, job) {
   let lastProgressText = "";
   let lastProgressChangeTime = Date.now();
   let progressChanges = 0;
+  let consecutiveErrors = 0;
 
   while (true) {
-    await new Promise(r => setTimeout(r, 2000));
+    await new Promise(r => setTimeout(r, 5000));
     pollCount++;
-    const progress = await new Promise((resolve, reject) => {
-      https.get(progressUrl, (res) => {
-        let body = "";
-        res.on("data", (c) => body += c);
-        res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(e); } });
-      }).on("error", reject);
-    });
+
+    // Poll with transient error resilience
+    let progress;
+    try {
+      progress = await new Promise((resolve, reject) => {
+        https.get(progressUrl, (res) => {
+          let body = "";
+          res.on("data", (c) => body += c);
+          res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(new Error(`Bad JSON: ${body.slice(0, 200)}`)); } });
+        }).on("error", reject);
+      });
+      consecutiveErrors = 0;
+    } catch (pollErr) {
+      consecutiveErrors++;
+      if (consecutiveErrors >= 10) {
+        throw new Error(`RapidAPI polling failed ${consecutiveErrors} times in a row. Last error: ${pollErr.message}`);
+      }
+      if (consecutiveErrors === 1 || consecutiveErrors % 5 === 0) {
+        logDebug("rapidapi.poll-error", { error: pollErr.message, consecutiveErrors, pollCount });
+      }
+      continue;
+    }
     lastProgress = progress;
 
     // Track progress changes for stall detection (reset on number OR phase change)
@@ -132,13 +148,13 @@ async function rapidApiDownload(videoUrl, quality, job) {
       job.stageDetail = `RapidAPI: ${progress.progress}% — ${progress.text || "processing"}`;
     }
 
-    // Log every 10 polls (~20s)
-    if (pollCount % 10 === 0) {
-      logDebug("rapidapi.polling", { progress: progress.progress, text: progress.text, pollCount, elapsed: `${pollCount * 2}s` });
+    // Log every 6 polls (~30s)
+    if (pollCount % 6 === 0) {
+      logDebug("rapidapi.polling", { progress: progress.progress, text: progress.text, pollCount, elapsed: `${pollCount * 5}s` });
     }
 
     if (progress.success === 1 && progress.download_url) {
-      logDebug("rapidapi.ready", { download_url: progress.download_url, pollCount, elapsed: `${pollCount * 2}s` });
+      logDebug("rapidapi.ready", { download_url: progress.download_url, pollCount, elapsed: `${pollCount * 5}s` });
       return progress.download_url;
     }
     if (progress.text === "Error" || progress.progress < 0) {
@@ -147,7 +163,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
     // Stall detection: dynamic timeout — jobs that made more progress get more patience
     const dynamicTimeout = Math.min(BASE_STALL + progressChanges * STALL_EXTENSION, MAX_STALL);
     if (Date.now() - lastProgressChangeTime > dynamicTimeout) {
-      logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 2}s`, stalledAt: lastProgressValue, progressChanges, dynamicTimeoutMin: (dynamicTimeout / 60_000).toFixed(1) });
+      logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 5}s`, stalledAt: lastProgressValue, progressChanges, dynamicTimeoutMin: (dynamicTimeout / 60_000).toFixed(1) });
       throw new Error(`RapidAPI stalled at ${lastProgressValue}% for ${(dynamicTimeout / 60_000).toFixed(0)}min (${progressChanges} changes). Last: ${JSON.stringify(lastProgress)}`);
     }
   }
