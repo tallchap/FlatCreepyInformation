@@ -100,6 +100,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
   let pollCount = 0;
   let lastProgress = null;
   let lastProgressValue = -1;
+  let lastProgressText = "";
   let lastProgressChangeTime = Date.now();
 
   while (true) {
@@ -114,9 +115,10 @@ async function rapidApiDownload(videoUrl, quality, job) {
     });
     lastProgress = progress;
 
-    // Track progress changes for stall detection
-    if (progress.progress !== lastProgressValue) {
+    // Track progress changes for stall detection (reset on number OR phase change)
+    if (progress.progress !== lastProgressValue || progress.text !== lastProgressText) {
       lastProgressValue = progress.progress;
+      lastProgressText = progress.text;
       lastProgressChangeTime = Date.now();
     }
 
