@@ -50,7 +50,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
 
   // Step 2: Poll progress
   const progressUrl = initRes.progress_url;
-  const deadline = Date.now() + 600_000; // 10 minutes — runs in background, no HTTP timeout
+  const deadline = Date.now() + 840_000; // 14 minutes — 1 min buffer before frontend's 15 min timeout
   let pollCount = 0;
   let lastProgress = null;
   while (Date.now() < deadline) {
@@ -86,7 +86,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
   }
   // Log final state on timeout
   logDebug("rapidapi.timeout", { lastProgress, pollCount, elapsed: `${pollCount * 2}s` });
-  throw new Error(`RapidAPI download timed out (10min). Last progress: ${JSON.stringify(lastProgress)}`);
+  throw new Error(`RapidAPI download timed out (14min). Last progress: ${JSON.stringify(lastProgress)}`);
 }
 
 // Probe a TCP port, returns true/false
