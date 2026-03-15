@@ -50,7 +50,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
 
   // Step 2: Poll progress — no fixed timeout, stall detection instead
   const progressUrl = initRes.progress_url;
-  const STALL_TIMEOUT = 120_000; // 2 minutes without progress change = stalled
+  const STALL_TIMEOUT = 240_000; // 4 minutes without progress change = stalled
   let pollCount = 0;
   let lastProgress = null;
   let lastProgressValue = -1;
@@ -95,7 +95,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
     // Stall detection: if progress hasn't changed in 2 minutes, give up
     if (Date.now() - lastProgressChangeTime > STALL_TIMEOUT) {
       logDebug("rapidapi.stalled", { lastProgress, pollCount, elapsed: `${pollCount * 2}s`, stalledAt: lastProgressValue });
-      throw new Error(`RapidAPI stalled at ${lastProgressValue}% for 2min. Last: ${JSON.stringify(lastProgress)}`);
+      throw new Error(`RapidAPI stalled at ${lastProgressValue}% for 4min. Last: ${JSON.stringify(lastProgress)}`);
     }
   }
 }
