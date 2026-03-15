@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { useSearchParams, useRouter, usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft } from "lucide-react";
 import Link from "next/link";
@@ -9,10 +10,16 @@ import type { BrowseVideo } from "./utils/types";
 import { VideoList } from "./video-list";
 
 export function SpeakerVideosContainer({ speaker }: { speaker: string }) {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+
+  const initialPage = Math.max(1, Number(searchParams.get("page")) || 1);
+
   const [isLoading, setIsLoading] = useState(true);
   const [videos, setVideos] = useState<BrowseVideo[]>([]);
   const [videosTotal, setVideosTotal] = useState(0);
-  const [videoPage, setVideoPage] = useState(1);
+  const [videoPage, setVideoPage] = useState(initialPage);
 
   const loadVideos = useCallback(
     async (page: number) => {
@@ -29,9 +36,24 @@ export function SpeakerVideosContainer({ speaker }: { speaker: string }) {
     [speaker],
   );
 
+  const handlePageChange = useCallback(
+    (page: number) => {
+      const params = new URLSearchParams(searchParams.toString());
+      if (page === 1) {
+        params.delete("page");
+      } else {
+        params.set("page", String(page));
+      }
+      const query = params.toString();
+      router.push(`${pathname}${query ? `?${query}` : ""}`, { scroll: false });
+      loadVideos(page);
+    },
+    [searchParams, router, pathname, loadVideos],
+  );
+
   useEffect(() => {
-    loadVideos(1);
-  }, [loadVideos]);
+    loadVideos(initialPage);
+  }, [loadVideos, initialPage]);
 
   return (
     <div className="space-y-4">
@@ -57,7 +79,7 @@ export function SpeakerVideosContainer({ speaker }: { speaker: string }) {
         videos={videos}
         total={videosTotal}
         page={videoPage}
-        onPageChange={(p) => loadVideos(p)}
+        onPageChange={handlePageChange}
         isLoading={isLoading}
       />
     </div>
