@@ -659,6 +659,174 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
   }
 }
 
+// ─── GCS-based clip endpoints ────────────────────────────────────────
+const GCS_BUCKET = "snippysaurus-clips";
+const GCS_VIDEO_PREFIX = "videos";
+const GCS_PUBLIC_BASE = `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_VIDEO_PREFIX}`;
+
+app.get("/clip-gcs-check", async (req, res) => {
+  const videoId = req.query.videoId;
+  if (!videoId) return res.status(400).json({ error: "Missing videoId" });
+  try {
+    const checkUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+    const https = require("https");
+    const http = require("http");
+    const mod = checkUrl.startsWith("https") ? https : http;
+    const available = await new Promise((resolve) => {
+      const r = mod.request(checkUrl, { method: "HEAD" }, (resp) => {
+        resolve(resp.statusCode === 200);
+      });
+      r.on("error", () => resolve(false));
+      r.setTimeout(5000, () => { r.destroy(); resolve(false); });
+      r.end();
+    });
+    logDebug("gcs.check", { videoId, available });
+    res.json({ available, videoId, gcsUrl: available ? checkUrl : null });
+  } catch (e) {
+    res.json({ available: false, videoId, error: e.message });
+  }
+});
+
+async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality }) {
+  const job = clipJobs.get(jobId);
+  if (!job) return;
+
+  const heightLimit = quality === "1080p" ? 1080 : 720;
+  const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
+  const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+  const srcFile = join(tmpdir(), `gcs-src-${jobId}.mp4`);
+  const duration = endSec - startSec;
+
+  const timings = { start: Date.now(), downloadDone: 0, trimDone: 0 };
+
+  try {
+    logDebug("gcs-clip.start", { jobId, videoId, startSec, endSec, quality: `${heightLimit}p` });
+
+    // Step 1: Download from GCS
+    job.stage = "downloading-from-gcs";
+    job.stageDetail = "Downloading from GCS...";
+    job.progress = 10;
+    logDebug("gcs-clip.downloading", { gcsUrl });
+    await execCapture("curl", ["-fL", "-o", srcFile, gcsUrl], { timeout: 600_000 });
+    timings.downloadDone = Date.now();
+    job.progress = 40;
+
+    // Step 2: ffprobe + re-mux if needed
+    const videoMeta = await getVideoMetadata(srcFile);
+    if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
+      job.stageDetail = "Re-muxing corrupt container...";
+      logDebug("gcs-clip.remux-start", { warnings: videoMeta.warnings.trim() });
+      const remuxFile = srcFile.replace(".mp4", "-remux.mp4");
+      await execCapture("ffmpeg", ["-i", srcFile, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
+      await unlink(srcFile).catch(() => {});
+      fs.renameSync(remuxFile, srcFile);
+      logDebug("gcs-clip.remux-done", {});
+    }
+
+    // Step 3: ffmpeg trim with progress
+    job.stage = "trimming-clip";
+    job.stageDetail = "Trimming: 0%";
+    job.progress = 50;
+    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration });
+    await new Promise((resolve, reject) => {
+      const args = [
+        "-err_detect", "ignore_err", "-fflags", "+genpts",
+        "-ss", String(startSec), "-i", srcFile,
+        "-t", String(duration),
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-c:a", "aac", "-b:a", "128k",
+        "-movflags", "+faststart", "-y", clipFile,
+      ];
+      const proc = execFile("ffmpeg", args, (error) => {
+        clearInterval(stallCheck);
+        if (error) { error.stderr = lastLines.join("\n"); reject(error); }
+        else resolve();
+      });
+      const lastLines = [];
+      let lastLoggedPct = -1;
+      let lastEncodedSecs = 0;
+      let previousCheckSecs = -1;
+      const stallCheck = setInterval(() => {
+        if (lastEncodedSecs === previousCheckSecs) {
+          logDebug("gcs-clip.ffmpeg-stalled", { lastEncodedSecs, pct: job?.stageDetail });
+          proc.kill();
+        }
+        previousCheckSecs = lastEncodedSecs;
+      }, 300_000);
+      if (proc.stderr) proc.stderr.on("data", (chunk) => {
+        const text = chunk.toString();
+        const lines = text.split("\n").filter(l => l.trim());
+        lines.forEach(l => { lastLines.push(l); if (lastLines.length > 10) lastLines.shift(); });
+        const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+        if (match && duration > 0) {
+          const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+          lastEncodedSecs = secs;
+          const pct = Math.min(99, Math.round((secs / duration) * 100));
+          if (job) job.stageDetail = `Trimming: ${pct}%`;
+          const bucket = Math.floor(pct / 10) * 10;
+          if (bucket > 0 && bucket > lastLoggedPct) {
+            lastLoggedPct = bucket;
+            logDebug("gcs-clip.ffmpeg-progress", { pct: `${bucket}%`, time: `${match[1]}:${match[2]}:${match[3]}` });
+          }
+        }
+      });
+    });
+    await unlink(srcFile).catch(() => {});
+    timings.trimDone = Date.now();
+
+    const { size } = fs.statSync(clipFile);
+    job.status = "ready";
+    job.progress = 100;
+    job.clipFile = clipFile;
+    job.fileSize = size;
+    const totalSec = (Date.now() - timings.start) / 1000;
+    logDebug("gcs-clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1), route: "gcs" });
+
+  } catch (error) {
+    await unlink(clipFile).catch(() => {});
+    await unlink(srcFile).catch(() => {});
+    const detail = error.stderr || error.message || "Unknown error";
+    job.status = "failed";
+    job.error = detail;
+    logDebug("gcs-clip.error", { jobId, videoId, error: detail });
+  }
+}
+
+app.post("/clip-gcs", async (req, res) => {
+  const { videoId, startSec, endSec, quality } = req.body;
+
+  if (!videoId || startSec == null || endSec == null) {
+    return res.status(400).json({ error: "Missing videoId, startSec, or endSec" });
+  }
+
+  const maxClip = 11 * 60;
+  if (endSec - startSec > maxClip) {
+    return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
+  }
+
+  // Quick check if video is in GCS
+  const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+  const https = require("https");
+  const available = await new Promise((resolve) => {
+    const r = https.request(gcsUrl, { method: "HEAD" }, (resp) => { resolve(resp.statusCode === 200); });
+    r.on("error", () => resolve(false));
+    r.setTimeout(5000, () => { r.destroy(); resolve(false); });
+    r.end();
+  });
+
+  if (!available) {
+    return res.status(404).json({ error: "Video not in GCS", videoId });
+  }
+
+  const jobId = crypto.randomUUID();
+  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
+
+  processGcsClipJob(jobId, { videoId, startSec, endSec, quality }).catch(() => {});
+
+  res.json({ jobId, route: "gcs" });
+});
+
+// ─── RapidAPI-realtime clip endpoint (original) ─────────────────────
 app.post("/clip", async (req, res) => {
   const { url, startSec, endSec, quality } = req.body;
 

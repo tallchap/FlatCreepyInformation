@@ -92,17 +92,33 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
       (async () => {
         try {
-          // Step 1: Start the clip job
-          const startResp = await fetch("/api/clip", {
+          // Step 1: Start the clip job — try GCS first, fall back to RapidAPI
+          let startResp = await fetch("/api/clip-gcs", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              url: `https://www.youtube.com/watch?v=${params.videoId}`,
+              videoId: params.videoId,
               startSec: params.startSec,
               endSec: params.endSec,
               quality: params.quality,
             }),
           });
+
+          let route = "gcs";
+          if (!startResp.ok) {
+            // GCS not available — fall back to RapidAPI
+            route = "rapidapi";
+            startResp = await fetch("/api/clip", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                url: `https://www.youtube.com/watch?v=${params.videoId}`,
+                startSec: params.startSec,
+                endSec: params.endSec,
+                quality: params.quality,
+              }),
+            });
+          }
 
           if (!startResp.ok) {
             const err = await startResp.json().catch(() => ({ error: "Export failed" }));

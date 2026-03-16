@@ -36,6 +36,7 @@ export function ClipEditor() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [quality, setQuality] = useState<Quality>("720p");
   const { startDownload, hasActive: exporting } = useDownload();
+  const [gcsAvailable, setGcsAvailable] = useState<boolean | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
@@ -74,6 +75,16 @@ export function ClipEditor() {
       if (id) setVideoId(id);
     }
   }, []);
+
+  // Check GCS availability when video changes
+  useEffect(() => {
+    if (!videoId) { setGcsAvailable(null); return; }
+    setGcsAvailable(null);
+    fetch(`/api/clip-gcs-check?videoId=${videoId}`)
+      .then(r => r.json())
+      .then(d => setGcsAvailable(!!d.available))
+      .catch(() => setGcsAvailable(false));
+  }, [videoId]);
 
   // Load YouTube IFrame API
   useEffect(() => {
@@ -396,6 +407,18 @@ export function ClipEditor() {
               >
                 {debugOpen ? "Hide Debug" : "Show Debug"}
               </button>
+
+              {videoId && (
+                <span
+                  className="px-2 py-1 rounded text-xs font-semibold"
+                  style={{
+                    backgroundColor: gcsAvailable === true ? "#166534" : gcsAvailable === false ? "#854d0e" : "#374151",
+                    color: "#fff",
+                  }}
+                >
+                  {gcsAvailable === null ? "checking..." : gcsAvailable ? "GCS" : "RapidAPI-realtime"}
+                </span>
+              )}
 
               <button
                 onClick={handleExport}
