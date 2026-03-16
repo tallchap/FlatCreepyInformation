@@ -48,6 +48,7 @@ export function ClipEditor() {
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
   const playerRef = useRef<any>(null);
+  const videoElRef = useRef<HTMLVideoElement | null>(null);
   const playerReadyRef = useRef(false);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -94,38 +95,74 @@ export function ClipEditor() {
     document.body.appendChild(s);
   }, []);
 
-  // Mount player when videoId changes
+  // Mount player when videoId changes — GCS or YouTube
   useEffect(() => {
-    if (!videoId) return;
+    if (!videoId || gcsAvailable === null) return; // wait for GCS check
     playerReadyRef.current = false;
 
-    const mount = () => {
+    if (gcsAvailable) {
+      // GCS: use native HTML5 video
       const container = document.getElementById("clip-player");
       if (!container) return;
       container.innerHTML = "";
-      playerRef.current = new (window as any).YT.Player(container, {
-        videoId,
-        width: "100%",
-        height: "100%",
-        playerVars: { rel: 0, modestbranding: 1, iv_load_policy: 3, disablekb: 1 },
-        events: {
-          onReady: (e: any) => {
-            playerReadyRef.current = true;
-            const dur = e.target.getDuration();
-            setDuration(dur);
-            setHandlesPlaced(false);
-            setStartSec(0);
-            setEndSec(0);
-            setPlayheadSec(0);
-          },
-        },
+      const video = document.createElement("video");
+      video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
+      video.controls = true;
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.backgroundColor = "#000";
+      video.addEventListener("loadedmetadata", () => {
+        playerReadyRef.current = true;
+        setDuration(video.duration);
+        setHandlesPlaced(false);
+        setStartSec(0);
+        setEndSec(0);
+        setPlayheadSec(0);
       });
-    };
-
-    if ((window as any).YT?.Player) {
-      mount();
+      container.appendChild(video);
+      videoElRef.current = video;
+      // Wrap as playerRef adapter for compatibility
+      playerRef.current = {
+        seekTo: (sec: number) => { video.currentTime = sec; },
+        getCurrentTime: () => video.currentTime,
+        getDuration: () => video.duration,
+        playVideo: () => video.play(),
+        pauseVideo: () => video.pause(),
+        getPlayerState: () => (video.paused ? 2 : 1),
+        setPlaybackRate: (r: number) => { video.playbackRate = r; },
+        getVideoData: () => ({ title: "" }),
+        destroy: () => { video.pause(); video.src = ""; },
+      };
     } else {
-      (window as any).onYouTubeIframeAPIReady = mount;
+      // YouTube: original iframe player
+      const mount = () => {
+        const container = document.getElementById("clip-player");
+        if (!container) return;
+        container.innerHTML = "";
+        playerRef.current = new (window as any).YT.Player(container, {
+          videoId,
+          width: "100%",
+          height: "100%",
+          playerVars: { rel: 0, modestbranding: 1, iv_load_policy: 3, disablekb: 1 },
+          events: {
+            onReady: (e: any) => {
+              playerReadyRef.current = true;
+              const dur = e.target.getDuration();
+              setDuration(dur);
+              setHandlesPlaced(false);
+              setStartSec(0);
+              setEndSec(0);
+              setPlayheadSec(0);
+            },
+          },
+        });
+      };
+
+      if ((window as any).YT?.Player) {
+        mount();
+      } else {
+        (window as any).onYouTubeIframeAPIReady = mount;
+      }
     }
 
     return () => {
@@ -135,8 +172,9 @@ export function ClipEditor() {
         try { playerRef.current.destroy(); } catch {}
       }
       playerRef.current = null;
+      videoElRef.current = null;
     };
-  }, [videoId]);
+  }, [videoId, gcsAvailable]);
 
   // Playhead sync + isPlaying state — update from player every 100ms
   useEffect(() => {
