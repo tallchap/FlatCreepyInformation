@@ -511,7 +511,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
             "-err_detect", "ignore_err", "-fflags", "+genpts",
             "-ss", String(startSec), "-i", rapidRaw,
             "-t", String(duration),
-            "-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
+            "-c:v", "libx264", "-crf", "18", "-preset", "fast",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", "-y", clipFile,
           ];
@@ -582,7 +582,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         "-err_detect", "ignore_err", "-fflags", "+genpts",
         "-ss", String(startSec), "-i", rawFile,
         "-t", String(duration),
-        "-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
+        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", clipFile,
       ], { timeout: 300_000 });
