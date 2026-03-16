@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState, useMemo } from "react";
+import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 
 const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
@@ -47,6 +47,15 @@ export function Timeline({
   const [dragging, setDragging] = useState<"start" | "end" | "playhead" | "minimap" | null>(null);
   const [zoom, setZoom] = useState(5);
   const [panCenter, setPanCenter] = useState<number | null>(null);
+
+  // Suppress browser zoom over timeline (non-passive wheel listener)
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const suppress = (e: WheelEvent) => { if (e.ctrlKey || e.metaKey) e.preventDefault(); };
+    el.addEventListener("wheel", suppress, { passive: false });
+    return () => el.removeEventListener("wheel", suppress);
+  }, []);
 
   // Visible window
   const visibleDuration = duration / zoom;
@@ -136,8 +145,29 @@ export function Timeline({
 
   // Wheel to pan when zoomed
   const handleWheel = (e: React.WheelEvent) => {
-    if (zoom <= 1) return;
     e.preventDefault();
+
+    // Pinch-to-zoom or Ctrl+scroll → zoom centered on cursor
+    if (e.ctrlKey || e.metaKey) {
+      const zoomDelta = e.deltaY > 0 ? -1 : 1;
+      const newZoom = Math.max(1, Math.min(50, zoom + zoomDelta));
+
+      // Zoom toward cursor position
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      const cursorPct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const cursorSec = visibleStart + cursorPct * visibleDuration;
+
+      if (newZoom === 1) {
+        setPanCenter(null);
+      } else {
+        setPanCenter(cursorSec);
+      }
+      setZoom(newZoom);
+      return;
+    }
+
+    // Normal scroll → pan (only when zoomed)
+    if (zoom <= 1) return;
     const delta = (e.deltaX || e.deltaY) * (visibleDuration / 500);
     const newCenter = Math.max(
       visibleDuration / 2,
