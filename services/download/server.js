@@ -502,18 +502,45 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
           logDebug("rapidapi.remux-done", { ms: Date.now() - remuxStart });
         }
 
-        // Step 2: ffmpeg seeks instantly on local file (-ss before -i = keyframe seek)
+        // Step 2: ffmpeg trim with progress reporting
         job.stage = "trimming-clip";
-        job.stageDetail = "Trimming clip...";
+        job.stageDetail = "Trimming: 0%";
         logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
-        await execCapture("ffmpeg", [
-          "-err_detect", "ignore_err", "-fflags", "+genpts",
-          "-ss", String(startSec), "-i", rapidRaw,
-          "-t", String(duration),
-          "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-          "-c:a", "aac", "-b:a", "128k",
-          "-movflags", "+faststart", "-y", clipFile,
-        ], { timeout: 120_000 });
+        await new Promise((resolve, reject) => {
+          const args = [
+            "-err_detect", "ignore_err", "-fflags", "+genpts",
+            "-ss", String(startSec), "-i", rapidRaw,
+            "-t", String(duration),
+            "-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart", "-y", clipFile,
+          ];
+          const proc = execFile("ffmpeg", args, { timeout: 900_000 }, (error) => {
+            if (error) { error.stderr = lastLines.join("\n"); reject(error); }
+            else resolve();
+          });
+          const lastLines = [];
+          let lastLoggedPct = -1;
+          if (proc.stderr) proc.stderr.on("data", (chunk) => {
+            const text = chunk.toString();
+            // Keep last 10 lines for error reporting
+            const lines = text.split("\n").filter(l => l.trim());
+            lines.forEach(l => { lastLines.push(l); if (lastLines.length > 10) lastLines.shift(); });
+            // Parse time= for progress
+            const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+            if (match && duration > 0) {
+              const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+              const pct = Math.min(99, Math.round((secs / duration) * 100));
+              if (job) job.stageDetail = `Trimming: ${pct}%`;
+              // Log at 25% intervals
+              const bucket = Math.floor(pct / 25) * 25;
+              if (bucket > 0 && bucket > lastLoggedPct) {
+                lastLoggedPct = bucket;
+                logDebug("rapidapi.ffmpeg-progress", { pct: `${bucket}%`, time: `${match[1]}:${match[2]}:${match[3]}` });
+              }
+            }
+          });
+        });
         await unlink(rapidRaw).catch(() => {});
         downloaded = true;
         logDebug("rapidapi.clip-success", { jobId });
@@ -555,7 +582,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         "-err_detect", "ignore_err", "-fflags", "+genpts",
         "-ss", String(startSec), "-i", rawFile,
         "-t", String(duration),
-        "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-c:v", "libx264", "-crf", "18", "-preset", "ultrafast",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", clipFile,
       ], { timeout: 300_000 });
