@@ -515,12 +515,23 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", "-y", clipFile,
           ];
-          const proc = execFile("ffmpeg", args, { timeout: 900_000 }, (error) => {
+          const proc = execFile("ffmpeg", args, (error) => {
+            clearInterval(stallCheck);
             if (error) { error.stderr = lastLines.join("\n"); reject(error); }
             else resolve();
           });
           const lastLines = [];
           let lastLoggedPct = -1;
+          let lastEncodedSecs = 0;
+          let previousCheckSecs = -1;
+          // Stall detection: every 5 min, compare progress. If unchanged, kill.
+          const stallCheck = setInterval(() => {
+            if (lastEncodedSecs === previousCheckSecs) {
+              logDebug("rapidapi.ffmpeg-stalled", { lastEncodedSecs, pct: job?.stageDetail });
+              proc.kill();
+            }
+            previousCheckSecs = lastEncodedSecs;
+          }, 300_000);
           if (proc.stderr) proc.stderr.on("data", (chunk) => {
             const text = chunk.toString();
             // Keep last 10 lines for error reporting
@@ -530,10 +541,11 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
             const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
             if (match && duration > 0) {
               const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+              lastEncodedSecs = secs;
               const pct = Math.min(99, Math.round((secs / duration) * 100));
               if (job) job.stageDetail = `Trimming: ${pct}%`;
-              // Log at 25% intervals
-              const bucket = Math.floor(pct / 25) * 25;
+              // Log at 10% intervals
+              const bucket = Math.floor(pct / 10) * 10;
               if (bucket > 0 && bucket > lastLoggedPct) {
                 lastLoggedPct = bucket;
                 logDebug("rapidapi.ffmpeg-progress", { pct: `${bucket}%`, time: `${match[1]}:${match[2]}:${match[3]}` });
