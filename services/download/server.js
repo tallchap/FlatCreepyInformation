@@ -664,14 +664,20 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
 // ─── Text overlay helper ─────────────────────────────────────────────
 function buildOverlayFilter(overlay) {
   if (!overlay || !overlay.text) return null;
-  const posMap = {
-    "top-left": "x=50:y=50",
-    "top-right": "x=w-tw-50:y=50",
-    "bottom-left": "x=50:y=h-th-50",
-    "bottom-right": "x=w-tw-50:y=h-th-50",
-    "center": "x=(w-tw)/2:y=(h-th)/2",
-  };
-  const pos = posMap[overlay.position] || posMap["bottom-left"];
+  let pos;
+  if (overlay.xPct != null && overlay.yPct != null) {
+    // Free-position from drag-and-drop (percentage → ffmpeg expression)
+    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h`;
+  } else {
+    const posMap = {
+      "top-left": "x=50:y=50",
+      "top-right": "x=w-tw-50:y=50",
+      "bottom-left": "x=50:y=h-th-50",
+      "bottom-right": "x=w-tw-50:y=h-th-50",
+      "center": "x=(w-tw)/2:y=(h-th)/2",
+    };
+    pos = posMap[overlay.position] || posMap["bottom-left"];
+  }
   const hex = (overlay.color || "#ffffff").replace("#", "");
   const opacity = overlay.opacity != null ? overlay.opacity : 1;
   const fontSize = overlay.fontSize || 48;
