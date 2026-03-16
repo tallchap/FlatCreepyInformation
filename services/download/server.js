@@ -505,7 +505,8 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
         // Step 2: ffmpeg trim with progress reporting
         job.stage = "trimming-clip";
         job.stageDetail = "Trimming: 0%";
-        const overlayFilter = buildOverlayFilter(overlay);
+        const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
+        const overlayFilter = buildOverlayFilter(overlay, fontPath);
         logDebug("rapidapi.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
         await new Promise((resolve, reject) => {
           const args = [
@@ -662,11 +663,35 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
 }
 
 // ─── Text overlay helper ─────────────────────────────────────────────
-function buildOverlayFilter(overlay) {
+async function downloadGoogleFont(fontFamily) {
+  const safeName = fontFamily.replace(/[^a-zA-Z0-9 ]/g, "").replace(/ /g, "_");
+  const fontPath = join(tmpdir(), `font-${safeName}.ttf`);
+  try {
+    if (fs.existsSync(fontPath)) return fontPath;
+    // Fetch CSS from Google Fonts (request with plain user-agent to get .ttf URLs)
+    const cssUrl = `https://fonts.googleapis.com/css2?family=${encodeURIComponent(fontFamily)}`;
+    const https = require("https");
+    const css = await new Promise((resolve, reject) => {
+      https.get(cssUrl, { headers: { "User-Agent": "Mozilla/5.0" } }, (res) => {
+        let body = "";
+        res.on("data", (c) => body += c);
+        res.on("end", () => resolve(body));
+      }).on("error", reject);
+    });
+    // Parse .ttf URL from CSS
+    const match = css.match(/url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.ttf)\)/);
+    if (!match) return null;
+    execCapture("curl", ["-fL", "-o", fontPath, match[1]], { timeout: 10_000 });
+    return fontPath;
+  } catch {
+    return null;
+  }
+}
+
+function buildOverlayFilter(overlay, fontPath) {
   if (!overlay || !overlay.text) return null;
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
-    // Free-position from drag-and-drop (percentage → ffmpeg expression)
     pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h`;
   } else {
     const posMap = {
@@ -681,9 +706,11 @@ function buildOverlayFilter(overlay) {
   const hex = (overlay.color || "#ffffff").replace("#", "");
   const opacity = overlay.opacity != null ? overlay.opacity : 1;
   const fontSize = overlay.fontSize || 48;
-  // Escape special chars for ffmpeg drawtext
   const text = overlay.text.replace(/'/g, "'\\''").replace(/:/g, "\\:");
   let filter = `drawtext=text='${text}':fontsize=${fontSize}:fontcolor=0x${hex}@${opacity}:${pos}`;
+  if (fontPath) {
+    filter += `:fontfile=${fontPath}`;
+  }
   if (overlay.bgBox) {
     filter += `:box=1:boxcolor=black@0.5:boxborderw=10`;
   }
@@ -758,7 +785,8 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     job.stage = "trimming-clip";
     job.stageDetail = "Trimming: 0%";
     job.progress = 50;
-    const overlayFilter = buildOverlayFilter(overlay);
+    const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
+        const overlayFilter = buildOverlayFilter(overlay, fontPath);
     logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
     await new Promise((resolve, reject) => {
       const args = [

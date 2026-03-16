@@ -328,6 +328,7 @@ export function ClipEditor() {
           xPct: overlaySettings.xPct,
           yPct: overlaySettings.yPct,
           fontSize: overlaySettings.fontSize,
+          fontFamily: overlaySettings.fontFamily,
           color: overlaySettings.color,
           opacity: overlaySettings.opacity / 100,
           bgBox: overlaySettings.bgBox,
@@ -366,7 +367,7 @@ export function ClipEditor() {
                       color: overlaySettings.color,
                       opacity: overlaySettings.opacity / 100,
                       ...(overlaySettings.bgBox ? { backgroundColor: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 4 } : {}),
-                      fontFamily: "sans-serif",
+                      fontFamily: `'${overlaySettings.fontFamily || "Roboto"}', sans-serif`,
                       fontWeight: 700,
                       textShadow: overlaySettings.bgBox ? "none" : "1px 1px 3px rgba(0,0,0,0.8)",
                       zIndex: 10,
@@ -444,17 +445,7 @@ export function ClipEditor() {
               </div>
             </div>
 
-            {/* Text overlay button */}
-            <button
-              onClick={() => setOverlayModalOpen(true)}
-              className={`mt-3 w-full px-3 py-2 text-sm font-medium text-left rounded-lg border transition-colors ${
-                overlaySettings?.text
-                  ? "border-green-300 bg-green-50 text-green-800 hover:bg-green-100"
-                  : "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100"
-              }`}
-            >
-              {overlaySettings?.text ? `Text Overlay: "${overlaySettings.text}"` : "Add Text Overlay..."}
-            </button>
+            {/* (ADD TEXT button moved to play buttons row below) */}
 
             {/* Play buttons row */}
             <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-100">
@@ -484,6 +475,16 @@ export function ClipEditor() {
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
                 Last 5s
+              </button>
+
+              <button
+                onClick={() => setOverlayModalOpen(true)}
+                className={btnClass}
+                style={{ backgroundColor: overlaySettings?.text ? "#16a34a" : DINO_RED }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = overlaySettings?.text ? "#15803d" : DINO_RED_HOVER)}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = overlaySettings?.text ? "#16a34a" : DINO_RED)}
+              >
+                {overlaySettings?.text ? `TEXT: "${overlaySettings.text}"` : "ADD TEXT"}
               </button>
 
               <div className="flex-1" />
@@ -627,6 +628,7 @@ export function ClipEditor() {
           videoId={videoId}
           gcsAvailable={gcsAvailable === true}
           currentTime={playheadSec}
+          duration={duration}
           initial={overlaySettings}
           onSave={(settings) => { setOverlaySettings(settings); setOverlayModalOpen(false); }}
           onClear={() => { setOverlaySettings(null); setOverlayModalOpen(false); }}
