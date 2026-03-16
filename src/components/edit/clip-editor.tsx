@@ -47,6 +47,14 @@ export function ClipEditor() {
   const [clipStats, setClipStats] = useState<any>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
   const [handlesPlaced, setHandlesPlaced] = useState(false);
+  // Text overlay state
+  const [overlayText, setOverlayText] = useState("");
+  const [overlayPosition, setOverlayPosition] = useState<"top-left" | "top-right" | "bottom-left" | "bottom-right" | "center">("bottom-left");
+  const [overlayFontSize, setOverlayFontSize] = useState(48);
+  const [overlayColor, setOverlayColor] = useState("#ffffff");
+  const [overlayOpacity, setOverlayOpacity] = useState(100);
+  const [overlayBgBox, setOverlayBgBox] = useState(true);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const playerRef = useRef<any>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const playerReadyRef = useRef(false);
@@ -316,7 +324,19 @@ export function ClipEditor() {
   const handleExport = () => {
     if (!videoId || clipTooLong) return;
     const title = playerRef.current?.getVideoData?.()?.title || videoId;
-    startDownload({ videoId, title, startSec, endSec, quality });
+    startDownload({
+      videoId, title, startSec, endSec, quality,
+      ...(overlayText ? {
+        overlay: {
+          text: overlayText,
+          position: overlayPosition,
+          fontSize: overlayFontSize,
+          color: overlayColor,
+          opacity: overlayOpacity / 100,
+          bgBox: overlayBgBox,
+        },
+      } : {}),
+    });
   };
 
   const btnClass = `px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed`;
@@ -336,8 +356,30 @@ export function ClipEditor() {
           {/* Player + Transcript side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3" ref={videoContainerRef}>
-              <div className="aspect-video bg-black rounded-xl overflow-hidden">
+              <div className="aspect-video bg-black rounded-xl overflow-hidden relative">
                 <div id="clip-player" className="w-full h-full" />
+                {overlayText && (
+                  <div
+                    className="absolute pointer-events-none"
+                    style={{
+                      ...(overlayPosition === "top-left" ? { top: 20, left: 20 } :
+                         overlayPosition === "top-right" ? { top: 20, right: 20 } :
+                         overlayPosition === "bottom-left" ? { bottom: 20, left: 20 } :
+                         overlayPosition === "bottom-right" ? { bottom: 20, right: 20 } :
+                         { top: "50%", left: "50%", transform: "translate(-50%, -50%)" }),
+                      fontSize: `${overlayFontSize * 0.4}px`,
+                      color: overlayColor,
+                      opacity: overlayOpacity / 100,
+                      ...(overlayBgBox ? { backgroundColor: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 4 } : {}),
+                      fontFamily: "sans-serif",
+                      fontWeight: 700,
+                      textShadow: overlayBgBox ? "none" : "1px 1px 3px rgba(0,0,0,0.8)",
+                      zIndex: 10,
+                    }}
+                  >
+                    {overlayText}
+                  </div>
+                )}
               </div>
             </div>
             <div className="lg:col-span-2" style={videoHeight ? { height: videoHeight } : undefined}>
@@ -405,6 +447,60 @@ export function ClipEditor() {
                   </button>
                 ))}
               </div>
+            </div>
+
+            {/* Text overlay controls */}
+            <div className="mt-3 border border-gray-200 rounded-lg overflow-hidden">
+              <button
+                onClick={() => setOverlayOpen(v => !v)}
+                className="w-full px-3 py-2 text-sm font-medium text-left text-gray-700 bg-gray-50 hover:bg-gray-100 flex justify-between items-center"
+              >
+                <span>Text Overlay {overlayText ? `— "${overlayText}"` : ""}</span>
+                <span className="text-gray-400">{overlayOpen ? "▲" : "▼"}</span>
+              </button>
+              {overlayOpen && (
+                <div className="p-3 space-y-3 bg-white">
+                  <input
+                    type="text"
+                    placeholder="Overlay text (e.g. June 2017)"
+                    value={overlayText}
+                    onChange={(e) => setOverlayText(e.target.value)}
+                    className="w-full px-3 py-1.5 text-sm border border-gray-200 rounded-lg"
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs text-gray-500">Position</label>
+                      <select
+                        value={overlayPosition}
+                        onChange={(e) => setOverlayPosition(e.target.value as any)}
+                        className="w-full px-2 py-1 text-sm border border-gray-200 rounded"
+                      >
+                        <option value="top-left">Top Left</option>
+                        <option value="top-right">Top Right</option>
+                        <option value="bottom-left">Bottom Left</option>
+                        <option value="bottom-right">Bottom Right</option>
+                        <option value="center">Center</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Font Size: {overlayFontSize}px</label>
+                      <input type="range" min={24} max={96} value={overlayFontSize} onChange={(e) => setOverlayFontSize(Number(e.target.value))} className="w-full" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Color</label>
+                      <input type="color" value={overlayColor} onChange={(e) => setOverlayColor(e.target.value)} className="w-full h-8 rounded cursor-pointer" />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">Opacity: {overlayOpacity}%</label>
+                      <input type="range" min={10} max={100} value={overlayOpacity} onChange={(e) => setOverlayOpacity(Number(e.target.value))} className="w-full" />
+                    </div>
+                  </div>
+                  <label className="flex items-center gap-2 text-sm text-gray-700">
+                    <input type="checkbox" checked={overlayBgBox} onChange={(e) => setOverlayBgBox(e.target.checked)} />
+                    Background box
+                  </label>
+                </div>
+              )}
             </div>
 
             {/* Play buttons row */}

@@ -436,7 +436,7 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
-async function processClipJob(jobId, { url, startSec, endSec, quality }) {
+async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
 
@@ -505,12 +505,14 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
         // Step 2: ffmpeg trim with progress reporting
         job.stage = "trimming-clip";
         job.stageDetail = "Trimming: 0%";
-        logDebug("rapidapi.ffmpeg-trim", { startSec, duration });
+        const overlayFilter = buildOverlayFilter(overlay);
+        logDebug("rapidapi.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
         await new Promise((resolve, reject) => {
           const args = [
             "-err_detect", "ignore_err", "-fflags", "+genpts",
             "-ss", String(startSec), "-i", rapidRaw,
             "-t", String(duration),
+            ...(overlayFilter ? ["-vf", overlayFilter] : []),
             "-c:v", "libx264", "-crf", "18", "-preset", "fast",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", "-y", clipFile,
@@ -659,6 +661,29 @@ async function processClipJob(jobId, { url, startSec, endSec, quality }) {
   }
 }
 
+// ─── Text overlay helper ─────────────────────────────────────────────
+function buildOverlayFilter(overlay) {
+  if (!overlay || !overlay.text) return null;
+  const posMap = {
+    "top-left": "x=50:y=50",
+    "top-right": "x=w-tw-50:y=50",
+    "bottom-left": "x=50:y=h-th-50",
+    "bottom-right": "x=w-tw-50:y=h-th-50",
+    "center": "x=(w-tw)/2:y=(h-th)/2",
+  };
+  const pos = posMap[overlay.position] || posMap["bottom-left"];
+  const hex = (overlay.color || "#ffffff").replace("#", "");
+  const opacity = overlay.opacity != null ? overlay.opacity : 1;
+  const fontSize = overlay.fontSize || 48;
+  // Escape special chars for ffmpeg drawtext
+  const text = overlay.text.replace(/'/g, "'\\''").replace(/:/g, "\\:");
+  let filter = `drawtext=text='${text}':fontsize=${fontSize}:fontcolor=0x${hex}@${opacity}:${pos}`;
+  if (overlay.bgBox) {
+    filter += `:box=1:boxcolor=black@0.5:boxborderw=10`;
+  }
+  return filter;
+}
+
 // ─── GCS-based clip endpoints ────────────────────────────────────────
 const GCS_BUCKET = "snippysaurus-clips";
 const GCS_VIDEO_PREFIX = "videos";
@@ -687,7 +712,7 @@ app.get("/clip-gcs-check", async (req, res) => {
   }
 });
 
-async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality }) {
+async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
 
@@ -727,12 +752,14 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality }) 
     job.stage = "trimming-clip";
     job.stageDetail = "Trimming: 0%";
     job.progress = 50;
-    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration });
+    const overlayFilter = buildOverlayFilter(overlay);
+    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
     await new Promise((resolve, reject) => {
       const args = [
         "-err_detect", "ignore_err", "-fflags", "+genpts",
         "-ss", String(startSec), "-i", srcFile,
         "-t", String(duration),
+        ...(overlayFilter ? ["-vf", overlayFilter] : []),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", "-y", clipFile,
@@ -793,7 +820,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality }) 
 }
 
 app.post("/clip-gcs", async (req, res) => {
-  const { videoId, startSec, endSec, quality } = req.body;
+  const { videoId, startSec, endSec, quality, overlay } = req.body;
 
   if (!videoId || startSec == null || endSec == null) {
     return res.status(400).json({ error: "Missing videoId, startSec, or endSec" });
@@ -821,14 +848,14 @@ app.post("/clip-gcs", async (req, res) => {
   const jobId = crypto.randomUUID();
   clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
 
-  processGcsClipJob(jobId, { videoId, startSec, endSec, quality }).catch(() => {});
+  processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay }).catch(() => {});
 
   res.json({ jobId, route: "gcs" });
 });
 
 // ─── RapidAPI-realtime clip endpoint (original) ─────────────────────
 app.post("/clip", async (req, res) => {
-  const { url, startSec, endSec, quality } = req.body;
+  const { url, startSec, endSec, quality, overlay } = req.body;
 
   if (!url || startSec == null || endSec == null) {
     return res.status(400).json({ error: "Missing url, startSec, or endSec" });
@@ -843,7 +870,7 @@ app.post("/clip", async (req, res) => {
   clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
 
   // Start background processing (don't await)
-  processClipJob(jobId, { url, startSec, endSec, quality }).catch(() => {});
+  processClipJob(jobId, { url, startSec, endSec, quality, overlay }).catch(() => {});
 
   res.json({ jobId });
 });

@@ -101,6 +101,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               startSec: params.startSec,
               endSec: params.endSec,
               quality: params.quality,
+              ...((params as any).overlay ? { overlay: (params as any).overlay } : {}),
             }),
           });
 
@@ -116,6 +117,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
                 startSec: params.startSec,
                 endSec: params.endSec,
                 quality: params.quality,
+                ...((params as any).overlay ? { overlay: (params as any).overlay } : {}),
               }),
             });
           }
