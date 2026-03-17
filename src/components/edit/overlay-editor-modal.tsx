@@ -176,6 +176,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                   top: `${yPct * 100}%`,
                   transform: "translate(0, -100%)",
                 }}
+                onClick={(e) => e.stopPropagation()}
                 onPointerDown={(e) => {
                   if (editing) return;
                   if ((e.target as HTMLElement).closest("[data-action]")) return;
