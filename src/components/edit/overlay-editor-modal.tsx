@@ -49,6 +49,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [bgOpacity, setBgOpacity] = useState(initial?.bgOpacity ?? 50);
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(true);
+  const justFinishedEditing = useRef(false);
   const [selectedThumb, setSelectedThumb] = useState(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -143,6 +144,8 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={(e) => {
               if (dragging) return;
+              // If we just exited editing via onBlur, don't create a new text box
+              if (justFinishedEditing.current) return;
               // If text exists and we're editing, click outside closes editing
               if (text && editing) { setEditing(false); return; }
               // Otherwise, place new text at click position
@@ -224,7 +227,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                       ref={inputRef}
                       value={text}
                       onChange={(e) => setText(e.target.value)}
-                      onBlur={() => { if (text) setEditing(false); }}
+                      onBlur={() => { if (text) { setEditing(false); justFinishedEditing.current = true; setTimeout(() => { justFinishedEditing.current = false; }, 200); } }}
                       onKeyDown={(e) => { if (e.key === "Enter" && text) setEditing(false); }}
                       className="bg-transparent border-none outline-none text-inherit w-full min-w-[120px]"
                       style={{ fontSize: "inherit", color: "inherit", fontWeight: "inherit", fontFamily: "inherit" }}
