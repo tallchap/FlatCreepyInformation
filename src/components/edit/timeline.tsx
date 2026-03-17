@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 
 const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
-const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2];
+const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
 
 interface TimelineProps {
   duration: number;
