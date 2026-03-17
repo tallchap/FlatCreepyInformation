@@ -213,9 +213,20 @@ export function Timeline({
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
       <div className="flex items-center justify-between mb-3">
-        <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-          Timeline
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
+            Timeline
+          </span>
+          {onAddText && (
+            <button
+              onClick={onAddText}
+              className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
+              style={{ backgroundColor: hasOverlay ? "#16a34a" : "#DC2626" }}
+            >
+              {hasOverlay ? "Edit Text" : "Add Text"}
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <button
@@ -262,18 +273,6 @@ export function Timeline({
               &#x00BB;
             </button>
           </div>
-          {onAddText && (
-            <>
-              <div className="w-px h-4 bg-gray-200" />
-              <button
-                onClick={onAddText}
-                className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
-                style={{ backgroundColor: hasOverlay ? "#16a34a" : "#DC2626" }}
-              >
-                {hasOverlay ? "Edit Text" : "Add Text"}
-              </button>
-            </>
-          )}
           <span className="text-xs text-gray-400">
             Total: {formatTime(duration)}
           </span>
