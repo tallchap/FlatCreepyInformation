@@ -53,7 +53,6 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [selectedThumb, setSelectedThumb] = useState(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const mainVideoRef = useRef<HTMLVideoElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(800);
 
   // Track canvas width for proportional font scaling
@@ -81,9 +80,6 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
     Math.round(duration * 0.75),
   ];
 
-  useEffect(() => {
-    if (mainVideoRef.current) mainVideoRef.current.currentTime = thumbTimes[selectedThumb] || 0;
-  }, [selectedThumb]);
 
   useEffect(() => {
     if (editing && inputRef.current) inputRef.current.focus();
@@ -155,19 +151,8 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={() => { if (editing) setEditing(false); }}
           >
-            {gcsAvailable ? (
-              <video
-                ref={mainVideoRef}
-                src={gcsUrl}
-                poster={thumbUrl}
-                className="w-full h-full object-contain"
-                preload="auto"
-                muted
-                onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = thumbTimes[selectedThumb] || 0; }}
-              />
-            ) : (
-              <img src={thumbUrl} alt="Video frame" className="w-full h-full object-contain" />
-            )}
+            {/* Always show YouTube thumbnail as stable background — no flicker */}
+            <img src={thumbUrl} alt="Video frame" className="w-full h-full object-contain" />
 
             {/* Draggable text with edit/delete icons */}
             {hasTextBox && (
@@ -241,29 +226,6 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
           </div>
 
           {/* Small thumbnails stacked vertically */}
-          {gcsAvailable && (
-            <div className="flex flex-col gap-1.5 w-[80px] flex-shrink-0">
-              {thumbTimes.map((t, i) => (
-                <button
-                  key={i}
-                  onClick={() => setSelectedThumb(i)}
-                  className={`relative aspect-video rounded overflow-hidden border-2 transition-colors ${
-                    selectedThumb === i ? "border-green-500" : "border-gray-700 hover:border-gray-500"
-                  }`}
-                >
-                  <video
-                    src={gcsUrl}
-                    poster={thumbUrl}
-                    className="w-full h-full object-cover"
-                    preload="auto"
-                    muted
-                    onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = t; }}
-                  />
-                  <span className="absolute bottom-0 right-0 text-[8px] text-white bg-black/70 px-1">{Math.floor(t / 60)}:{String(t % 60).padStart(2, "0")}</span>
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Controls row 1: Font, Size, Color+Hex, Opacity */}

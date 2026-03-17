@@ -133,7 +133,10 @@ export function ClipEditor() {
       container.innerHTML = "";
       const video = document.createElement("video");
       video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
+      video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
       video.controls = true;
+      video.controlsList.add("nodownload", "nofullscreen");
+      video.disablePictureInPicture = true;
       video.style.width = "100%";
       video.style.height = "100%";
       video.style.backgroundColor = "#000";
