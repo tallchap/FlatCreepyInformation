@@ -143,6 +143,9 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={(e) => {
               if (dragging) return;
+              // If text exists and we're editing, click outside closes editing
+              if (text && editing) { setEditing(false); return; }
+              // Otherwise, place new text at click position
               const rect = canvasRef.current?.getBoundingClientRect();
               if (!rect) return;
               setXPct(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));

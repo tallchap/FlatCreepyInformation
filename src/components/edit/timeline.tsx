@@ -223,7 +223,7 @@ export function Timeline({
               className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
               style={{ backgroundColor: hasOverlay ? "#16a34a" : "#DC2626" }}
             >
-              {hasOverlay ? "Edit Text" : "Add Text"}
+              {hasOverlay ? "Edit Text Overlay" : "Add Text Overlay"}
             </button>
           )}
         </div>
