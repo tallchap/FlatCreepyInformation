@@ -153,9 +153,13 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
           >
             {/* YouTube thumbnail — instant, no flicker */}
             <img
-              src={`https://img.youtube.com/vi/${videoId}/${selectedThumb}.jpg`}
+              src={[
+                `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
+                `https://img.youtube.com/vi/${videoId}/hq1.jpg`,
+                `https://img.youtube.com/vi/${videoId}/hq2.jpg`,
+              ][selectedThumb] || thumbUrl}
               alt="Video frame"
-              className="w-full h-full object-contain"
+              className="w-full h-full object-cover"
             />
 
             {/* Draggable text with edit/delete icons */}
@@ -231,7 +235,11 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
 
           {/* Small thumbnails stacked vertically */}
           <div className="flex flex-col gap-1.5 w-[80px] flex-shrink-0">
-            {[1, 2, 3].map((i) => (
+            {[
+              { src: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, label: "Main" },
+              { src: `https://img.youtube.com/vi/${videoId}/hq1.jpg`, label: "Alt 1" },
+              { src: `https://img.youtube.com/vi/${videoId}/hq2.jpg`, label: "Alt 2" },
+            ].map((thumb, i) => (
               <button
                 key={i}
                 onClick={() => setSelectedThumb(i)}
@@ -239,11 +247,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                   selectedThumb === i ? "border-green-500" : "border-gray-700 hover:border-gray-500"
                 }`}
               >
-                <img
-                  src={`https://img.youtube.com/vi/${videoId}/${i}.jpg`}
-                  alt={`Thumbnail ${i}`}
-                  className="w-full h-full object-cover"
-                />
+                <img src={thumb.src} alt={thumb.label} className="w-full h-full object-cover" />
               </button>
             ))}
           </div>
