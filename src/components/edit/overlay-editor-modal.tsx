@@ -156,41 +156,74 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
               <img src={thumbUrl} alt="Video frame" className="w-full h-full object-contain" />
             )}
 
-            {/* Draggable text */}
-            <div
-              className={`absolute select-none ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
-              style={{
-                left: `${xPct * 100}%`,
-                top: `${yPct * 100}%`,
-                transform: "translate(0, -100%)",
-                fontSize: `${scaledFontSize}px`,
-                fontFamily: `'${fontFamily}', sans-serif`,
-                color,
-                opacity: opacity / 100,
-                fontWeight: 700,
-                ...(bgBox ? { backgroundColor: hexToBgRgba(bgColor, bgOpacity / 100), padding: "4px 12px", borderRadius: 4 } : {}),
-                textShadow: bgBox ? "none" : "1px 1px 4px rgba(0,0,0,0.9)",
-                minWidth: 40,
-                minHeight: 20,
-              }}
-              onPointerDown={handlePointerDown}
-              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
-            >
-              {editing ? (
-                <input
-                  ref={inputRef}
-                  value={text}
-                  onChange={(e) => setText(e.target.value)}
-                  onBlur={() => setEditing(false)}
-                  onKeyDown={(e) => { if (e.key === "Enter") setEditing(false); }}
-                  className="bg-transparent border-none outline-none text-inherit w-full min-w-[120px]"
-                  style={{ fontSize: "inherit", color: "inherit", fontWeight: "inherit", fontFamily: "inherit" }}
-                  placeholder="Type text..."
-                />
-              ) : (
-                <span>{text || "\u00A0"}</span>
-              )}
-            </div>
+            {/* Draggable text with edit/delete icons */}
+            {(text || editing) && (
+              <div
+                className={`absolute select-none group ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
+                style={{
+                  left: `${xPct * 100}%`,
+                  top: `${yPct * 100}%`,
+                  transform: "translate(0, -100%)",
+                }}
+                onPointerDown={(e) => {
+                  if (editing) return;
+                  if ((e.target as HTMLElement).closest("[data-action]")) return;
+                  handlePointerDown(e);
+                }}
+              >
+                {/* Action icons — top right of text */}
+                {!editing && text && (
+                  <div className="absolute -top-5 right-0 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      data-action="edit"
+                      onClick={(e) => { e.stopPropagation(); setEditing(true); }}
+                      className="w-5 h-5 flex items-center justify-center rounded bg-blue-600 text-white text-[10px] hover:bg-blue-500"
+                      title="Edit text"
+                    >
+                      &#9998;
+                    </button>
+                    <button
+                      data-action="delete"
+                      onClick={(e) => { e.stopPropagation(); setText(""); setEditing(false); }}
+                      className="w-5 h-5 flex items-center justify-center rounded bg-red-600 text-white text-[10px] hover:bg-red-500"
+                      title="Remove text"
+                    >
+                      &times;
+                    </button>
+                  </div>
+                )}
+
+                {/* Text content */}
+                <div
+                  style={{
+                    fontSize: `${scaledFontSize}px`,
+                    fontFamily: `'${fontFamily}', sans-serif`,
+                    color,
+                    opacity: opacity / 100,
+                    fontWeight: 700,
+                    ...(bgBox ? { backgroundColor: hexToBgRgba(bgColor, bgOpacity / 100), padding: "4px 12px", borderRadius: 4 } : {}),
+                    textShadow: bgBox ? "none" : "1px 1px 4px rgba(0,0,0,0.9)",
+                    minWidth: 40,
+                    minHeight: 20,
+                  }}
+                >
+                  {editing ? (
+                    <input
+                      ref={inputRef}
+                      value={text}
+                      onChange={(e) => setText(e.target.value)}
+                      onBlur={() => { if (text) setEditing(false); }}
+                      onKeyDown={(e) => { if (e.key === "Enter" && text) setEditing(false); }}
+                      className="bg-transparent border-none outline-none text-inherit w-full min-w-[120px]"
+                      style={{ fontSize: "inherit", color: "inherit", fontWeight: "inherit", fontFamily: "inherit" }}
+                      placeholder="Type text..."
+                    />
+                  ) : (
+                    <span>{text}</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Small thumbnails stacked vertically */}

@@ -16,6 +16,8 @@ interface TimelineProps {
   playbackRate: number;
   onPlaybackRateChange: (rate: number) => void;
   handlesPlaced: boolean;
+  onAddText?: () => void;
+  hasOverlay?: boolean;
 }
 
 function formatTime(sec: number): string {
@@ -41,6 +43,8 @@ export function Timeline({
   playbackRate,
   onPlaybackRateChange,
   handlesPlaced,
+  onAddText,
+  hasOverlay,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
@@ -258,6 +262,18 @@ export function Timeline({
               &#x00BB;
             </button>
           </div>
+          {onAddText && (
+            <>
+              <div className="w-px h-4 bg-gray-200" />
+              <button
+                onClick={onAddText}
+                className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
+                style={{ backgroundColor: hasOverlay ? "#16a34a" : "#DC2626" }}
+              >
+                {hasOverlay ? "Edit Text" : "Add Text"}
+              </button>
+            </>
+          )}
           <span className="text-xs text-gray-400">
             Total: {formatTime(duration)}
           </span>

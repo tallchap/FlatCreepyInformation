@@ -411,6 +411,8 @@ export function ClipEditor() {
             playbackRate={playbackRate}
             onPlaybackRateChange={handlePlaybackRateChange}
             handlesPlaced={handlesPlaced}
+            onAddText={() => setOverlayModalOpen(true)}
+            hasOverlay={!!overlaySettings?.text}
           />
 
           {/* Controls */}
@@ -456,7 +458,6 @@ export function ClipEditor() {
               </div>
             </div>
 
-            {/* (ADD TEXT button moved to play buttons row below) */}
 
             {/* Play buttons row */}
             <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-100">
@@ -486,16 +487,6 @@ export function ClipEditor() {
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
                 Last 5s
-              </button>
-
-              <button
-                onClick={() => setOverlayModalOpen(true)}
-                className={btnClass}
-                style={{ backgroundColor: overlaySettings?.text ? "#16a34a" : DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = overlaySettings?.text ? "#15803d" : DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = overlaySettings?.text ? "#16a34a" : DINO_RED)}
-              >
-                {overlaySettings?.text ? `TEXT: "${overlaySettings.text}"` : "ADD TEXT"}
               </button>
 
               <div className="flex-1" />
