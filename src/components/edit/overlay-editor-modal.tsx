@@ -149,7 +149,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             className="relative flex-1 aspect-video bg-black rounded-lg overflow-hidden cursor-crosshair select-none"
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onClick={() => { if (editing) setEditing(false); }}
+            onClick={() => { if (editing) { setEditing(false); if (!text) setHasTextBox(false); } }}
           >
             {/* YouTube thumbnail — instant, no flicker */}
             <img
@@ -215,7 +215,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                       ref={inputRef}
                       value={text}
                       onChange={(e) => setText(e.target.value)}
-                      onBlur={() => { if (text) setEditing(false); }}
+                      onBlur={() => { setEditing(false); if (!text) setHasTextBox(false); }}
                       onKeyDown={(e) => { if (e.key === "Enter" && text) setEditing(false); }}
                       className="bg-transparent border-none outline-none text-inherit w-full min-w-[120px]"
                       style={{ fontSize: "inherit", color: "inherit", fontWeight: "inherit", fontFamily: "inherit" }}
