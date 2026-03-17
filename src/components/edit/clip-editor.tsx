@@ -57,7 +57,9 @@ export function ClipEditor() {
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
+  const playerContainerRef = useRef<HTMLDivElement>(null);
   const [videoHeight, setVideoHeight] = useState<number | null>(null);
+  const [playerWidth, setPlayerWidth] = useState(700);
 
   // Track video container height for transcript matching
   useEffect(() => {
@@ -89,6 +91,16 @@ export function ClipEditor() {
       .then(r => r.json())
       .then(d => setGcsAvailable(!!d.available))
       .catch(() => setGcsAvailable(false));
+  }, [videoId]);
+
+  // Track player container width for proportional overlay font scaling
+  useEffect(() => {
+    const el = playerContainerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setPlayerWidth(entry.contentRect.width));
+    ro.observe(el);
+    setPlayerWidth(el.clientWidth);
+    return () => ro.disconnect();
   }, [videoId]);
 
   // Load Google Fonts for overlay preview
@@ -366,8 +378,21 @@ export function ClipEditor() {
           {/* Player + Transcript side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3" ref={videoContainerRef}>
-              <div className="aspect-video bg-black rounded-xl overflow-hidden relative">
+              <div ref={playerContainerRef} className="aspect-video bg-black rounded-xl overflow-hidden relative [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
                 <div id="clip-player" className="w-full h-full" />
+                {/* Custom fullscreen button — fullscreens container so overlay shows */}
+                <button
+                  onClick={() => {
+                    const el = playerContainerRef.current;
+                    if (!el) return;
+                    if (document.fullscreenElement) document.exitFullscreen();
+                    else el.requestFullscreen();
+                  }}
+                  className="absolute top-2 right-2 z-20 w-8 h-8 flex items-center justify-center rounded bg-black/50 text-white hover:bg-black/70 text-xs"
+                  title="Fullscreen with overlay"
+                >
+                  &#x26F6;
+                </button>
                 {overlaySettings?.text && (
                   <div
                     className="absolute pointer-events-none"
@@ -375,7 +400,7 @@ export function ClipEditor() {
                       left: `${(overlaySettings.xPct ?? 0.05) * 100}%`,
                       top: `${(overlaySettings.yPct ?? 0.85) * 100}%`,
                       transform: "translate(0, -100%)",
-                      fontSize: `${overlaySettings.fontSize * 0.4}px`,
+                      fontSize: `${overlaySettings.fontSize / 1920 * playerWidth}px`,
                       color: overlaySettings.color,
                       opacity: overlaySettings.opacity / 100,
                       ...(overlaySettings.bgBox ? {

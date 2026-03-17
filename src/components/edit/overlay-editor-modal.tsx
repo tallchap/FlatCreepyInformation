@@ -54,6 +54,17 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const mainVideoRef = useRef<HTMLVideoElement>(null);
+  const [canvasWidth, setCanvasWidth] = useState(800);
+
+  // Track canvas width for proportional font scaling
+  useEffect(() => {
+    const el = canvasRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([entry]) => setCanvasWidth(entry.contentRect.width));
+    ro.observe(el);
+    setCanvasWidth(el.clientWidth);
+    return () => ro.disconnect();
+  }, []);
 
   useEffect(() => {
     if (document.getElementById("gfonts-overlay")) return;
@@ -115,7 +126,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
 
   const gcsUrl = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
   const thumbUrl = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
-  const scaledFontSize = fontSize * 0.35;
+  const scaledFontSize = fontSize / 1920 * canvasWidth;
 
   const hexToBgRgba = (hex: string, a: number) => {
     const r = parseInt(hex.slice(1, 3), 16);
