@@ -151,9 +151,13 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={() => { if (editing) { setEditing(false); if (!text) setHasTextBox(false); } }}
           >
-            {/* YouTube thumbnail — instant, no flicker */}
+            {/* YouTube thumbnail — switches on thumbnail click */}
             <img
-              src={thumbUrl}
+              src={[
+                thumbUrl,
+                `https://img.youtube.com/vi/${videoId}/sddefault.jpg`,
+                `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
+              ][selectedThumb] || thumbUrl}
               alt="Video frame"
               className="w-full h-full object-cover"
             />
@@ -232,9 +236,9 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
           {/* Small thumbnails stacked vertically */}
           <div className="flex flex-col gap-1.5 w-[80px] flex-shrink-0">
             {[
-              { src: `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`, label: "Main" },
-              { src: `https://img.youtube.com/vi/${videoId}/hq1.jpg`, label: "Alt 1" },
-              { src: `https://img.youtube.com/vi/${videoId}/hq2.jpg`, label: "Alt 2" },
+              { src: thumbUrl, label: "Main" },
+              { src: `https://img.youtube.com/vi/${videoId}/sddefault.jpg`, label: "Alt 1" },
+              { src: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, label: "Alt 2" },
             ].map((thumb, i) => (
               <button
                 key={i}
