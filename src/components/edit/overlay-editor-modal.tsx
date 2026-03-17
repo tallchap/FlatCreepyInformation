@@ -153,11 +153,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
           >
             {/* YouTube thumbnail — instant, no flicker */}
             <img
-              src={[
-                `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`,
-                `https://img.youtube.com/vi/${videoId}/hq1.jpg`,
-                `https://img.youtube.com/vi/${videoId}/hq2.jpg`,
-              ][selectedThumb] || thumbUrl}
+              src={thumbUrl}
               alt="Video frame"
               className="w-full h-full object-cover"
             />
