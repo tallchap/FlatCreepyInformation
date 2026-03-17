@@ -709,7 +709,7 @@ function buildOverlayFilter(overlay, fontPath) {
   const opacity = Math.min(1.0, (overlay.opacity != null ? overlay.opacity : 1) * 1.1);
   const fontSize = overlay.fontSize || 48;
   const text = overlay.text.replace(/'/g, "'\\''").replace(/:/g, "\\:");
-  let filter = `drawtext=text='${text}':fontsize=${fontSize}:fontcolor=0x${hex}@${opacity}:${pos}`;
+  let filter = `drawtext=text='${text}':fontsize=${fontSize}*w/1920:fontcolor=0x${hex}@${opacity}:${pos}`;
   if (fontPath) {
     filter += `:fontfile=${fontPath}`;
   }
