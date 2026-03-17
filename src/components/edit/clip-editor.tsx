@@ -544,17 +544,6 @@ export function ClipEditor() {
                 {debugOpen ? "Hide Debug" : "Show Debug"}
               </button>
 
-              {videoId && (
-                <span
-                  className="px-2 py-1 rounded text-xs font-semibold"
-                  style={{
-                    backgroundColor: gcsAvailable === true ? "#166534" : gcsAvailable === false ? "#854d0e" : "#374151",
-                    color: "#fff",
-                  }}
-                >
-                  {gcsAvailable === null ? "checking..." : gcsAvailable ? "GCS" : "RapidAPI-realtime"}
-                </span>
-              )}
 
               <button
                 onClick={handleExport}
