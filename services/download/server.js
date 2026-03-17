@@ -693,8 +693,10 @@ function buildOverlayFilter(overlay, fontPath, videoWidth) {
   const scale = (videoWidth || 1920) / 1920;
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
-    const boxPad = overlay.bgBox ? `-${Math.round(10 * scale)}` : '';
-    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h-th${boxPad}`;
+    const scaledBorder = Math.round(10 * scale);
+    const boxPad = overlay.bgBox ? `-${scaledBorder}` : '';
+    const xOff = overlay.bgBox ? `+${scaledBorder}` : '';
+    pos = `x=${overlay.xPct}*w${xOff}:y=${overlay.yPct}*h-th${boxPad}`;
   } else {
     const posMap = {
       "top-left": "x=50:y=50",
@@ -716,7 +718,7 @@ function buildOverlayFilter(overlay, fontPath, videoWidth) {
   }
   if (overlay.bgBox) {
     const bgHex = (overlay.bgColor || "#000000").replace("#", "");
-    const bgAlpha = overlay.bgOpacity != null ? overlay.bgOpacity / 100 : 0.5;
+    const bgAlpha = (overlay.bgOpacity != null ? overlay.bgOpacity / 100 : 0.5) * 0.9;
     const scaledBoxBorder = Math.round(10 * scale);
     filter += `:box=1:boxcolor=0x${bgHex}@${bgAlpha}:boxborderw=${scaledBoxBorder}`;
   }
