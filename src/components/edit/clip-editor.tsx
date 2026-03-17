@@ -135,8 +135,8 @@ export function ClipEditor() {
       video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
       video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
       video.controls = true;
-      video.controlsList.add("nodownload", "nofullscreen");
-      video.disablePictureInPicture = true;
+      video.setAttribute("controlsList", "nodownload nofullscreen");
+      video.setAttribute("disablePictureInPicture", "true");
       video.style.width = "100%";
       video.style.height = "100%";
       video.style.backgroundColor = "#000";
