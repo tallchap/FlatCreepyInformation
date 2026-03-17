@@ -51,9 +51,40 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [editing, setEditing] = useState(false);
   const [hasTextBox, setHasTextBox] = useState(!!initial?.text);
   const [selectedThumb, setSelectedThumb] = useState(0);
+  const [frameUrls, setFrameUrls] = useState<string[]>([thumbUrl, thumbUrl, thumbUrl]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(800);
+
+  // Capture 3 frames from GCS video at 0.1s, 60s, 120s
+  useEffect(() => {
+    if (!gcsAvailable) return;
+    const times = [0.1, 60, 120];
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.src = gcsUrl;
+    video.preload = "auto";
+    video.muted = true;
+    let idx = 0;
+    const urls: string[] = [thumbUrl, thumbUrl, thumbUrl];
+    const captureFrame = () => {
+      const c = document.createElement("canvas");
+      c.width = video.videoWidth;
+      c.height = video.videoHeight;
+      c.getContext("2d")?.drawImage(video, 0, 0);
+      urls[idx] = c.toDataURL("image/jpeg", 0.85);
+      setFrameUrls([...urls]);
+      idx++;
+      if (idx < times.length) {
+        video.currentTime = times[idx];
+      } else {
+        video.src = "";
+      }
+    };
+    video.addEventListener("seeked", captureFrame);
+    video.addEventListener("loadeddata", () => { video.currentTime = times[0]; });
+    return () => { video.src = ""; };
+  }, [gcsAvailable]);
 
   // Track canvas width for proportional font scaling
   useEffect(() => {
@@ -151,13 +182,8 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={() => { if (editing) { setEditing(false); if (!text) setHasTextBox(false); } }}
           >
-            {/* YouTube thumbnail — switches on thumbnail click */}
             <img
-              src={[
-                thumbUrl,
-                `https://img.youtube.com/vi/${videoId}/sddefault.jpg`,
-                `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`,
-              ][selectedThumb] || thumbUrl}
+              src={frameUrls[selectedThumb] || thumbUrl}
               alt="Video frame"
               className="w-full h-full object-cover"
             />
@@ -235,11 +261,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
 
           {/* Small thumbnails stacked vertically */}
           <div className="flex flex-col gap-1.5 w-[80px] flex-shrink-0">
-            {[
-              { src: thumbUrl, label: "Main" },
-              { src: `https://img.youtube.com/vi/${videoId}/sddefault.jpg`, label: "Alt 1" },
-              { src: `https://img.youtube.com/vi/${videoId}/hqdefault.jpg`, label: "Alt 2" },
-            ].map((thumb, i) => (
+            {frameUrls.map((src, i) => (
               <button
                 key={i}
                 onClick={() => setSelectedThumb(i)}
@@ -247,7 +269,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                   selectedThumb === i ? "border-green-500" : "border-gray-700 hover:border-gray-500"
                 }`}
               >
-                <img src={thumb.src} alt={thumb.label} className="w-full h-full object-cover" />
+                <img src={src} alt={`Frame ${i + 1}`} className="w-full h-full object-cover" />
               </button>
             ))}
           </div>
