@@ -51,7 +51,8 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [editing, setEditing] = useState(false);
   const [hasTextBox, setHasTextBox] = useState(!!initial?.text);
   const [selectedThumb, setSelectedThumb] = useState(0);
-  const [frameUrls, setFrameUrls] = useState<string[]>([thumbUrl, thumbUrl, thumbUrl]);
+  const defaultThumb = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+  const [frameUrls, setFrameUrls] = useState<string[]>([defaultThumb, defaultThumb, defaultThumb]);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(800);
@@ -66,7 +67,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
     video.preload = "auto";
     video.muted = true;
     let idx = 0;
-    const urls: string[] = [thumbUrl, thumbUrl, thumbUrl];
+    const urls: string[] = [defaultThumb, defaultThumb, defaultThumb];
     const captureFrame = () => {
       const c = document.createElement("canvas");
       c.width = video.videoWidth;
