@@ -235,7 +235,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                     color,
                     opacity: opacity / 100,
                     fontWeight: 700,
-                    ...(bgBox ? { backgroundColor: hexToBgRgba(bgColor, bgOpacity / 100), padding: "4px 12px", borderRadius: 4 } : {}),
+                    ...(bgBox ? { backgroundColor: hexToBgRgba(bgColor, bgOpacity / 100), padding: `${4 / 1920 * canvasWidth}px ${10 / 1920 * canvasWidth}px`, borderRadius: 4 } : {}),
                     textShadow: bgBox ? "none" : "1px 1px 4px rgba(0,0,0,0.9)",
                     minWidth: 40,
                     minHeight: 20,

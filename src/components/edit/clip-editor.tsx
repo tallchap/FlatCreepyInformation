@@ -422,7 +422,7 @@ export function ClipEditor() {
                           const b = parseInt(hex.slice(5, 7), 16);
                           return `rgba(${r},${g},${b},${(overlaySettings.bgOpacity ?? 50) / 100})`;
                         })(),
-                        padding: "4px 10px", borderRadius: 4,
+                        padding: `${4 / 1920 * playerWidth}px ${10 / 1920 * playerWidth}px`, borderRadius: 4,
                       } : {}),
                       fontFamily: `'${overlaySettings.fontFamily || "Roboto"}', sans-serif`,
                       fontWeight: 700,

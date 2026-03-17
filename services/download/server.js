@@ -693,7 +693,10 @@ function buildOverlayFilter(overlay, fontPath, videoWidth) {
   const scale = (videoWidth || 1920) / 1920;
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
-    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h-th`;
+    const scaledBorder = Math.round(10 * scale);
+    const boxPad = overlay.bgBox ? `-${scaledBorder}` : '';
+    const xOff = overlay.bgBox ? `+${scaledBorder}` : '';
+    pos = `x=${overlay.xPct}*w${xOff}:y=${overlay.yPct}*h-th${boxPad}`;
   } else {
     const posMap = {
       "top-left": "x=50:y=50",
