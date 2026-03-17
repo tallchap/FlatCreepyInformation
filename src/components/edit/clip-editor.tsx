@@ -400,7 +400,7 @@ export function ClipEditor() {
                   &#x26F6;
                 </button>
                 {videoRes && gcsAvailable && (
-                  <span className="absolute bottom-12 left-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
+                  <span className="absolute bottom-12 right-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
                     {videoRes}
                   </span>
                 )}
