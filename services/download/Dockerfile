@@ -3,7 +3,8 @@ FROM node:20-slim
 # System deps + CA certs for HTTPS
 RUN apt-get update && apt-get install -y \
     python3 python3-pip curl git unzip xz-utils ca-certificates \
-    build-essential pkg-config && \
+    build-essential pkg-config \
+    libfreetype6 libfontconfig1 libfribidi0 fonts-dejavu-core && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Static ffmpeg with libx264/libx265 (apt ffmpeg lacks these encoders)

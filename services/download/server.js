@@ -690,6 +690,8 @@ async function downloadGoogleFont(fontFamily) {
 
 function buildOverlayFilter(overlay, fontPath) {
   if (!overlay || !overlay.text) return null;
+  // Static ffmpeg may not have drawtext filter — caller should handle null gracefully
+  // TODO: install ffmpeg with drawtext support on Render
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
     pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h`;
