@@ -50,7 +50,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(false);
   const [hasTextBox, setHasTextBox] = useState(!!initial?.text);
-  const [selectedThumb, setSelectedThumb] = useState(1);
+  const [selectedThumb, setSelectedThumb] = useState(0);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [canvasWidth, setCanvasWidth] = useState(800);
@@ -151,8 +151,12 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             onPointerUp={handlePointerUp}
             onClick={() => { if (editing) setEditing(false); }}
           >
-            {/* Always show YouTube thumbnail as stable background — no flicker */}
-            <img src={thumbUrl} alt="Video frame" className="w-full h-full object-contain" />
+            {/* YouTube thumbnail — instant, no flicker */}
+            <img
+              src={`https://img.youtube.com/vi/${videoId}/${selectedThumb}.jpg`}
+              alt="Video frame"
+              className="w-full h-full object-contain"
+            />
 
             {/* Draggable text with edit/delete icons */}
             {hasTextBox && (
@@ -226,6 +230,23 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
           </div>
 
           {/* Small thumbnails stacked vertically */}
+          <div className="flex flex-col gap-1.5 w-[80px] flex-shrink-0">
+            {[1, 2, 3].map((i) => (
+              <button
+                key={i}
+                onClick={() => setSelectedThumb(i)}
+                className={`aspect-video rounded overflow-hidden border-2 transition-colors ${
+                  selectedThumb === i ? "border-green-500" : "border-gray-700 hover:border-gray-500"
+                }`}
+              >
+                <img
+                  src={`https://img.youtube.com/vi/${videoId}/${i}.jpg`}
+                  alt={`Thumbnail ${i}`}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Controls row 1: Font, Size, Color+Hex, Opacity */}
