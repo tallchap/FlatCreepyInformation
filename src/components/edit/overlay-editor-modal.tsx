@@ -48,7 +48,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [bgColor, setBgColor] = useState(initial?.bgColor ?? "#000000");
   const [bgOpacity, setBgOpacity] = useState(initial?.bgOpacity ?? 50);
   const [dragging, setDragging] = useState(false);
-  const [editing, setEditing] = useState(!initial?.text);
+  const [editing, setEditing] = useState(true);
   const [selectedThumb, setSelectedThumb] = useState(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -141,6 +141,14 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             className="relative flex-1 aspect-video bg-black rounded-lg overflow-hidden cursor-crosshair select-none"
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
+            onClick={(e) => {
+              if (dragging) return;
+              const rect = canvasRef.current?.getBoundingClientRect();
+              if (!rect) return;
+              setXPct(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
+              setYPct(Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)));
+              setEditing(true);
+            }}
           >
             {gcsAvailable ? (
               <video ref={mainVideoRef} src={`${gcsUrl}#t=${thumbTimes[selectedThumb]}`} className="w-full h-full object-contain" preload="metadata" muted />
@@ -166,7 +174,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                 minHeight: 20,
               }}
               onPointerDown={handlePointerDown}
-              onDoubleClick={() => setEditing(true)}
+              onClick={(e) => { e.stopPropagation(); setEditing(true); }}
             >
               {editing ? (
                 <input
