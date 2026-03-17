@@ -91,6 +91,16 @@ export function ClipEditor() {
       .catch(() => setGcsAvailable(false));
   }, [videoId]);
 
+  // Load Google Fonts for overlay preview
+  useEffect(() => {
+    if (document.getElementById("gfonts-overlay")) return;
+    const link = document.createElement("link");
+    link.id = "gfonts-overlay";
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=Roboto&family=Open+Sans&family=Lato&family=Montserrat&family=Oswald&family=Raleway&family=Poppins&family=Nunito&family=Ubuntu&family=Merriweather&family=Playfair+Display&family=Bebas+Neue&family=Anton&family=Righteous&family=Lobster&family=Pacifico&family=Bangers&family=Permanent+Marker&family=Press+Start+2P&family=Black+Ops+One&family=Bungee&family=Caveat&family=Dancing+Script&family=Satisfy&family=Alfa+Slab+One&family=Archivo+Black&family=Barlow+Condensed&family=Cinzel&family=Comfortaa&family=Fjalla+One&display=swap";
+    document.head.appendChild(link);
+  }, []);
+
   // Load YouTube IFrame API
   useEffect(() => {
     if ((window as any).YT?.Player) return;

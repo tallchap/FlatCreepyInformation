@@ -312,7 +312,6 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
         {/* Actions */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-700">
           <div className="flex gap-2">
-            <button onClick={() => { onClear(); onClose(); }} className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300">Clear Overlay</button>
             {!hasTextBox && (
               <button
                 onClick={() => { setHasTextBox(true); setEditing(true); setXPct(0.5); setYPct(0.5); }}
