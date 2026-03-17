@@ -712,7 +712,9 @@ function buildOverlayFilter(overlay, fontPath) {
     filter += `:fontfile=${fontPath}`;
   }
   if (overlay.bgBox) {
-    filter += `:box=1:boxcolor=black@0.5:boxborderw=10`;
+    const bgHex = (overlay.bgColor || "#000000").replace("#", "");
+    const bgAlpha = overlay.bgOpacity != null ? overlay.bgOpacity / 100 : 0.5;
+    filter += `:box=1:boxcolor=0x${bgHex}@${bgAlpha}:boxborderw=10`;
   }
   return filter;
 }

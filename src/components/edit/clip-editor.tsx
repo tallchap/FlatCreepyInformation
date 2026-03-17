@@ -332,6 +332,8 @@ export function ClipEditor() {
           color: overlaySettings.color,
           opacity: overlaySettings.opacity / 100,
           bgBox: overlaySettings.bgBox,
+          bgColor: overlaySettings.bgColor,
+          bgOpacity: overlaySettings.bgOpacity,
         },
       } : {}),
     });
@@ -366,7 +368,16 @@ export function ClipEditor() {
                       fontSize: `${overlaySettings.fontSize * 0.4}px`,
                       color: overlaySettings.color,
                       opacity: overlaySettings.opacity / 100,
-                      ...(overlaySettings.bgBox ? { backgroundColor: "rgba(0,0,0,0.5)", padding: "4px 10px", borderRadius: 4 } : {}),
+                      ...(overlaySettings.bgBox ? {
+                        backgroundColor: (() => {
+                          const hex = overlaySettings.bgColor || "#000000";
+                          const r = parseInt(hex.slice(1, 3), 16);
+                          const g = parseInt(hex.slice(3, 5), 16);
+                          const b = parseInt(hex.slice(5, 7), 16);
+                          return `rgba(${r},${g},${b},${(overlaySettings.bgOpacity ?? 50) / 100})`;
+                        })(),
+                        padding: "4px 10px", borderRadius: 4,
+                      } : {}),
                       fontFamily: `'${overlaySettings.fontFamily || "Roboto"}', sans-serif`,
                       fontWeight: 700,
                       textShadow: overlaySettings.bgBox ? "none" : "1px 1px 3px rgba(0,0,0,0.8)",
