@@ -60,6 +60,7 @@ export function ClipEditor() {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const [videoHeight, setVideoHeight] = useState<number | null>(null);
   const [playerWidth, setPlayerWidth] = useState(700);
+  const [videoRes, setVideoRes] = useState<string | null>(null);
 
   // Track video container height for transcript matching
   useEffect(() => {
@@ -85,8 +86,9 @@ export function ClipEditor() {
 
   // Check GCS availability when video changes
   useEffect(() => {
-    if (!videoId) { setGcsAvailable(null); return; }
+    if (!videoId) { setGcsAvailable(null); setVideoRes(null); return; }
     setGcsAvailable(null);
+    setVideoRes(null);
     fetch(`/api/clip-gcs-check?videoId=${videoId}`)
       .then(r => r.json())
       .then(d => setGcsAvailable(!!d.available))
@@ -143,6 +145,7 @@ export function ClipEditor() {
       video.addEventListener("loadedmetadata", () => {
         playerReadyRef.current = true;
         setDuration(video.duration);
+        setVideoRes(`${video.videoHeight}p`);
         setHandlesPlaced(false);
         setStartSec(0);
         setEndSec(0);
@@ -545,6 +548,11 @@ export function ClipEditor() {
                   }}
                 >
                   {gcsAvailable === null ? "checking..." : gcsAvailable ? "GCS" : "RapidAPI-realtime"}
+                </span>
+              )}
+              {videoRes && gcsAvailable && (
+                <span className="px-2 py-1 rounded text-xs font-semibold bg-gray-700 text-white">
+                  {videoRes}
                 </span>
               )}
 
