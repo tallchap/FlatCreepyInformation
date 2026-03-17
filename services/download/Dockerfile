@@ -4,13 +4,14 @@ FROM node:20-slim
 RUN apt-get update && apt-get install -y \
     python3 python3-pip curl git unzip xz-utils ca-certificates \
     build-essential pkg-config \
-    libfreetype6 libfontconfig1 libfribidi0 fonts-dejavu-core && \
+    ffmpeg fonts-dejavu-core && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Static ffmpeg with libx264/libx265 (apt ffmpeg lacks these encoders)
-# Point static build at system CA certs so HTTPS URLs work
+# Static ffmpeg (has libx264) — kept as fallback, apt ffmpeg used for drawtext
 RUN curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz \
-    | tar xJ --strip-components=1 -C /usr/local/bin/ --wildcards '*/ffmpeg' '*/ffprobe'
+    | tar xJ --strip-components=1 -C /usr/local/bin/ --wildcards '*/ffmpeg' '*/ffprobe' && \
+    mv /usr/local/bin/ffmpeg /usr/local/bin/ffmpeg-static && \
+    mv /usr/local/bin/ffprobe /usr/local/bin/ffprobe-static
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
 # Deno (mandatory for yt-dlp YouTube JS challenges since Nov 2025)
