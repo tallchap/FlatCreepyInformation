@@ -694,7 +694,7 @@ function buildOverlayFilter(overlay, fontPath) {
   // TODO: install ffmpeg with drawtext support on Render
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
-    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h`;
+    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h-th`;
   } else {
     const posMap = {
       "top-left": "x=50:y=50",
