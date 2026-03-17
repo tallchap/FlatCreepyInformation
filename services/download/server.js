@@ -706,7 +706,7 @@ function buildOverlayFilter(overlay, fontPath) {
     pos = posMap[overlay.position] || posMap["bottom-left"];
   }
   const hex = (overlay.color || "#ffffff").replace("#", "");
-  const opacity = overlay.opacity != null ? overlay.opacity : 1;
+  const opacity = Math.min(1.0, (overlay.opacity != null ? overlay.opacity : 1) * 1.1);
   const fontSize = overlay.fontSize || 48;
   const text = overlay.text.replace(/'/g, "'\\''").replace(/:/g, "\\:");
   let filter = `drawtext=text='${text}':fontsize=${fontSize}:fontcolor=0x${hex}@${opacity}:${pos}`;
