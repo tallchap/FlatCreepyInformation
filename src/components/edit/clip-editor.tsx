@@ -58,6 +58,7 @@ export function ClipEditor() {
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
+  const videoWrapperRef = useRef<HTMLDivElement>(null);
   const [videoHeight, setVideoHeight] = useState<number | null>(null);
   const [playerWidth, setPlayerWidth] = useState(700);
   const [videoRes, setVideoRes] = useState<string | null>(null);
@@ -95,9 +96,9 @@ export function ClipEditor() {
       .catch(() => setGcsAvailable(false));
   }, [videoId]);
 
-  // Track player container width for proportional overlay font scaling
+  // Track video wrapper width for proportional overlay font scaling
   useEffect(() => {
-    const el = playerContainerRef.current;
+    const el = videoWrapperRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => setPlayerWidth(entry.contentRect.width));
     ro.observe(el);
@@ -384,55 +385,57 @@ export function ClipEditor() {
           {/* Player + Transcript side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
             <div className="lg:col-span-3" ref={videoContainerRef}>
-              <div ref={playerContainerRef} className="aspect-video bg-black rounded-xl overflow-hidden relative [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
-                <div id="clip-player" className="w-full h-full" />
-                {/* Custom fullscreen button — fullscreens container so overlay shows */}
-                <button
-                  onClick={() => {
-                    const el = playerContainerRef.current;
-                    if (!el) return;
-                    if (document.fullscreenElement) document.exitFullscreen();
-                    else el.requestFullscreen();
-                  }}
-                  className="absolute top-2 right-2 z-20 w-8 h-8 flex items-center justify-center rounded bg-black/50 text-white hover:bg-black/70 text-xs"
-                  title="Fullscreen with overlay"
-                >
-                  &#x26F6;
-                </button>
-                {videoRes && gcsAvailable && (
-                  <span className="absolute bottom-20 right-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
-                    {videoRes}
-                  </span>
-                )}
-                {overlaySettings?.text && (
-                  <div
-                    className="absolute pointer-events-none"
-                    style={{
-                      left: `${(overlaySettings.xPct ?? 0.05) * 100}%`,
-                      top: `${(overlaySettings.yPct ?? 0.85) * 100}%`,
-                      transform: "translate(0, -100%)",
-                      fontSize: `${overlaySettings.fontSize / 1920 * playerWidth}px`,
-                      color: overlaySettings.color,
-                      opacity: overlaySettings.opacity / 100,
-                      ...(overlaySettings.bgBox ? {
-                        backgroundColor: (() => {
-                          const hex = overlaySettings.bgColor || "#000000";
-                          const r = parseInt(hex.slice(1, 3), 16);
-                          const g = parseInt(hex.slice(3, 5), 16);
-                          const b = parseInt(hex.slice(5, 7), 16);
-                          return `rgba(${r},${g},${b},${(overlaySettings.bgOpacity ?? 50) / 100})`;
-                        })(),
-                        padding: `${4 / 1920 * playerWidth}px ${10 / 1920 * playerWidth}px`, borderRadius: 4,
-                      } : {}),
-                      fontFamily: `'${overlaySettings.fontFamily || "Roboto"}', sans-serif`,
-                      fontWeight: 700,
-                      textShadow: overlaySettings.bgBox ? "none" : "1px 1px 3px rgba(0,0,0,0.8)",
-                      zIndex: 10,
+              <div ref={playerContainerRef} className="bg-black rounded-xl overflow-hidden [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
+                <div ref={videoWrapperRef} className="relative aspect-video w-full max-h-full">
+                  <div id="clip-player" className="w-full h-full" />
+                  {/* Custom fullscreen button — fullscreens container so overlay shows */}
+                  <button
+                    onClick={() => {
+                      const el = playerContainerRef.current;
+                      if (!el) return;
+                      if (document.fullscreenElement) document.exitFullscreen();
+                      else el.requestFullscreen();
                     }}
+                    className="absolute top-2 right-2 z-20 w-8 h-8 flex items-center justify-center rounded bg-black/50 text-white hover:bg-black/70 text-xs"
+                    title="Fullscreen with overlay"
                   >
-                    {overlaySettings.text}
-                  </div>
-                )}
+                    &#x26F6;
+                  </button>
+                  {videoRes && gcsAvailable && (
+                    <span className="absolute bottom-20 right-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
+                      {videoRes}
+                    </span>
+                  )}
+                  {overlaySettings?.text && (
+                    <div
+                      className="absolute pointer-events-none"
+                      style={{
+                        left: `${(overlaySettings.xPct ?? 0.05) * 100}%`,
+                        top: `${(overlaySettings.yPct ?? 0.85) * 100}%`,
+                        transform: "translate(0, -100%)",
+                        fontSize: `${overlaySettings.fontSize / 1920 * playerWidth}px`,
+                        color: overlaySettings.color,
+                        opacity: overlaySettings.opacity / 100,
+                        ...(overlaySettings.bgBox ? {
+                          backgroundColor: (() => {
+                            const hex = overlaySettings.bgColor || "#000000";
+                            const r = parseInt(hex.slice(1, 3), 16);
+                            const g = parseInt(hex.slice(3, 5), 16);
+                            const b = parseInt(hex.slice(5, 7), 16);
+                            return `rgba(${r},${g},${b},${(overlaySettings.bgOpacity ?? 50) / 100})`;
+                          })(),
+                          padding: `${4 / 1920 * playerWidth}px ${10 / 1920 * playerWidth}px`, borderRadius: 4,
+                        } : {}),
+                        fontFamily: `'${overlaySettings.fontFamily || "Roboto"}', sans-serif`,
+                        fontWeight: 700,
+                        textShadow: overlaySettings.bgBox ? "none" : "1px 1px 3px rgba(0,0,0,0.8)",
+                        zIndex: 10,
+                      }}
+                    >
+                      {overlaySettings.text}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
             <div className="lg:col-span-2" style={videoHeight ? { height: videoHeight } : undefined}>
