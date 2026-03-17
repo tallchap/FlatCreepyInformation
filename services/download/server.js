@@ -688,13 +688,13 @@ async function downloadGoogleFont(fontFamily) {
   }
 }
 
-function buildOverlayFilter(overlay, fontPath) {
+function buildOverlayFilter(overlay, fontPath, videoWidth) {
   if (!overlay || !overlay.text) return null;
-  // Static ffmpeg may not have drawtext filter — caller should handle null gracefully
-  // TODO: install ffmpeg with drawtext support on Render
+  const scale = (videoWidth || 1920) / 1920;
   let pos;
   if (overlay.xPct != null && overlay.yPct != null) {
-    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h-th`;
+    const boxPad = overlay.bgBox ? `-${Math.round(10 * scale)}` : '';
+    pos = `x=${overlay.xPct}*w:y=${overlay.yPct}*h-th${boxPad}`;
   } else {
     const posMap = {
       "top-left": "x=50:y=50",
@@ -708,15 +708,17 @@ function buildOverlayFilter(overlay, fontPath) {
   const hex = (overlay.color || "#ffffff").replace("#", "");
   const opacity = Math.min(1.0, (overlay.opacity != null ? overlay.opacity : 1) * 1.1);
   const fontSize = overlay.fontSize || 48;
+  const scaledFontSize = Math.round(fontSize * scale);
   const text = overlay.text.replace(/'/g, "'\\''").replace(/:/g, "\\:");
-  let filter = `drawtext=text='${text}':fontsize=${fontSize}*w/1920:fontcolor=0x${hex}@${opacity}:${pos}`;
+  let filter = `drawtext=text='${text}':fontsize=${scaledFontSize}:fontcolor=0x${hex}@${opacity}:${pos}`;
   if (fontPath) {
     filter += `:fontfile=${fontPath}`;
   }
   if (overlay.bgBox) {
     const bgHex = (overlay.bgColor || "#000000").replace("#", "");
     const bgAlpha = overlay.bgOpacity != null ? overlay.bgOpacity / 100 : 0.5;
-    filter += `:box=1:boxcolor=0x${bgHex}@${bgAlpha}:boxborderw=10`;
+    const scaledBoxBorder = Math.round(10 * scale);
+    filter += `:box=1:boxcolor=0x${bgHex}@${bgAlpha}:boxborderw=${scaledBoxBorder}`;
   }
   return filter;
 }
@@ -790,7 +792,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     job.stageDetail = "Trimming: 0%";
     job.progress = 50;
     const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
-        const overlayFilter = buildOverlayFilter(overlay, fontPath);
+        const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
     logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
     await new Promise((resolve, reject) => {
       const args = [
