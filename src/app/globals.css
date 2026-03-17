@@ -127,3 +127,11 @@
     cursor: pointer;
   }
 }
+
+/* Hide native fullscreen and picture-in-picture buttons on video player */
+video::-webkit-media-controls-fullscreen-button {
+  display: none !important;
+}
+video::-webkit-media-controls-picture-in-picture-button {
+  display: none !important;
+}
