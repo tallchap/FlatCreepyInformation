@@ -31,7 +31,17 @@ export function VideoPane({
   return (
     <Card className="xl:sticky xl:top-4 border-blue-200 shadow-sm">
       <CardHeader className="pb-3">
-        <CardTitle className="text-base">Video preview</CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base">Video preview</CardTitle>
+          <a
+            href={`/edit?v=${videoId}`}
+            target="_blank"
+            className="px-3 py-1 text-xs font-semibold text-white rounded-lg transition-colors hover:opacity-90"
+            style={{ backgroundColor: "#DC2626" }}
+          >
+            Snip It
+          </a>
+        </div>
         <p className="text-xs text-gray-600 line-clamp-2">{videoTitle}</p>
         <p className="text-xs text-gray-500">{channelName}</p>
       </CardHeader>
