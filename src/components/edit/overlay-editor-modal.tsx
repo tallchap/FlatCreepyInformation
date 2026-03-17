@@ -48,8 +48,8 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
   const [bgColor, setBgColor] = useState(initial?.bgColor ?? "#000000");
   const [bgOpacity, setBgOpacity] = useState(initial?.bgOpacity ?? 50);
   const [dragging, setDragging] = useState(false);
-  const [editing, setEditing] = useState(true);
-  const justFinishedEditing = useRef(false);
+  const [editing, setEditing] = useState(false);
+  const [hasTextBox, setHasTextBox] = useState(!!initial?.text);
   const [selectedThumb, setSelectedThumb] = useState(1);
   const canvasRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -142,19 +142,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             className="relative flex-1 aspect-video bg-black rounded-lg overflow-hidden cursor-crosshair select-none"
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
-            onClick={(e) => {
-              if (dragging) return;
-              // If we just exited editing via onBlur, don't create a new text box
-              if (justFinishedEditing.current) return;
-              // If text exists and we're editing, click outside closes editing
-              if (text && editing) { setEditing(false); return; }
-              // Otherwise, place new text at click position
-              const rect = canvasRef.current?.getBoundingClientRect();
-              if (!rect) return;
-              setXPct(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
-              setYPct(Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)));
-              setEditing(true);
-            }}
+            onClick={() => { if (editing) setEditing(false); }}
           >
             {gcsAvailable ? (
               <video
@@ -171,7 +159,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             )}
 
             {/* Draggable text with edit/delete icons */}
-            {(text || editing) && (
+            {hasTextBox && (
               <div
                 className={`absolute select-none group ${dragging ? "cursor-grabbing" : "cursor-grab"}`}
                 style={{
@@ -199,7 +187,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                     </button>
                     <button
                       data-action="delete"
-                      onClick={(e) => { e.stopPropagation(); setText(""); setEditing(false); }}
+                      onClick={(e) => { e.stopPropagation(); setText(""); setEditing(false); setHasTextBox(false); }}
                       className="w-5 h-5 flex items-center justify-center rounded bg-red-600 text-white text-[10px] hover:bg-red-500"
                       title="Remove text"
                     >
@@ -227,7 +215,7 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                       ref={inputRef}
                       value={text}
                       onChange={(e) => setText(e.target.value)}
-                      onBlur={() => { if (text) { setEditing(false); justFinishedEditing.current = true; setTimeout(() => { justFinishedEditing.current = false; }, 200); } }}
+                      onBlur={() => { if (text) setEditing(false); }}
                       onKeyDown={(e) => { if (e.key === "Enter" && text) setEditing(false); }}
                       className="bg-transparent border-none outline-none text-inherit w-full min-w-[120px]"
                       style={{ fontSize: "inherit", color: "inherit", fontWeight: "inherit", fontFamily: "inherit" }}
@@ -323,7 +311,18 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
 
         {/* Actions */}
         <div className="flex items-center justify-between px-5 py-3 border-t border-gray-700">
-          <button onClick={() => { onClear(); onClose(); }} className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300">Clear Overlay</button>
+          <div className="flex gap-2">
+            <button onClick={() => { onClear(); onClose(); }} className="px-3 py-1.5 text-xs text-red-400 hover:text-red-300">Clear Overlay</button>
+            {!hasTextBox && (
+              <button
+                onClick={() => { setHasTextBox(true); setEditing(true); setXPct(0.5); setYPct(0.5); }}
+                className="px-4 py-1.5 text-xs font-semibold text-white rounded-lg"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                Add Text
+              </button>
+            )}
+          </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-3 py-1.5 text-xs text-gray-400 hover:text-white border border-gray-600 rounded-lg">Cancel</button>
             <button onClick={handleSave} disabled={!text.trim()} className="px-5 py-1.5 text-xs font-medium text-white bg-green-600 hover:bg-green-500 rounded-lg disabled:opacity-50 disabled:cursor-not-allowed">Save</button>
