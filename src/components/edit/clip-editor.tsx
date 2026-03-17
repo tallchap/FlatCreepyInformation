@@ -399,6 +399,11 @@ export function ClipEditor() {
                 >
                   &#x26F6;
                 </button>
+                {videoRes && gcsAvailable && (
+                  <span className="absolute bottom-12 left-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
+                    {videoRes}
+                  </span>
+                )}
                 {overlaySettings?.text && (
                   <div
                     className="absolute pointer-events-none"
@@ -548,11 +553,6 @@ export function ClipEditor() {
                   }}
                 >
                   {gcsAvailable === null ? "checking..." : gcsAvailable ? "GCS" : "RapidAPI-realtime"}
-                </span>
-              )}
-              {videoRes && gcsAvailable && (
-                <span className="px-2 py-1 rounded text-xs font-semibold bg-gray-700 text-white">
-                  {videoRes}
                 </span>
               )}
 
