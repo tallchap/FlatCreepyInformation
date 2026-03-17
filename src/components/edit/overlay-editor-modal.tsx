@@ -154,7 +154,15 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
             }}
           >
             {gcsAvailable ? (
-              <video ref={mainVideoRef} src={`${gcsUrl}#t=${thumbTimes[selectedThumb]}`} className="w-full h-full object-contain" preload="metadata" muted />
+              <video
+                ref={mainVideoRef}
+                src={gcsUrl}
+                poster={thumbUrl}
+                className="w-full h-full object-contain"
+                preload="auto"
+                muted
+                onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = thumbTimes[selectedThumb] || 0; }}
+              />
             ) : (
               <img src={thumbUrl} alt="Video frame" className="w-full h-full object-contain" />
             )}
@@ -240,7 +248,14 @@ export function OverlayEditorModal({ videoId, gcsAvailable, currentTime, duratio
                     selectedThumb === i ? "border-green-500" : "border-gray-700 hover:border-gray-500"
                   }`}
                 >
-                  <video src={`${gcsUrl}#t=${t}`} className="w-full h-full object-cover" preload="metadata" muted />
+                  <video
+                    src={gcsUrl}
+                    poster={thumbUrl}
+                    className="w-full h-full object-cover"
+                    preload="auto"
+                    muted
+                    onLoadedData={(e) => { (e.target as HTMLVideoElement).currentTime = t; }}
+                  />
                   <span className="absolute bottom-0 right-0 text-[8px] text-white bg-black/70 px-1">{Math.floor(t / 60)}:{String(t % 60).padStart(2, "0")}</span>
                 </button>
               ))}
