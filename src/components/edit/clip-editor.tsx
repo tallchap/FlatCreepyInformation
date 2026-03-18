@@ -406,7 +406,8 @@ export function ClipEditor() {
                       {videoRes}
                     </span>
                   )}
-                  {false && overlaySettings?.text && (
+                  {/* HIDDEN FOR NOW: overlay preview
+                  {overlaySettings?.text && (
                     <div
                       className="absolute pointer-events-none"
                       style={{
@@ -435,6 +436,7 @@ export function ClipEditor() {
                       {overlaySettings.text}
                     </div>
                   )}
+                  */}
                 </div>
               </div>
             </div>
@@ -662,8 +664,8 @@ export function ClipEditor() {
         </>
       )}
 
-      {/* Overlay editor modal */}
-      {false && overlayModalOpen && videoId && (
+      {/* HIDDEN FOR NOW: overlay editor modal
+      {overlayModalOpen && videoId && (
         <OverlayEditorModal
           videoId={videoId}
           gcsAvailable={gcsAvailable === true}
@@ -675,6 +677,7 @@ export function ClipEditor() {
           onClose={() => setOverlayModalOpen(false)}
         />
       )}
+      */}
     </div>
   );
 }
