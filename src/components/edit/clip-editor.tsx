@@ -406,7 +406,7 @@ export function ClipEditor() {
                       {videoRes}
                     </span>
                   )}
-                  {overlaySettings?.text && (
+                  {false && overlaySettings?.text && (
                     <div
                       className="absolute pointer-events-none"
                       style={{
@@ -663,7 +663,7 @@ export function ClipEditor() {
       )}
 
       {/* Overlay editor modal */}
-      {overlayModalOpen && videoId && (
+      {false && overlayModalOpen && videoId && (
         <OverlayEditorModal
           videoId={videoId}
           gcsAvailable={gcsAvailable === true}

@@ -217,7 +217,7 @@ export function Timeline({
           <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
             Timeline
           </span>
-          {onAddText && (
+          {false && onAddText && (
             <button
               onClick={onAddText}
               className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
