@@ -716,7 +716,7 @@ async function resolveCitations(
     const { timestamp, method: tsMethod } = findTimestampForQuote(quotedText, segments);
 
     // Log match method: quote-3, quote-2, quote-1, quote-segment (or 300chars- variants)
-    const matchMethod = usedQuotes ? tsMethod : tsMethod.replace("quote", "300chars");
+    // const matchMethod = usedQuotes ? tsMethod : tsMethod.replace("quote", "300chars");
 
     const ytRef = timestamp !== null
       ? `youtube:${ann.videoId}:${Math.floor(timestamp)}`
@@ -739,7 +739,7 @@ async function resolveCitations(
       }
     }
 
-    const metaParts = [channel, formattedDate, matchMethod].filter(Boolean);
+    const metaParts = [channel, formattedDate /*, matchMethod */].filter(Boolean);
     const label = metaParts.length > 0
       ? `${title} (${metaParts.join(" | ")})`
       : title;
