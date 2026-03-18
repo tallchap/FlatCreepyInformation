@@ -104,6 +104,7 @@ export default async function VideoPage({
       <div className="w-full max-w-4xl mb-4">
         <a
           href={`/edit?v=${id}`}
+          target="_blank"
           className="inline-flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white rounded-lg transition-colors"
           style={{ backgroundColor: "#DC2626" }}
         >

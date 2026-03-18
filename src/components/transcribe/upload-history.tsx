@@ -193,6 +193,7 @@ export function UploadHistoryTable() {
                       {upload.status === "success" && upload.youtubeLink && extractVideoId(upload.youtubeLink) ? (
                         <Link
                           href={`/edit?v=${extractVideoId(upload.youtubeLink)}`}
+                          target="_blank"
                           className="text-[#DC2626] hover:text-[#B91C1C] font-semibold text-sm"
                         >
                           Snip It
