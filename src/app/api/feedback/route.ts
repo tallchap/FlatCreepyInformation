@@ -44,8 +44,9 @@ async function uploadScreenshot(base64Data: string): Promise<string> {
 }
 
 async function appendToSheet(row: string[]) {
-  const sheetId = process.env.FEEDBACK_SHEET_ID;
+  const sheetId = process.env.FEEDBACK_SHEET_ID?.replace(/^["']|["']$/g, "").trim();
   if (!sheetId) throw new Error("Missing FEEDBACK_SHEET_ID");
+  console.log("Feedback: appending to sheet", sheetId.slice(0, 8) + "...");
 
   const credentials = getCredentials();
   const auth = new google.auth.GoogleAuth({
@@ -94,7 +95,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Feedback submission failed";
-    console.error("Feedback error:", e);
+    const stack = e instanceof Error ? e.stack : undefined;
+    console.error("Feedback error:", message, stack);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
