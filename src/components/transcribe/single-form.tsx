@@ -10,15 +10,24 @@ import { toast } from "sonner";
 import { Loader } from "../loader";
 import { BulkForm } from "./bulk-form";
 import { singleExtract } from "./utils/actions";
+import { useDebugLog } from "./utils/hooks/useDebugLog";
 
 export function SingleForm() {
   const [state, action, isPending] = useActionState(singleExtract, null);
   const { addTranscript, updateTranscript } = useTranscriptHistory();
+  const { addEntry } = useDebugLog();
   const processedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!state || state.error) {
-      if (state?.error) toast.error(state.error);
+    if (!state) return;
+
+    if (state.error) {
+      toast.error(state.error);
+      addEntry({
+        step: "validation/metadata",
+        status: "error",
+        message: state.error,
+      });
       return;
     }
 
@@ -27,8 +36,22 @@ export function SingleForm() {
     if (processedRef.current === stateKey) return;
     processedRef.current = stateKey;
 
-    if (state.status === "vectorizing") {
-      // Add entry with vectorizing status, then kick off vector upload
+    if (state.status === "failed") {
+      addTranscript({
+        videoTitle: state.videoTitle,
+        youtubeLink: state.youtubeLink,
+        googleDocUrl: state.googleDocUrl,
+        status: "failed",
+        failedStep: state.failedStep,
+        errorMessage: state.errorMessage,
+      });
+      addEntry({
+        step: state.failedStep || "unknown",
+        status: "error",
+        message: state.errorMessage || "Unknown error",
+        videoTitle: state.videoTitle,
+      });
+    } else if (state.status === "vectorizing") {
       const item = addTranscript({
         videoTitle: state.videoTitle,
         youtubeLink: state.youtubeLink,
@@ -36,18 +59,37 @@ export function SingleForm() {
         status: "vectorizing",
       });
 
+      addEntry({
+        step: "vectorizing",
+        status: "info",
+        message: "BigQuery done, uploading to vector store...",
+        videoTitle: state.videoTitle,
+      });
+
       fetch("/api/vector-upload", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(state.vectorData),
       })
-        .then(() => {
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
           updateTranscript(item.id, { status: "success" });
+          addEntry({
+            step: "vector-upload",
+            status: "success",
+            message: "Vector store upload complete",
+            videoTitle: state.videoTitle,
+          });
         })
         .catch((err) => {
           console.error("Vector upload failed:", err);
-          // Still mark success — vector upload is non-blocking
           updateTranscript(item.id, { status: "success" });
+          addEntry({
+            step: "vector-upload",
+            status: "error",
+            message: `Vector upload failed: ${err.message} (non-blocking)`,
+            videoTitle: state.videoTitle,
+          });
         });
     } else {
       addTranscript({

@@ -46,12 +46,14 @@ export async function singleExtract(prevState: any, formData: FormData) {
     if (transcript.error) {
       throw new Error(transcript.error);
     }
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error fetching transcript:", error);
     return {
       videoTitle: metadata.title,
       youtubeLink: metadata.cleanUrl,
       status: "failed",
+      failedStep: "transcript",
+      errorMessage: error?.message || "Failed to fetch transcript",
     };
   }
 
@@ -114,13 +116,15 @@ export async function singleExtract(prevState: any, formData: FormData) {
     if (store_in_bigquery) {
       try {
         await addToBigQuery(transcript, metadata);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error adding to BigQuery:", error);
         return {
           videoTitle: metadata.title,
           youtubeLink: metadata.cleanUrl,
           googleDocUrl,
           status: "failed",
+          failedStep: "bigquery",
+          errorMessage: error?.message || "Failed to add to BigQuery",
         };
       }
 
@@ -128,13 +132,15 @@ export async function singleExtract(prevState: any, formData: FormData) {
     if (store_in_sheet) {
       try {
         await addMetadataToSheet(metadata, googleDocUrl);
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error adding to Sheets:", error);
         return {
           videoTitle: metadata.title,
           youtubeLink: metadata.cleanUrl,
           googleDocUrl,
           status: "failed",
+          failedStep: "sheets",
+          errorMessage: error?.message || "Failed to add to Sheets",
         };
       }
     }
@@ -160,12 +166,14 @@ export async function singleExtract(prevState: any, formData: FormData) {
         segments: transcript.transcript_data || [],
       },
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("Error in singleExtract:", error);
     return {
       videoTitle: metadata.title,
       youtubeLink: metadata.cleanUrl,
       status: "failed",
+      failedStep: "google-doc",
+      errorMessage: error?.message || "Failed to create Google Doc",
     };
   }
 }

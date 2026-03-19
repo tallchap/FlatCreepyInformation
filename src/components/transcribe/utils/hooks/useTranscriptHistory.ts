@@ -6,6 +6,8 @@ export type TranscriptItem = {
   youtubeLink?: string;
   googleDocUrl?: string;
   status: "success" | "failed" | "vectorizing";
+  failedStep?: string;
+  errorMessage?: string;
   uploadedAt: string;
 };
 

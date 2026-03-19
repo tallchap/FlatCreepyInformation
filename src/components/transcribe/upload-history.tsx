@@ -224,8 +224,19 @@ export function UploadHistoryTable() {
                         ) : (
                           <XCircle className="h-4 w-4 mr-1" />
                         )}
-                        {upload.status === "success" ? "Success" : upload.status === "vectorizing" ? "Vectorizing" : "Failed"}
+                        {upload.status === "success"
+                          ? "Success"
+                          : upload.status === "vectorizing"
+                          ? "Vectorizing"
+                          : upload.failedStep
+                          ? `Failed @ ${upload.failedStep}`
+                          : "Failed"}
                       </span>
+                      {upload.errorMessage && (
+                        <p className="text-xs text-red-400 mt-0.5 truncate max-w-48" title={upload.errorMessage}>
+                          {upload.errorMessage}
+                        </p>
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
