@@ -13,7 +13,6 @@ import {
   formatTranscriptAsText,
   verifyAndCleanSpeakers,
 } from "./utils";
-
 const singleExtractSchema = z.object({
   url: z.string().url(),
   speaker: z.string().min(1),
@@ -124,6 +123,7 @@ export async function singleExtract(prevState: any, formData: FormData) {
           status: "failed",
         };
       }
+
     }
     if (store_in_sheet) {
       try {
@@ -138,11 +138,27 @@ export async function singleExtract(prevState: any, formData: FormData) {
         };
       }
     }
+    const speakerSource =
+      (metadata as any).speakersGptThird ||
+      (metadata as any).speakersClaude ||
+      metadata.speaker ||
+      "";
+
     return {
       videoTitle: metadata.title,
       youtubeLink: metadata.cleanUrl,
       googleDocUrl,
-      status: "success",
+      status: "vectorizing",
+      vectorData: {
+        videoId: metadata.videoId,
+        title: metadata.title,
+        channel: metadata.channelName || "",
+        publishedDate: metadata.publishedAt || null,
+        duration: metadata.duration || null,
+        speakerSource,
+        languageCode: transcript.language_code || "en",
+        segments: transcript.transcript_data || [],
+      },
     };
   } catch (error) {
     console.error("Error in singleExtract:", error);

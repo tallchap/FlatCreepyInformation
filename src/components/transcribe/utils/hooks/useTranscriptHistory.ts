@@ -5,7 +5,7 @@ export type TranscriptItem = {
   videoTitle?: string;
   youtubeLink?: string;
   googleDocUrl?: string;
-  status: "success" | "failed";
+  status: "success" | "failed" | "vectorizing";
   uploadedAt: string;
 };
 
@@ -28,6 +28,16 @@ export function useTranscriptHistory() {
     return newItem;
   };
 
+  // Update an existing transcript entry
+  const updateTranscript = (
+    id: string,
+    updates: Partial<Omit<TranscriptItem, "id" | "uploadedAt">>
+  ) => {
+    setTranscriptHistory((prev) =>
+      prev.map((item) => (item.id === id ? { ...item, ...updates } : item))
+    );
+  };
+
   // Remove a transcript from history
   const removeTranscript = (id: string) => {
     setTranscriptHistory((prev) => prev.filter((item) => item.id !== id));
@@ -41,6 +51,7 @@ export function useTranscriptHistory() {
   return {
     transcriptHistory,
     addTranscript,
+    updateTranscript,
     removeTranscript,
     clearHistory,
   };

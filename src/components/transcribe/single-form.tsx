@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useActionState, useEffect } from "react";
+import { useActionState, useEffect, useRef } from "react";
 import { toast } from "sonner";
 import { Loader } from "../loader";
 import { BulkForm } from "./bulk-form";
@@ -13,20 +13,49 @@ import { singleExtract } from "./utils/actions";
 
 export function SingleForm() {
   const [state, action, isPending] = useActionState(singleExtract, null);
-  const { addTranscript } = useTranscriptHistory();
+  const { addTranscript, updateTranscript } = useTranscriptHistory();
+  const processedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // When we get a successful response, store it in localStorage
-    if (state && !state.error) {
-      addTranscript({
-        videoTitle: state?.videoTitle,
-        youtubeLink: state?.youtubeLink,
-        googleDocUrl: state?.googleDocUrl,
-        status: state?.status as "success" | "failed",
-      });
+    if (!state || state.error) {
+      if (state?.error) toast.error(state.error);
+      return;
     }
-    if (state && state.error) {
-      toast.error(state.error);
+
+    // Prevent duplicate processing on re-renders
+    const stateKey = `${state.youtubeLink}-${state.status}`;
+    if (processedRef.current === stateKey) return;
+    processedRef.current = stateKey;
+
+    if (state.status === "vectorizing") {
+      // Add entry with vectorizing status, then kick off vector upload
+      const item = addTranscript({
+        videoTitle: state.videoTitle,
+        youtubeLink: state.youtubeLink,
+        googleDocUrl: state.googleDocUrl,
+        status: "vectorizing",
+      });
+
+      fetch("/api/vector-upload", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(state.vectorData),
+      })
+        .then(() => {
+          updateTranscript(item.id, { status: "success" });
+        })
+        .catch((err) => {
+          console.error("Vector upload failed:", err);
+          // Still mark success — vector upload is non-blocking
+          updateTranscript(item.id, { status: "success" });
+        });
+    } else {
+      addTranscript({
+        videoTitle: state.videoTitle,
+        youtubeLink: state.youtubeLink,
+        googleDocUrl: state.googleDocUrl,
+        status: state.status as "success" | "failed",
+      });
     }
   }, [state]);
 

@@ -25,6 +25,7 @@ import {
   Calendar,
   CheckCircle,
   XCircle,
+  Loader2,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -190,7 +191,12 @@ export function UploadHistoryTable() {
                       {formatDate(upload.uploadedAt)}
                     </TableCell>
                     <TableCell>
-                      {upload.status === "success" && upload.youtubeLink && extractVideoId(upload.youtubeLink) ? (
+                      {upload.status === "vectorizing" ? (
+                        <span className="flex items-center text-amber-500 text-sm font-medium">
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                          Vectorizing...
+                        </span>
+                      ) : upload.status === "success" && upload.youtubeLink && extractVideoId(upload.youtubeLink) ? (
                         <Link
                           href={`/edit?v=${extractVideoId(upload.youtubeLink)}`}
                           target="_blank"
@@ -206,15 +212,19 @@ export function UploadHistoryTable() {
                           "flex items-center font-medium",
                           upload.status === "success"
                             ? "text-green-500"
+                            : upload.status === "vectorizing"
+                            ? "text-amber-500"
                             : "text-red-500"
                         )}
                       >
                         {upload.status === "success" ? (
                           <CheckCircle className="h-4 w-4 mr-1" />
+                        ) : upload.status === "vectorizing" ? (
+                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
                         ) : (
                           <XCircle className="h-4 w-4 mr-1" />
                         )}
-                        {upload.status === "success" ? "Success" : "Failed"}
+                        {upload.status === "success" ? "Success" : upload.status === "vectorizing" ? "Vectorizing" : "Failed"}
                       </span>
                     </TableCell>
                   </TableRow>
