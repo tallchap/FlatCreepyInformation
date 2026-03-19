@@ -1,34 +1,18 @@
-import sharedCitationMap from "@/lib/shared-store-citation-map.json";
+import { fetchAllSpeakers } from "@/lib/bigquery";
 import { LEGACY_SPEAKERS, slugify } from "@/lib/speakers";
 
-interface FileEntry {
-  videoId: string;
-  speaker: string;
-  title: string;
-}
-
 export async function GET() {
-  // Extract unique speakers + video counts from shared store citation map
-  const speakerVideos = new Map<string, Set<string>>();
-
-  const files = (sharedCitationMap as { files: Record<string, FileEntry> }).files;
-  for (const entry of Object.values(files)) {
-    const name = entry.speaker;
-    if (!speakerVideos.has(name)) {
-      speakerVideos.set(name, new Set());
-    }
-    speakerVideos.get(name)!.add(entry.videoId);
-  }
+  // Fetch live speaker counts from BigQuery
+  const { speakers: bqSpeakers } = await fetchAllSpeakers(1, 10000);
 
   const result = new Map<string, { name: string; slug: string; videoCount: number }>();
 
-  // Add shared store speakers
-  for (const [name, videos] of speakerVideos) {
-    const slug = slugify(name);
-    result.set(slug, { name, slug, videoCount: videos.size });
+  for (const s of bqSpeakers) {
+    const slug = slugify(s.name);
+    result.set(slug, { name: s.name, slug, videoCount: s.videoCount });
   }
 
-  // Merge legacy speakers (override if already present)
+  // Merge legacy speakers (override if already present — they have dedicated vector stores)
   for (const s of LEGACY_SPEAKERS) {
     result.set(s.slug, { name: s.name, slug: s.slug, videoCount: s.videoCount });
   }
