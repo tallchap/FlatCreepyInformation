@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
 import { ChevronDown } from "lucide-react";
-import { LEGACY_SPEAKERS } from "@/lib/speakers";
 
 interface Speaker {
   name: string;
@@ -37,16 +36,7 @@ export function SpeakerSelect({
   }, []);
 
   const allSpeakers = useMemo(() => {
-    const map = new Map<string, Speaker>();
-    for (const s of LEGACY_SPEAKERS) {
-      map.set(s.slug, { name: s.name, slug: s.slug, videoCount: s.videoCount });
-    }
-    for (const s of dynamicSpeakers) {
-      if (!map.has(s.slug)) {
-        map.set(s.slug, s);
-      }
-    }
-    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+    return [...dynamicSpeakers].sort((a, b) => a.name.localeCompare(b.name));
   }, [dynamicSpeakers]);
 
   // The display name for the selected speaker

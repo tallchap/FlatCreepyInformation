@@ -7,7 +7,6 @@ import { NextRequest } from "next/server";
 import OpenAI from "openai";
 import { resolveSpeaker, stripDiacritics, slugify } from "@/lib/speakers";
 import { fetchTranscript, fetchVideoMeta, fetchSpeakerFilterContext } from "@/lib/bigquery";
-import citationMap from "@/lib/file-citation-map.json";
 import sharedCitationMap from "@/lib/shared-store-citation-map.json";
 
 let _openai: OpenAI | null = null;
@@ -27,17 +26,10 @@ type CitationMetadata = {
   viewCount?: number | null;
 };
 
-// Flat lookup: file_id → { videoId, title } from the legacy citation map.
-// This is still used as a fallback — file attributes are the primary source.
+// Flat lookup: file_id → { videoId, title } from the shared store citation map.
+// Used as a fallback — file attributes are the primary source.
 type CitationEntry = { videoId: string; title: string };
 const FILE_ID_LOOKUP: Record<string, CitationEntry> = {};
-for (const speaker of Object.values(citationMap)) {
-  const files = (speaker as { files: Record<string, CitationEntry> }).files;
-  for (const [fileId, meta] of Object.entries(files)) {
-    FILE_ID_LOOKUP[fileId] = meta;
-  }
-}
-// Merge shared store citation map
 const sharedFiles = (sharedCitationMap as { files: Record<string, { videoId: string; speaker: string; title: string }> }).files;
 for (const [fileId, meta] of Object.entries(sharedFiles)) {
   FILE_ID_LOOKUP[fileId] = { videoId: meta.videoId, title: meta.title };
@@ -160,7 +152,7 @@ I will start the JSON and you will complete it:
   }
 }
 
-function buildFiltersFromDetected(detected: DetectedFilters, isSharedStore = false): FileSearchFilter | undefined {
+function buildFiltersFromDetected(detected: DetectedFilters): FileSearchFilter | undefined {
   const conditions: (ComparisonFilter | CompoundFilter)[] = [];
 
   if (detected.yearBefore) {
@@ -176,48 +168,26 @@ function buildFiltersFromDetected(detected: DetectedFilters, isSharedStore = fal
     conditions.push({ type: "ne", key: "channel", value: detected.excludeChannel });
   }
 
-  // Co-speaker filtering: shared store uses co_speaker_1..3, legacy uses speaker_1..5
+  // Co-speaker filtering: shared store uses co_speaker_1..3
   if (detected.coSpeaker) {
-    if (isSharedStore) {
-      conditions.push({
-        type: "or",
-        filters: [1, 2, 3].map(i => ({
-          type: "eq" as const,
-          key: `co_speaker_${i}`,
-          value: detected.coSpeaker!,
-        })),
-      });
-    } else {
-      conditions.push({
-        type: "or",
-        filters: [1, 2, 3, 4, 5].map(i => ({
-          type: "eq" as const,
-          key: `speaker_${i}`,
-          value: detected.coSpeaker!,
-        })),
-      });
-    }
+    conditions.push({
+      type: "or",
+      filters: [1, 2, 3].map(i => ({
+        type: "eq" as const,
+        key: `co_speaker_${i}`,
+        value: detected.coSpeaker!,
+      })),
+    });
   }
   if (detected.excludeCoSpeaker) {
-    if (isSharedStore) {
-      conditions.push({
-        type: "and",
-        filters: [1, 2, 3].map(i => ({
-          type: "ne" as const,
-          key: `co_speaker_${i}`,
-          value: detected.excludeCoSpeaker!,
-        })),
-      });
-    } else {
-      conditions.push({
-        type: "and",
-        filters: [1, 2, 3, 4, 5].map(i => ({
-          type: "ne" as const,
-          key: `speaker_${i}`,
-          value: detected.excludeCoSpeaker!,
-        })),
-      });
-    }
+    conditions.push({
+      type: "and",
+      filters: [1, 2, 3].map(i => ({
+        type: "ne" as const,
+        key: `co_speaker_${i}`,
+        value: detected.excludeCoSpeaker!,
+      })),
+    });
   }
 
   if (conditions.length === 0) return undefined;
@@ -345,13 +315,11 @@ export async function POST(req: NextRequest) {
     // GPT pre-pass: detect filters from natural language (~200-400ms)
     const detectResult = await detectFilters(message, speakerConfig.name);
     const detected = detectResult.filters;
-    const isShared = speakerConfig.usesSharedStore === true;
-    const filters = buildFiltersFromDetected(detected, isShared);
+    const filters = buildFiltersFromDetected(detected);
 
-    // For shared store speakers, add mandatory speaker filter
-    // (skip for "all" mode which searches everything)
+    // Add mandatory speaker filter (skip for "all" mode which searches everything)
     let finalFilters = filters;
-    if (isShared && speaker !== "all") {
+    if (speaker !== "all") {
       const speakerFilter: ComparisonFilter = {
         type: "eq",
         key: "speaker",

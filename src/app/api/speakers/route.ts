@@ -1,5 +1,5 @@
 import { fetchAllSpeakers } from "@/lib/bigquery";
-import { LEGACY_SPEAKERS, slugify } from "@/lib/speakers";
+import { slugify } from "@/lib/speakers";
 
 export async function GET() {
   // Fetch live speaker counts from BigQuery
@@ -10,11 +10,6 @@ export async function GET() {
   for (const s of bqSpeakers) {
     const slug = slugify(s.name);
     result.set(slug, { name: s.name, slug, videoCount: s.videoCount });
-  }
-
-  // Merge legacy speakers (override if already present — they have dedicated vector stores)
-  for (const s of LEGACY_SPEAKERS) {
-    result.set(s.slug, { name: s.name, slug: s.slug, videoCount: s.videoCount });
   }
 
   const speakers = [...result.values()].sort((a, b) => a.name.localeCompare(b.name));
