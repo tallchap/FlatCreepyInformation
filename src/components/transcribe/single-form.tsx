@@ -91,6 +91,31 @@ export function SingleForm() {
             videoTitle: state.videoTitle,
           });
         });
+
+      // Trigger GCS video download via Cloud Run (fire-and-forget)
+      fetch("/api/trigger-download", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: state.vectorData.videoId }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          addEntry({
+            step: "gcs-download",
+            status: "info",
+            message: "Video download to GCS triggered",
+            videoTitle: state.videoTitle,
+          });
+        })
+        .catch((err) => {
+          console.error("GCS download trigger failed:", err);
+          addEntry({
+            step: "gcs-download",
+            status: "error",
+            message: `GCS download trigger failed: ${err.message} (non-blocking)`,
+            videoTitle: state.videoTitle,
+          });
+        });
     } else {
       addTranscript({
         videoTitle: state.videoTitle,

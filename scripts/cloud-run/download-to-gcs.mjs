@@ -1,0 +1,443 @@
+import { Storage } from "@google-cloud/storage";
+import { BigQuery } from "@google-cloud/bigquery";
+import https from "https";
+import { spawn } from "child_process";
+import { unlinkSync, statSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+
+const RAPIDAPI_KEY = (process.env.RAPIDAPI_KEY || "").trim();
+const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
+const GCS_BUCKET = "snippysaurus-clips";
+const GCS_PREFIX = "videos";
+const RESULTS_PREFIX = "download-results";
+
+const TASK_INDEX = parseInt(process.env.CLOUD_RUN_TASK_INDEX) || 0;
+const TASK_COUNT = parseInt(process.env.CLOUD_RUN_TASK_COUNT) || 1;
+const STATUS_PATH = TASK_COUNT > 1 ? `download-status/task-${TASK_INDEX}.json` : "download-status/current.json";
+
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 2;
+const BATCH_OFFSET = parseInt(process.env.BATCH_OFFSET) || 0;
+const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT) || 20;
+
+if (!RAPIDAPI_KEY) { console.error("Missing RAPIDAPI_KEY env var"); process.exit(1); }
+
+const credJson = (process.env.GOOGLE_APPLICATION_CREDENTIALS_JSON || "").trim();
+if (!credJson) { console.error("Missing GOOGLE_APPLICATION_CREDENTIALS_JSON env var"); process.exit(1); }
+let credentials;
+try { credentials = JSON.parse(credJson); } catch {
+  const fixed = credJson.replace(
+    /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
+    (_m, key) => `"private_key":"${String(key).replace(/\n/g, "\\n")}","client_email"`,
+  );
+  credentials = JSON.parse(fixed);
+}
+const storage = new Storage({ projectId: credentials.project_id, credentials });
+const bucket = storage.bucket(GCS_BUCKET);
+const bigquery = new BigQuery({ projectId: credentials.project_id, credentials });
+
+// --- Helpers ---
+
+function httpsGet(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers }, (res) => {
+      let body = "";
+      res.on("data", (c) => body += c);
+      res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(new Error(`Bad JSON: ${body.slice(0, 200)}`)); } });
+    }).on("error", reject);
+  });
+}
+
+const RUN_ID = `run-${Date.now()}`;
+const startTime = Date.now();
+let results = [];
+let label = "";
+
+// --- Real-time status broadcasting to GCS ---
+
+let statusDirty = false;
+let statusInterval = null;
+
+function buildStatus() {
+  const now = Date.now();
+  const counts = { pending: 0, rapidapi: 0, downloading: 0, uploading: 0, complete: 0, skipped: 0, failed: 0 };
+  const totalCost = results.reduce((s, r) => s + (r.apiCost || 0), 0);
+  const totalBytes = results.reduce((s, r) => s + (r.fileSize || 0), 0);
+  for (const r of results) counts[r.status] = (counts[r.status] || 0) + 1;
+
+  return {
+    runId: RUN_ID,
+    label,
+    batchSize: BATCH_SIZE,
+    batchOffset: BATCH_OFFSET,
+    maxConcurrent: MAX_CONCURRENT,
+    infra: {
+      cpu: process.env.CR_CPU || "unknown",
+      memory: process.env.CR_MEMORY || "unknown",
+      region: process.env.CR_REGION || "us-central1",
+      taskIndex: TASK_INDEX,
+      taskCount: TASK_COUNT,
+    },
+    startedAt: new Date(startTime).toISOString(),
+    updatedAt: new Date().toISOString(),
+    elapsedSeconds: Math.round((now - startTime) / 1000),
+    counts,
+    totalCost,
+    totalBytesDL: totalBytes,
+    totalMBDL: (totalBytes / 1024 / 1024).toFixed(1),
+    videos: results.map(r => ({
+      id: r.id,
+      title: r.title,
+      speaker: r.speaker,
+      duration: r.duration,
+      status: r.status,
+      resolution: r.resolution || null,
+      apiCost: r.apiCost || 0,
+      apiProgress: r.rapidapiProgress || null,
+      apiPollCount: r.apiPollCount || 0,
+      apiElapsed: r.apiElapsed || null,
+      apiRequestUrl: r.apiRequestUrl || null,
+      apiRequestHeaders: r.apiRequestHeaders || null,
+      apiInitResponse: r.apiInitResponse || null,
+      apiLastPollResponse: r.apiLastPollResponse || null,
+      apiPollSamples: r.apiPollSamples || [],
+      downloadSpeedMBs: r.downloadSpeedMBs || null,
+      downloadedMB: r.downloadedMB || null,
+      fileSize: r.fileSize || null,
+      fileSizeMB: r.fileSizeMB || null,
+      uploadSpeedMBs: r.uploadSpeedMBs || null,
+      uploadElapsed: r.uploadElapsed || null,
+      elapsed: r.elapsed || null,
+      error: r.error || null,
+      gcsUrl: r.gcsUrl || null,
+    })),
+  };
+}
+
+async function flushStatus() {
+  if (!statusDirty) return;
+  statusDirty = false;
+  try {
+    const status = buildStatus();
+    await bucket.file(STATUS_PATH).save(JSON.stringify(status), {
+      contentType: "application/json",
+      metadata: { cacheControl: "no-cache, no-store, max-age=0" },
+    });
+  } catch (e) {
+    console.error("Status flush error:", e.message);
+  }
+}
+
+function markDirty() { statusDirty = true; }
+
+function startStatusLoop() {
+  statusInterval = setInterval(flushStatus, 3000);
+}
+
+function stopStatusLoop() {
+  if (statusInterval) clearInterval(statusInterval);
+}
+
+// --- Download with speed tracking ---
+
+function downloadFile(url, outPath, video, timeoutMs = 600_000) {
+  return new Promise((resolve, reject) => {
+    const id = video.id;
+    const tag = `  [${id}]`;
+    console.log(`${tag} curl URL: ${url.slice(0, 120)}...`);
+    const child = spawn("curl", ["--http1.1", "-L", "--max-time", "300", "-sS", "-w", "\nHTTP %{http_code} | %{size_download} bytes | %{speed_download} B/s\n", "-o", outPath, url], { stdio: ["ignore", "pipe", "pipe"] });
+    let stderr = "";
+    let lastSize = 0;
+
+    child.stdout.on("data", (d) => {
+      const text = d.toString().trim();
+      if (text) {
+        console.log(`${tag} curl: ${text}`);
+        // Parse final curl write-out for speed
+        const m = text.match(/(\d+) bytes \| ([\d.]+) B\/s/);
+        if (m) {
+          video.downloadSpeedMBs = (parseFloat(m[2]) / 1024 / 1024).toFixed(1);
+        }
+      }
+    });
+    child.stderr.on("data", (d) => {
+      const chunk = d.toString();
+      stderr += chunk;
+      const text = chunk.trim();
+      if (text) console.log(`${tag} curl error: ${text}`);
+    });
+
+    const sizeTimer = setInterval(() => {
+      try {
+        const { size } = statSync(outPath);
+        const speedMBs = ((size - lastSize) / 1024 / 1024 / 5).toFixed(1);
+        lastSize = size;
+        video.downloadedMB = (size / 1024 / 1024).toFixed(1);
+        video.downloadSpeedMBs = speedMBs;
+        markDirty();
+        console.log(`${tag} progress: ${video.downloadedMB} MB (${speedMBs} MB/s)`);
+      } catch {}
+    }, 5_000);
+
+    const timer = setTimeout(() => {
+      child.kill();
+      clearInterval(sizeTimer);
+      reject(new Error(`Download timed out after ${timeoutMs / 1000}s`));
+    }, timeoutMs);
+
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      clearInterval(sizeTimer);
+      if (code === 0) resolve();
+      else reject(new Error(`curl exit ${code}: ${stderr.slice(-500)}`));
+    });
+  });
+}
+
+async function runPool(items, fn, limit) {
+  const executing = new Set();
+  for (const item of items) {
+    const p = fn(item).then(() => executing.delete(p));
+    executing.add(p);
+    if (executing.size >= limit) await Promise.race(executing);
+  }
+  await Promise.all(executing);
+}
+
+// --- Process one video ---
+
+async function processVideo(video) {
+  const gcsPath = `${GCS_PREFIX}/${video.id}.mp4`;
+
+  const [exists] = await bucket.file(gcsPath).exists();
+  if (exists) {
+    console.log(`  [${video.id}] SKIP: already in GCS`);
+    video.status = "skipped";
+    video.gcsUrl = `gs://${GCS_BUCKET}/${gcsPath}`;
+    markDirty();
+    return;
+  }
+
+  const start = Date.now();
+  const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
+
+  for (const quality of ["1080", "720"]) {
+    try {
+      const params = new URLSearchParams({
+        format: quality, add_info: "0", url: videoUrl,
+        allow_extended_duration: "1", no_merge: "false",
+      });
+
+      video.status = "rapidapi";
+      video.resolution = `${quality}p`;
+      video.apiPollCount = 0;
+      video.apiPollSamples = [];
+      markDirty();
+      console.log(`  [${video.id}] RapidAPI: requesting ${quality}p...`);
+
+      const requestUrl = `https://${RAPIDAPI_HOST}/ajax/download.php?${params}`;
+      video.apiRequestUrl = requestUrl;
+      video.apiRequestHeaders = {
+        "Content-Type": "application/json",
+        "x-rapidapi-host": RAPIDAPI_HOST,
+        "x-rapidapi-key": RAPIDAPI_KEY.slice(0, 8) + "...",
+      };
+
+      const initRes = await httpsGet(requestUrl, {
+        "Content-Type": "application/json",
+        "x-rapidapi-host": RAPIDAPI_HOST,
+        "x-rapidapi-key": RAPIDAPI_KEY,
+      });
+
+      video.apiInitResponse = initRes;
+      if (!initRes.success) throw new Error(`RapidAPI init failed: ${initRes.message}`);
+
+      video.apiCost = (video.apiCost || 0) + (initRes.extended_duration?.final_price || 0);
+      console.log(`  [${video.id}] RapidAPI cost: $${initRes.extended_duration?.final_price || "?"} (${initRes.extended_duration?.multiplier || "?"}x)`);
+      markDirty();
+
+      const progressUrl = initRes.progress_url;
+      let pollCount = 0;
+      while (true) {
+        await new Promise(r => setTimeout(r, 5000));
+        pollCount++;
+        let progress;
+        try { progress = await httpsGet(progressUrl); } catch { continue; }
+
+        video.rapidapiProgress = `${progress.progress}% ${progress.text}`;
+        video.apiPollCount = pollCount;
+        video.apiElapsed = `${pollCount * 5}s`;
+        video.apiLastPollResponse = progress;
+        // Sample every 6th poll (every 30s)
+        if (pollCount % 6 === 0) {
+          video.apiPollSamples.push({ poll: pollCount, elapsed: `${pollCount * 5}s`, ...progress });
+          console.log(`  [${video.id}] RapidAPI: ${progress.progress}% ${progress.text} (${pollCount * 5}s)`);
+        }
+        markDirty();
+
+        if (progress.text && (progress.text.toLowerCase().includes("private") || progress.text.toLowerCase().includes("unavailable"))) {
+          throw new Error(`Video is ${progress.text}`);
+        }
+
+        // Detect terminal failure states from RapidAPI (progress=1000 with error text)
+        if (progress.progress >= 1000 && progress.text && !progress.download_url) {
+          const t = progress.text.toLowerCase();
+          if (t.includes("too long") || t.includes("livestream") || t.includes("no files") || t.includes("aborting") || t.includes("error") || t.includes("took too long")) {
+            throw new Error(`RapidAPI rejected: ${progress.text}`);
+          }
+        }
+
+        if (progress.success === 1 && progress.download_url) {
+          console.log(`  [${video.id}] RapidAPI: ready (${pollCount * 5}s)`);
+
+          video.status = "downloading";
+          video.downloadedMB = "0";
+          video.downloadSpeedMBs = "0";
+          markDirty();
+          const tmpFile = join(tmpdir(), `gcs-dl-${video.id}.mp4`);
+          console.log(`  [${video.id}] Downloading to disk...`);
+          try { unlinkSync(tmpFile); } catch {}
+          await downloadFile(progress.download_url, tmpFile, video);
+
+          const fileSize = statSync(tmpFile).size;
+          if (fileSize < 1_000_000) throw new Error(`Download too small (${fileSize} bytes), likely an error page`);
+          video.fileSize = fileSize;
+          video.fileSizeMB = (fileSize / 1024 / 1024).toFixed(1);
+          video.downloadedMB = video.fileSizeMB;
+          console.log(`  [${video.id}] Downloaded: ${video.fileSizeMB} MB (${quality}p)`);
+
+          video.status = "uploading";
+          const uploadStart = Date.now();
+          markDirty();
+          console.log(`  [${video.id}] Uploading to GCS...`);
+          await bucket.upload(tmpFile, {
+            destination: gcsPath,
+            timeout: 600000,
+            metadata: { contentType: "video/mp4", cacheControl: "public, max-age=31536000" },
+          });
+          const uploadMs = Date.now() - uploadStart;
+          video.uploadElapsed = `${(uploadMs / 1000).toFixed(1)}s`;
+          video.uploadSpeedMBs = (fileSize / 1024 / 1024 / (uploadMs / 1000)).toFixed(1);
+          unlinkSync(tmpFile);
+
+          video.status = "complete";
+          video.gcsUrl = `gs://${GCS_BUCKET}/${gcsPath}`;
+          video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
+          markDirty();
+          console.log(`  [${video.id}] DONE: ${video.elapsed}, ${quality}p, $${video.apiCost} | DL ${video.downloadSpeedMBs} MB/s | UL ${video.uploadSpeedMBs} MB/s\n`);
+          return;
+        }
+        if (progress.text === "Error" || progress.progress < 0) {
+          throw new Error(`RapidAPI failed: ${progress.text}`);
+        }
+      }
+    } catch (err) {
+      if (quality === "1080") {
+        console.log(`  [${video.id}] 1080p failed: ${err.message}, retrying at 720p...`);
+        continue;
+      }
+      throw err;
+    }
+  }
+}
+
+// --- Main ---
+
+async function main() {
+  const SINGLE_VIDEO_ID = (process.env.VIDEO_ID || "").trim();
+
+  console.log(`Cloud Run Job: batch=${BATCH_SIZE}, offset=${BATCH_OFFSET}, concurrency=${MAX_CONCURRENT}, task=${TASK_INDEX}/${TASK_COUNT}`);
+  if (SINGLE_VIDEO_ID) console.log(`Single-video mode: ${SINGLE_VIDEO_ID}`);
+  console.log(`Run ID: ${RUN_ID}\n`);
+
+  if (SINGLE_VIDEO_ID) {
+    // Single-video mode — skip BigQuery query, process one video directly
+    results = [{ id: SINGLE_VIDEO_ID, title: "single", duration: null, speaker: null, status: "pending" }];
+    label = `Single video: ${SINGLE_VIDEO_ID}`;
+  } else {
+    // Batch mode — query BigQuery and slice by offset/task
+    console.log(`Querying BigQuery for all videos...`);
+    const [rows] = await bigquery.query({
+      query: `SELECT video_id, video_title, video_length, speaker_source FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\` ORDER BY LOWER(speaker_source), published_date DESC`,
+    });
+
+    const seen = new Set();
+    const allDeduped = [];
+    for (const r of rows) {
+      if (!seen.has(r.video_id)) {
+        seen.add(r.video_id);
+        allDeduped.push(r);
+      }
+    }
+
+    console.log(`Total unique videos: ${allDeduped.length}`);
+
+    // Get full batch, then split by task index
+    const fullBatch = allDeduped.slice(BATCH_OFFSET, BATCH_OFFSET + BATCH_SIZE);
+    if (fullBatch.length === 0) { console.error(`No videos found (offset ${BATCH_OFFSET} exceeds ${allDeduped.length} total)`); process.exit(1); }
+
+    // Each task gets its slice of the batch
+    const perTask = Math.ceil(fullBatch.length / TASK_COUNT);
+    const myStart = TASK_INDEX * perTask;
+    const mySlice = fullBatch.slice(myStart, myStart + perTask);
+
+    if (mySlice.length === 0) { console.log(`Task ${TASK_INDEX}: no videos in my slice, exiting.`); process.exit(0); }
+
+    console.log(`Task ${TASK_INDEX}: processing videos ${myStart}-${myStart + mySlice.length - 1} of ${fullBatch.length} total`);
+
+    results = mySlice.map(r => ({
+      id: r.video_id,
+      title: r.video_title,
+      duration: r.video_length,
+      speaker: r.speaker_source,
+      status: "pending",
+    }));
+
+    const speakerCounts = {};
+    for (const r of results) speakerCounts[r.speaker] = (speakerCounts[r.speaker] || 0) + 1;
+    const speakerNames = Object.keys(speakerCounts).sort((a, b) => a.localeCompare(b));
+    label = `Task ${TASK_INDEX}: ${results.length} videos (${speakerNames[0]} → ${speakerNames[speakerNames.length - 1]})`;
+  }
+
+  console.log(`${results.length} videos across ${speakerNames.length} speakers:`);
+  for (const s of speakerNames) console.log(`  ${speakerCounts[s].toString().padStart(3)} ${s}`);
+  console.log(`\nDownloading to GCS (${GCS_BUCKET}/${GCS_PREFIX}/)\n`);
+
+  // Start status broadcasting
+  markDirty();
+  startStatusLoop();
+
+  await runPool(results, (video) =>
+    processVideo(video).catch(err => {
+      video.status = "failed";
+      video.error = err.message;
+      markDirty();
+      console.error(`  [${video.id}] FAILED: ${err.message}\n`);
+    }),
+    MAX_CONCURRENT
+  );
+
+  stopStatusLoop();
+
+  // Final save
+  const totalCost = results.reduce((s, r) => s + (r.apiCost || 0), 0);
+  await saveResultsToGCS(totalCost);
+  statusDirty = true;
+  await flushStatus();
+
+  console.log("\n=== SUMMARY ===");
+  console.log(label);
+  console.log(`Total: ${results.length} videos`);
+  console.log(`Complete: ${results.filter(r => r.status === "complete").length}`);
+  console.log(`Skipped: ${results.filter(r => r.status === "skipped").length}`);
+  console.log(`Failed: ${results.filter(r => r.status === "failed").length}`);
+  console.log(`Total RapidAPI cost: $${totalCost.toFixed(5)}`);
+  console.log(`Results saved to: gs://${GCS_BUCKET}/${RESULTS_PREFIX}/${RUN_ID}.json`);
+}
+
+async function saveResultsToGCS(totalCost) {
+  const runData = { runId: RUN_ID, speaker: label, results, totalCost, timestamp: new Date().toISOString() };
+  await bucket.file(`${RESULTS_PREFIX}/${RUN_ID}.json`).save(JSON.stringify(runData, null, 2), { contentType: "application/json" });
+}
+
+main().catch(console.error);
