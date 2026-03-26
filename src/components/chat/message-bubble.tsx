@@ -7,12 +7,26 @@ interface MessageBubbleProps {
   content: string;
   isStreaming?: boolean;
   onVideoLinkClick?: (payload: { videoId: string; startSec: number; title?: string }) => void;
+  onSuggestionClick?: (suggestion: string) => void;
+}
+
+/**
+ * Clean a numbered suggestion line: strip number prefix, leading "or ",
+ * trailing comma/period, and trim whitespace.
+ */
+function cleanSuggestion(raw: string): string {
+  return raw
+    .replace(/^\d+\.\s*/, "")
+    .replace(/^or\s+/i, "")
+    .replace(/[,.]$/, "")
+    .trim();
 }
 
 /**
  * Turn markdown-ish links into clickable anchors, convert
  * youtube:VIDEO_ID citations into Snippysaurus video links,
- * strip OpenAI file-search annotations, and preserve formatting.
+ * strip OpenAI file-search annotations, make numbered follow-ups
+ * clickable, and preserve formatting.
  */
 function formatContent(text: string): string {
   return (
@@ -40,6 +54,15 @@ function formatContent(text: string): string {
         /(https:\/\/youtu\.be\/([\w-]{11}))/g,
         '<a href="/video/$2" data-video-id="$2" data-start-sec="0" class="underline text-blue-600 hover:text-blue-800">$1</a>',
       )
+      // Numbered follow-up suggestions (e.g. "1. find quotes about...")
+      // Convert to clickable spans with cleaned text
+      .replace(
+        /^(\d+\.\s+.+)$/gm,
+        (_match, line: string) => {
+          const cleaned = cleanSuggestion(line);
+          return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="cursor-pointer underline text-emerald-600 hover:text-emerald-800">${line.replace(/^\d+\.\s*/, "").replace(/^or\s+/i, "").replace(/[,.]$/, "").trim()}</span>`;
+        },
+      )
       // Newlines
       .replace(/\n/g, "<br />")
   );
@@ -50,12 +73,24 @@ export function MessageBubble({
   content,
   isStreaming,
   onVideoLinkClick,
+  onSuggestionClick,
 }: MessageBubbleProps) {
   const isUser = role === "user";
 
   function handleAssistantContentClick(e: React.MouseEvent<HTMLDivElement>) {
-    if (!onVideoLinkClick) return;
     const target = e.target as HTMLElement;
+
+    // Handle suggestion clicks
+    const suggestion = target.closest("[data-suggestion]") as HTMLElement | null;
+    if (suggestion && onSuggestionClick) {
+      e.preventDefault();
+      const text = decodeURIComponent(suggestion.dataset.suggestion || "");
+      if (text) onSuggestionClick(text);
+      return;
+    }
+
+    // Handle video link clicks
+    if (!onVideoLinkClick) return;
     const link = target.closest("a[data-video-id]") as HTMLAnchorElement | null;
     if (!link) return;
 

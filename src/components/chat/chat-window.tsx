@@ -58,8 +58,8 @@ export function ChatWindow() {
     handleNewConversation();
   }
 
-  async function handleSend() {
-    const trimmed = input.trim();
+  async function handleSend(overrideMessage?: string) {
+    const trimmed = (overrideMessage ?? input).trim();
     if (!trimmed || !speaker || isLoading) return;
 
     const userMessage: Message = { role: "user", content: trimmed };
@@ -316,6 +316,7 @@ export function ChatWindow() {
                 msg.role === "assistant"
               }
               onVideoLinkClick={(payload) => setSelectedVideo(payload)}
+              onSuggestionClick={(text) => handleSend(text)}
             />
           ))}
           <div ref={messagesEndRef} />
