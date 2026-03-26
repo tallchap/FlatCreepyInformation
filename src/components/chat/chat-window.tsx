@@ -338,7 +338,7 @@ export function ChatWindow() {
               />
               <Button
                 id="chat-send-btn"
-                onClick={handleSend}
+                onClick={() => handleSend()}
                 disabled={!input.trim() || isLoading}
                 className="bg-[#99cc66] hover:bg-[#88bb55] text-white rounded-xl h-[48px] w-[48px] p-0"
               >
