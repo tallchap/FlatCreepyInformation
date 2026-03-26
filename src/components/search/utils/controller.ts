@@ -17,24 +17,9 @@ const SEGMENT_LINE_EXPR = `CASE
   ELSE s.text
 END`;
 
-function buildBaseSelect() {
-  // Always use the legacy table for full-text search — it has Search_Doc_1
-  // pre-aggregated. The segments table (3.7M rows) is too expensive to
-  // STRING_AGG at query time and times out on serverless.
-  return `
-    SELECT
-      ID,
-      Video_Title,
-      Channel_Name,
-      Published_Date,
-      COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude) AS Speakers,
-      Youtube_Link,
-      Video_Length,
-      Transcript_Doc_Link,
-      Search_Doc_1
-    FROM ${TABLE_REFS.legacyTranscripts}
-  `;
-}
+// Search uses new tables (youtube_videos + youtube_transcript_segments).
+// To avoid STRING_AGG over 3.7M rows, we first identify matching videos
+// (with LIMIT), then aggregate segments only for those results.
 
 export async function searchTranscripts(params: {
   searchQuery?: string;
@@ -45,33 +30,22 @@ export async function searchTranscripts(params: {
   yearFilter?: string;
 }) {
   try {
-    const whereConditions = [];
     const queryParams: any = {};
+    const videoConditions: string[] = [];
+    const orderDir = params.sortOrder === "oldest" ? "ASC" : "DESC";
+    const limit = parseInt(params.resultLimit) || 10;
 
-    if (params.searchQuery) {
-      const searchTerms = processSearchQuery(params.searchQuery);
-      const searchConditions = searchTerms.map((term, index) => {
-        const paramName = `searchQuery${index}`;
-        queryParams[paramName] = term.hasWildcard
-          ? `\\b${escapeRegex(term.value.toLowerCase())}`
-          : `\\b${escapeRegex(term.value.toLowerCase())}\\b`;
-        return `REGEXP_CONTAINS(LOWER(Search_Doc_1), @${paramName})`;
-      });
-      if (searchConditions.length > 0) {
-        whereConditions.push(`(${searchConditions.join(" OR ")})`);
-      }
-    }
-
+    // Video-level filters (applied to youtube_videos)
     if (params.speakerQuery) {
-      whereConditions.push(
-        `LOWER(COALESCE(NULLIF(Speakers_GPT_Third, ''), Speakers_Claude)) LIKE CONCAT("%", LOWER(@speakerQuery), "%")`,
+      videoConditions.push(
+        `LOWER(v.speaker_source) LIKE CONCAT("%", LOWER(@speakerQuery), "%")`,
       );
       queryParams.speakerQuery = params.speakerQuery;
     }
 
     if (params.channelQuery) {
-      whereConditions.push(
-        'LOWER(Channel_Name) LIKE CONCAT("%", LOWER(@channelQuery), "%")',
+      videoConditions.push(
+        'LOWER(v.channel_name) LIKE CONCAT("%", LOWER(@channelQuery), "%")',
       );
       queryParams.channelQuery = params.channelQuery;
     }
@@ -79,24 +53,101 @@ export async function searchTranscripts(params: {
     if (params.yearFilter && params.yearFilter !== "all") {
       if (params.yearFilter.startsWith("before:")) {
         const year = parseInt(params.yearFilter.split(":")[1]);
-        whereConditions.push("EXTRACT(YEAR FROM Published_Date) < @yearFilter");
+        videoConditions.push("EXTRACT(YEAR FROM v.published_date) < @yearFilter");
         queryParams.yearFilter = year;
       } else if (params.yearFilter.startsWith("after:")) {
         const year = parseInt(params.yearFilter.split(":")[1]);
-        whereConditions.push("EXTRACT(YEAR FROM Published_Date) > @yearFilter");
+        videoConditions.push("EXTRACT(YEAR FROM v.published_date) > @yearFilter");
         queryParams.yearFilter = year;
       } else {
-        // Legacy: exact year
-        whereConditions.push("EXTRACT(YEAR FROM Published_Date) = @yearFilter");
+        videoConditions.push("EXTRACT(YEAR FROM v.published_date) = @yearFilter");
         queryParams.yearFilter = parseInt(params.yearFilter);
       }
     }
 
-    const whereClause = whereConditions.length > 0 ? `WHERE ${whereConditions.join(" AND ")}` : "";
-    const orderByClause = params.sortOrder === "oldest" ? "ORDER BY Published_Date ASC" : "ORDER BY Published_Date DESC";
-    const limitClause = `LIMIT ${parseInt(params.resultLimit) || 10}`;
+    const videoWhereClause = videoConditions.length > 0
+      ? `WHERE ${videoConditions.join(" AND ")}`
+      : "";
 
-    const query = `${buildBaseSelect()} ${whereClause} ${orderByClause} ${limitClause}`;
+    let query: string;
+
+    if (params.searchQuery) {
+      // Text search: find matching video_ids from segments, then join with videos
+      const searchTerms = processSearchQuery(params.searchQuery);
+      const segmentConditions = searchTerms.map((term, index) => {
+        const paramName = `searchQuery${index}`;
+        queryParams[paramName] = term.hasWildcard
+          ? `\\b${escapeRegex(term.value.toLowerCase())}`
+          : `\\b${escapeRegex(term.value.toLowerCase())}\\b`;
+        return `REGEXP_CONTAINS(LOWER(seg.text), @${paramName})`;
+      });
+
+      query = `
+        WITH matching_videos AS (
+          SELECT DISTINCT seg.video_id
+          FROM ${TABLE_REFS.transcriptSegments} seg
+          WHERE (${segmentConditions.join(" OR ")})
+        ),
+        filtered_videos AS (
+          SELECT v.video_id, v.video_title, v.channel_name, v.published_date,
+                 v.speaker_source, v.youtube_link, v.video_length
+          FROM ${TABLE_REFS.videos} v
+          INNER JOIN matching_videos mv ON v.video_id = mv.video_id
+          ${videoWhereClause}
+          ORDER BY v.published_date ${orderDir}
+          LIMIT ${limit}
+        )
+        SELECT
+          fv.video_id AS ID,
+          fv.video_title AS Video_Title,
+          fv.channel_name AS Channel_Name,
+          fv.published_date AS Published_Date,
+          fv.speaker_source AS Speakers,
+          fv.youtube_link AS Youtube_Link,
+          fv.video_length AS Video_Length,
+          '' AS Transcript_Doc_Link,
+          STRING_AGG(
+            ${SEGMENT_LINE_EXPR},
+            '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
+          ) AS Search_Doc_1
+        FROM filtered_videos fv
+        LEFT JOIN ${TABLE_REFS.transcriptSegments} s ON fv.video_id = s.video_id
+        GROUP BY fv.video_id, fv.video_title, fv.channel_name, fv.published_date,
+                 fv.speaker_source, fv.youtube_link, fv.video_length
+        ORDER BY fv.published_date ${orderDir}
+      `;
+    } else {
+      // No text search — query videos directly, aggregate segments for transcript
+      query = `
+        WITH filtered_videos AS (
+          SELECT v.video_id, v.video_title, v.channel_name, v.published_date,
+                 v.speaker_source, v.youtube_link, v.video_length
+          FROM ${TABLE_REFS.videos} v
+          ${videoWhereClause}
+          ORDER BY v.published_date ${orderDir}
+          LIMIT ${limit}
+        )
+        SELECT
+          fv.video_id AS ID,
+          fv.video_title AS Video_Title,
+          fv.channel_name AS Channel_Name,
+          fv.published_date AS Published_Date,
+          fv.speaker_source AS Speakers,
+          fv.youtube_link AS Youtube_Link,
+          fv.video_length AS Video_Length,
+          '' AS Transcript_Doc_Link,
+          STRING_AGG(
+            ${SEGMENT_LINE_EXPR},
+            '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
+          ) AS Search_Doc_1
+        FROM filtered_videos fv
+        LEFT JOIN ${TABLE_REFS.transcriptSegments} s ON fv.video_id = s.video_id
+        GROUP BY fv.video_id, fv.video_title, fv.channel_name, fv.published_date,
+                 fv.speaker_source, fv.youtube_link, fv.video_length
+        ORDER BY fv.published_date ${orderDir}
+      `;
+    }
+
     const [rows] = await bigQuery.query({ query, params: queryParams });
 
     const results = rows.map((row: any) => {
