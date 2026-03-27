@@ -165,8 +165,17 @@ export async function searchTranscripts(params: {
             const matchIndex = transcript.indexOf(termToSearch, searchPos);
             if (matchIndex === -1) break;
 
-            const snippetStart = Math.max(0, matchIndex - contextWindowSize);
-            const snippetEnd = Math.min(original.length, matchIndex + termToSearch.length + contextWindowSize);
+            let snippetStart = Math.max(0, matchIndex - contextWindowSize);
+            let snippetEnd = Math.min(original.length, matchIndex + termToSearch.length + contextWindowSize);
+            // Snap to word boundaries: move start forward to next space, end backward to last space
+            if (snippetStart > 0) {
+              const nextSpace = original.indexOf(" ", snippetStart);
+              if (nextSpace !== -1 && nextSpace < matchIndex) snippetStart = nextSpace + 1;
+            }
+            if (snippetEnd < original.length) {
+              const lastSpace = original.lastIndexOf(" ", snippetEnd);
+              if (lastSpace > matchIndex + termToSearch.length) snippetEnd = lastSpace;
+            }
             let snippet = original.substring(snippetStart, snippetEnd);
             const termStart = matchIndex - snippetStart;
             const termEnd = termStart + termToSearch.length;
