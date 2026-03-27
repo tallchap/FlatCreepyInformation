@@ -581,9 +581,35 @@ export async function addToBigQuery(transcript: any, metadata: any) {
         ignoreUnknownValues: true,
       });
     }
+
+    // Rebuild search windows table so new video is immediately searchable
+    await rebuildSearchWindows();
   }
 
   console.log("Successfully stored in BigQuery");
+}
+
+async function rebuildSearchWindows() {
+  try {
+    await bigQuery.query({
+      query: `
+        CREATE OR REPLACE TABLE \`youtubetranscripts-429803.reptranscripts.segment_search_windows\` AS
+        SELECT
+          video_id,
+          segment_index,
+          start_sec,
+          CONCAT(
+            COALESCE(LAG(text, 1) OVER (PARTITION BY video_id ORDER BY segment_index), ''), ' ',
+            text, ' ',
+            COALESCE(LEAD(text, 1) OVER (PARTITION BY video_id ORDER BY segment_index), '')
+          ) AS window_text
+        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\`
+      `,
+    });
+    console.log("Search windows table rebuilt");
+  } catch (err) {
+    console.error("Failed to rebuild search windows:", err);
+  }
 }
 
 export async function addMetadataToSheet(
