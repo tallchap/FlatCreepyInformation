@@ -72,9 +72,9 @@ export async function searchTranscripts(params: {
       const searchConditions = searchTerms.map((term, index) => {
         const paramName = `searchQuery${index}`;
         const trimmed = term.trim();
-        // Multi-word phrases get backtick-wrapped for exact phrase match
+        // Multi-word phrases get double-quote-wrapped for exact phrase match
         const hasSpace = trimmed.includes(" ");
-        queryParams[paramName] = hasSpace ? `\`${trimmed}\`` : trimmed;
+        queryParams[paramName] = hasSpace ? `"${trimmed}"` : trimmed;
         return `SEARCH(sw.window_text, @${paramName})`;
       });
 
