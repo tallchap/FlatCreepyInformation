@@ -5,12 +5,14 @@ export const TABLES = {
   legacyTranscripts: `${BQ_PROJECT}.${BQ_DATASET}.youtube_transcripts`,
   videos: `${BQ_PROJECT}.${BQ_DATASET}.youtube_videos`,
   transcriptSegments: `${BQ_PROJECT}.${BQ_DATASET}.youtube_transcript_segments`,
+  segmentSearchWindows: `${BQ_PROJECT}.${BQ_DATASET}.segment_search_windows`,
 } as const;
 
 export const TABLE_REFS = {
   legacyTranscripts: `\`${TABLES.legacyTranscripts}\``,
   videos: `\`${TABLES.videos}\``,
   transcriptSegments: `\`${TABLES.transcriptSegments}\``,
+  segmentSearchWindows: `\`${TABLES.segmentSearchWindows}\``,
 } as const;
 
 export function useNewTranscriptTables() {

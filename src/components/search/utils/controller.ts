@@ -1,10 +1,6 @@
 import { bigQuery } from "@/lib/bigquery";
 import { TABLE_REFS, useNewTranscriptTables } from "@/lib/bigquery-schema";
 
-function escapeRegex(str: string): string {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
 const SEGMENT_LINE_EXPR = `CASE
   WHEN s.start_sec IS NOT NULL THEN CONCAT(
     '[',
@@ -17,9 +13,8 @@ const SEGMENT_LINE_EXPR = `CASE
   ELSE s.text
 END`;
 
-// Search uses new tables (youtube_videos + youtube_transcript_segments).
-// To avoid STRING_AGG over 3.7M rows, we first identify matching videos
-// (with LIMIT), then aggregate segments only for those results.
+// Text search uses segment_search_windows (3-segment sliding windows with SEARCH INDEX).
+// Non-text browsing uses youtube_videos + youtube_transcript_segments directly.
 
 export async function searchTranscripts(params: {
   searchQuery?: string;
@@ -72,21 +67,22 @@ export async function searchTranscripts(params: {
     let query: string;
 
     if (params.searchQuery) {
-      // Text search: find matching video_ids from segments, then join with videos
-      const searchTerms = processSearchQuery(params.searchQuery);
-      const segmentConditions = searchTerms.map((term, index) => {
+      // Text search: use SEARCH() on windowed table (indexed, fast)
+      const searchTerms = splitByOrOperator(params.searchQuery);
+      const searchConditions = searchTerms.map((term, index) => {
         const paramName = `searchQuery${index}`;
-        queryParams[paramName] = term.hasWildcard
-          ? `\\b${escapeRegex(term.value.toLowerCase())}`
-          : `\\b${escapeRegex(term.value.toLowerCase())}\\b`;
-        return `REGEXP_CONTAINS(LOWER(seg.text), @${paramName})`;
+        const trimmed = term.trim();
+        // Multi-word phrases get backtick-wrapped for exact phrase match
+        const hasSpace = trimmed.includes(" ");
+        queryParams[paramName] = hasSpace ? `\`${trimmed}\`` : trimmed;
+        return `SEARCH(sw.window_text, @${paramName})`;
       });
 
       query = `
         WITH matching_videos AS (
-          SELECT DISTINCT seg.video_id
-          FROM ${TABLE_REFS.transcriptSegments} seg
-          WHERE (${segmentConditions.join(" OR ")})
+          SELECT DISTINCT sw.video_id
+          FROM ${TABLE_REFS.segmentSearchWindows} sw
+          WHERE (${searchConditions.join(" OR ")})
         ),
         filtered_videos AS (
           SELECT v.video_id, v.video_title, v.channel_name, v.published_date,
@@ -156,37 +152,34 @@ export async function searchTranscripts(params: {
         const original: string = row.Search_Doc_1;
         const transcript = original.toLowerCase();
         const tsIndex = buildTimestampIndex(original);
-        const processedTerms = processSearchQuery(params.searchQuery);
+        const searchTerms = splitByOrOperator(params.searchQuery);
 
-        for (const term of processedTerms) {
-          const termToSearch = term.value.toLowerCase();
+        for (const rawTerm of searchTerms) {
+          const termToSearch = rawTerm.trim().toLowerCase();
           const contextWindowSize = 110;
           const maxSnippets = 5;
-          const escapedTerm = escapeRegex(termToSearch);
-          const pattern = term.hasWildcard
-            ? new RegExp(`\\b${escapedTerm}`, "gi")
-            : new RegExp(`\\b${escapedTerm}\\b`, "gi");
 
-          let match: RegExpExecArray | null;
+          let searchPos = 0;
           let snippetCount = 0;
-          while ((match = pattern.exec(transcript)) !== null && snippetCount < maxSnippets) {
-            const startIndex = match.index;
-            const snippetStart = Math.max(0, startIndex - contextWindowSize);
-            const snippetEnd = Math.min(original.length, startIndex + termToSearch.length + contextWindowSize);
+          while (snippetCount < maxSnippets) {
+            const matchIndex = transcript.indexOf(termToSearch, searchPos);
+            if (matchIndex === -1) break;
+
+            const snippetStart = Math.max(0, matchIndex - contextWindowSize);
+            const snippetEnd = Math.min(original.length, matchIndex + termToSearch.length + contextWindowSize);
             let snippet = original.substring(snippetStart, snippetEnd);
-            const termStart = startIndex - snippetStart;
-            const termEnd = term.hasWildcard
-              ? findWordEndIndex(snippet, termStart + termToSearch.length)
-              : termStart + termToSearch.length;
+            const termStart = matchIndex - snippetStart;
+            const termEnd = termStart + termToSearch.length;
 
             snippet = snippet.substring(0, termStart) + `<mark>${snippet.substring(termStart, termEnd)}</mark>` + snippet.substring(termEnd);
             snippet = snippet.replace(/\[\d+:\d{2}(?::\d{2})?]:?\s*/g, "");
             snippet = snippet.replace(/(?:^|\s)\d+(?:\.\d+)?:\s*/g, " ");
             snippet = snippet.replace(/^[^a-zA-Z<]+/, "");
 
-            const seconds = findNearestTimestamp(tsIndex, startIndex);
+            const seconds = findNearestTimestamp(tsIndex, matchIndex);
             snippets.push({ text: snippet, seconds });
             snippetCount++;
+            searchPos = matchIndex + termToSearch.length;
           }
         }
       }
@@ -205,17 +198,13 @@ export async function searchTranscripts(params: {
     return { results, total: results.length, uniqueVideos: results.length };
   } catch (error) {
     console.error("BigQuery search error:", error);
-    return { results: [], total: 0, uniqueVideos: 0 };
+    return {
+      results: [],
+      total: 0,
+      uniqueVideos: 0,
+      error: error instanceof Error ? error.message : "Search failed",
+    };
   }
-}
-
-function processSearchQuery(query: string): Array<{ value: string; hasWildcard: boolean }> {
-  const orTerms = splitByOrOperator(query);
-  return orTerms.map((term) => {
-    const trimmed = term.trim();
-    const hasWildcard = trimmed.endsWith("*");
-    return { value: hasWildcard ? trimmed.slice(0, -1) : trimmed, hasWildcard };
-  });
 }
 
 function splitByOrOperator(query: string): string[] {
@@ -255,12 +244,6 @@ function splitByOrOperator(query: string): string[] {
   return result.filter((term) => term.length > 0);
 }
 
-function findWordEndIndex(text: string, startIndex: number): number {
-  let endIndex = startIndex;
-  while (endIndex < text.length && (/[a-zA-Z0-9]/.test(text[endIndex]) || text[endIndex] === "_")) endIndex++;
-  return endIndex;
-}
-
 function buildTimestampIndex(transcript: string): { pos: number; sec: number }[] {
   const index: { pos: number; sec: number }[] = [];
   const reBracket = /\[(\d+):(\d{2})(?::(\d{2}))?\]/g;
@@ -296,11 +279,7 @@ function findNearestTimestamp(index: { pos: number; sec: number }[], matchPos: n
     }
   }
 
-  // Primary: nearest timestamp at or before the match.
   if (bestBefore >= 0) return index[bestBefore].sec;
-
-  // Fallback: if match appears before first parsed timestamp, use first timestamp after.
-  // Final guard: 0 keeps the snippet playable/openable even when parsing is sparse.
   return index[0]?.sec ?? 0;
 }
 
