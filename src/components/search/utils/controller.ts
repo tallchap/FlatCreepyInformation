@@ -104,7 +104,7 @@ export async function searchTranscripts(params: {
           '' AS Transcript_Doc_Link,
           STRING_AGG(
             ${SEGMENT_LINE_EXPR},
-            '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
+            '\\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
           ) AS Search_Doc_1
         FROM filtered_videos fv
         LEFT JOIN ${TABLE_REFS.transcriptSegments} s ON fv.video_id = s.video_id
@@ -134,7 +134,7 @@ export async function searchTranscripts(params: {
           '' AS Transcript_Doc_Link,
           STRING_AGG(
             ${SEGMENT_LINE_EXPR},
-            '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
+            '\\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index
           ) AS Search_Doc_1
         FROM filtered_videos fv
         LEFT JOIN ${TABLE_REFS.transcriptSegments} s ON fv.video_id = s.video_id
@@ -287,7 +287,7 @@ export async function getTranscriptByVideoId(videoId: string): Promise<string> {
   try {
     const query = useNewTranscriptTables()
       ? `
-        SELECT STRING_AGG(${SEGMENT_LINE_EXPR}, '\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index) AS Search_Doc_1
+        SELECT STRING_AGG(${SEGMENT_LINE_EXPR}, '\\n' ORDER BY COALESCE(s.start_sec, 1e12), s.segment_index) AS Search_Doc_1
         FROM ${TABLE_REFS.transcriptSegments} s
         WHERE s.video_id = @videoId
       `
