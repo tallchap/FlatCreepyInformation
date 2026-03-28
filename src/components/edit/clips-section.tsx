@@ -107,12 +107,14 @@ export function ClipsSection({ videoId }: { videoId: string }) {
           {/* Video + Transcript grid (matches editor layout) */}
           {activeClip && (
             <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-              <div className="lg:col-span-3" ref={playerRef}>
-                <ClipPlayer
-                  gcsUrl={activeClip.gcsUrl}
-                  durationMs={activeClip.durationMs}
-                  videoId={videoId}
-                />
+              <div className="lg:col-span-3">
+                <div ref={playerRef}>
+                  <ClipPlayer
+                    gcsUrl={activeClip.gcsUrl}
+                    durationMs={activeClip.durationMs}
+                    videoId={videoId}
+                  />
+                </div>
               </div>
               <div
                 className="lg:col-span-2"
