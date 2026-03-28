@@ -4,11 +4,11 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 const links = [
+  { href: "/chat", label: "Chat" },
   { href: "/", label: "Search" },
   { href: "/browse", label: "Browse" },
-  { href: "/chat", label: "Chat" },
   { href: "/transcribe", label: "Transcribe" },
-  { href: "/about", label: "About" },
+  { href: "/snippy", label: "Snippy" },
 ];
 
 export function NavLinks() {
