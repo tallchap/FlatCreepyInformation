@@ -36,6 +36,7 @@ export function ClipEditor() {
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   const [quality, setQuality] = useState<Quality>("720p");
+  const [has1080, setHas1080] = useState(false);
   const { startDownload, hasActive: exporting } = useDownload();
   const [gcsAvailable, setGcsAvailable] = useState<boolean | null>(null);
   const [debugOpen, setDebugOpen] = useState(false);
@@ -128,6 +129,7 @@ export function ClipEditor() {
   useEffect(() => {
     if (!videoId || gcsAvailable === null) return; // wait for GCS check
     playerReadyRef.current = false;
+    setHas1080(false);
 
     if (gcsAvailable) {
       // GCS: use native HTML5 video
@@ -137,6 +139,7 @@ export function ClipEditor() {
       const video = document.createElement("video");
       video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
       video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+      video.preload = "auto";
       video.controls = true;
       video.setAttribute("controlsList", "nodownload nofullscreen");
       video.setAttribute("disablePictureInPicture", "true");
@@ -147,6 +150,8 @@ export function ClipEditor() {
         playerReadyRef.current = true;
         setDuration(video.duration);
         setVideoRes(`${video.videoHeight}p`);
+        setHas1080(video.videoHeight >= 1080);
+        if (video.videoHeight < 1080) setQuality("720p");
         setHandlesPlaced(false);
         setStartSec(0);
         setEndSec(0);
@@ -182,6 +187,10 @@ export function ClipEditor() {
               playerReadyRef.current = true;
               const dur = e.target.getDuration();
               setDuration(dur);
+              const levels = e.target.getAvailableQualityLevels?.() || [];
+              const supports1080 = levels.includes("hd1080");
+              setHas1080(supports1080);
+              if (!supports1080) setQuality("720p");
               setHandlesPlaced(false);
               setStartSec(0);
               setEndSec(0);
@@ -490,9 +499,9 @@ export function ClipEditor() {
 
               <div className="flex-1" />
 
-              {/* Quality toggle */}
+              {/* Quality toggle — 1080p only when video supports it */}
               <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                {(["720p", "1080p"] as Quality[]).map((q) => (
+                {(has1080 ? ["720p", "1080p"] as Quality[] : ["720p"] as Quality[]).map((q) => (
                   <button
                     key={q}
                     onClick={() => setQuality(q)}
@@ -552,13 +561,13 @@ export function ClipEditor() {
 
               <button
                 onClick={handleExport}
-                disabled={exporting || clipTooLong}
+                disabled={clipTooLong}
                 className={btnClass}
                 style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => { if (!exporting && !clipTooLong) e.currentTarget.style.backgroundColor = DINO_RED_HOVER; }}
+                onMouseEnter={(e) => { if (!clipTooLong) e.currentTarget.style.backgroundColor = DINO_RED_HOVER; }}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
-                {exporting ? "Exporting..." : "Export MP4"}
+                Export MP4
               </button>
             </div>
 
