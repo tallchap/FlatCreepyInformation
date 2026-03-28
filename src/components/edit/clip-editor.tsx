@@ -64,9 +64,9 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
   const [playerWidth, setPlayerWidth] = useState(700);
   const [videoRes, setVideoRes] = useState<string | null>(null);
 
-  // Track video container height for transcript matching
+  // Track video player height for transcript matching
   useEffect(() => {
-    const el = videoContainerRef.current;
+    const el = playerContainerRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
       setVideoHeight(entry.contentRect.height);
