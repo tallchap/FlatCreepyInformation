@@ -60,11 +60,20 @@ function formatContent(text: string): string {
         /^(\d+\.\s+.+)$/gm,
         (_match, line: string) => {
           const cleaned = cleanSuggestion(line);
-          return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="cursor-pointer underline text-emerald-600 hover:text-emerald-800">${line.replace(/^\d+\.\s*/, "").replace(/^or\s+/i, "").replace(/[,.]$/, "").trim()}</span>`;
+          return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="inline-block px-3 py-1 text-sm bg-white border border-gray-200 rounded-full text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors cursor-pointer">${line.replace(/^\d+\.\s*/, "").replace(/^or\s+/i, "").replace(/[,.]$/, "").trim()}</span>`;
         },
       )
       // Newlines
       .replace(/\n/g, "<br />")
+      // Wrap consecutive suggestion pills in a flex container and remove <br /> between them
+      .replace(
+        /(<span data-suggestion="[^"]*" class="inline-block[^>]*>.*?<\/span>)(?:<br \/>)*/g,
+        "$1",
+      )
+      .replace(
+        /((?:<span data-suggestion="[^"]*" class="inline-block[^>]*>.*?<\/span>)+)/g,
+        '<div class="flex flex-wrap gap-2 mt-2">$1</div>',
+      )
   );
 }
 
