@@ -8,7 +8,6 @@ const links = [
   { href: "/", label: "Search" },
   { href: "/browse", label: "Browse" },
   { href: "/transcribe", label: "Transcribe" },
-  { href: "/snippy", label: "Snippy" },
 ];
 
 export function NavLinks() {
