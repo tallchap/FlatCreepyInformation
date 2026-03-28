@@ -27,7 +27,7 @@ function formatDuration(sec: number): string {
 
 const MAX_CLIP_SEC = 11 * 60;
 
-export function ClipEditor() {
+export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
@@ -137,7 +137,10 @@ export function ClipEditor() {
       if (!container) return;
       container.innerHTML = "";
       const video = document.createElement("video");
-      video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
+      const videoBase = cdnBaseUrl
+        ? `${cdnBaseUrl}/videos`
+        : "https://storage.googleapis.com/snippysaurus-clips/videos";
+      video.src = `${videoBase}/${videoId}.mp4`;
       video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
       video.preload = "auto";
       video.controls = true;
