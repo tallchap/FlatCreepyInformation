@@ -5,6 +5,7 @@ import { Timeline } from "./timeline";
 import { TranscriptPanel } from "./transcript-panel";
 import { useDownload } from "@/lib/download-context";
 import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal";
+import { ClipsSection } from "./clips-section";
 
 type Quality = "720p" | "1080p";
 
@@ -675,6 +676,9 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
           )}
         </>
       )}
+
+      {/* Clips section — loads last, only if clips exist */}
+      {videoId && <ClipsSection videoId={videoId} />}
 
       {/* HIDDEN FOR NOW: overlay editor modal
       {overlayModalOpen && videoId && (
