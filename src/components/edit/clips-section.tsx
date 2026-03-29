@@ -57,6 +57,13 @@ export function ClipsSection({ videoId }: { videoId: string }) {
   if (loading || clips.length === 0) return null;
 
   return (
+    <div className="space-y-2">
+      <div>
+        <h2 className="text-2xl font-bold text-gray-900">Ready-Made Snippets</h2>
+        <p className="text-sm text-gray-500 mt-1">
+          Snippets from this episode, ready to share
+        </p>
+      </div>
     <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
       {/* Collapsible toggle */}
       <button
@@ -141,6 +148,7 @@ export function ClipsSection({ videoId }: { videoId: string }) {
           </div>
         </div>
       )}
+    </div>
     </div>
   );
 }
