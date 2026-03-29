@@ -6,6 +6,8 @@ export const TABLES = {
   videos: `${BQ_PROJECT}.${BQ_DATASET}.youtube_videos`,
   transcriptSegments: `${BQ_PROJECT}.${BQ_DATASET}.youtube_transcript_segments`,
   segmentSearchWindows: `${BQ_PROJECT}.${BQ_DATASET}.segment_search_windows`,
+  researchRuns: `${BQ_PROJECT}.${BQ_DATASET}.research_runs`,
+  researchCandidates: `${BQ_PROJECT}.${BQ_DATASET}.research_candidates`,
 } as const;
 
 export const TABLE_REFS = {
@@ -13,6 +15,8 @@ export const TABLE_REFS = {
   videos: `\`${TABLES.videos}\``,
   transcriptSegments: `\`${TABLES.transcriptSegments}\``,
   segmentSearchWindows: `\`${TABLES.segmentSearchWindows}\``,
+  researchRuns: `\`${TABLES.researchRuns}\``,
+  researchCandidates: `\`${TABLES.researchCandidates}\``,
 } as const;
 
 export function useNewTranscriptTables() {

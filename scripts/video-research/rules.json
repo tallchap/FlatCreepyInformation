@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "updated_at": "2026-03-29T00:00:00Z",
+  "global_rules": {
+    "reject_channels": [],
+    "reject_title_patterns": [
+      { "pattern": "best moments|highlights|compilation|shorts|#shorts", "reason": "Not full-length content", "added": "2026-03-29" },
+      { "pattern": "reacts? to|reaction", "reason": "Reaction content, speaker not present", "added": "2026-03-29" }
+    ],
+    "boost_channels": [],
+    "boost_title_patterns": [
+      { "pattern": "full (interview|episode|conversation|podcast)", "boost": 15, "reason": "Labeled full-length", "added": "2026-03-29" }
+    ]
+  },
+  "speaker_rules": {}
+}
