@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { Suspense, useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
 import { CandidateTable } from "@/components/research/candidate-table";
 import { DetailDrawer } from "@/components/research/detail-drawer";
@@ -39,6 +39,14 @@ interface Run {
 }
 
 export default function ResearchPage() {
+  return (
+    <Suspense fallback={<div className="text-center py-20 text-gray-400">Loading...</div>}>
+      <ResearchPageInner />
+    </Suspense>
+  );
+}
+
+function ResearchPageInner() {
   const searchParams = useSearchParams();
   const initialRunId = searchParams.get("runId");
 
