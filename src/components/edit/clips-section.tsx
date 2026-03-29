@@ -106,7 +106,7 @@ export function ClipsSection({ videoId }: { videoId: string }) {
                   </p>
                 )}
               </div>
-              <div className="lg:col-span-2">
+              <div className="lg:col-span-2 flex flex-col">
                 <div style={playerHeight ? { height: playerHeight } : undefined}>
                   <TranscriptPanel
                     videoId={videoId}
@@ -115,14 +115,15 @@ export function ClipsSection({ videoId }: { videoId: string }) {
                     onLineClick={() => {}}
                   />
                 </div>
-                {/* Download button under transcript, right-aligned */}
+                <div className="flex-1" />
+                {/* Download button bottom-right */}
                 <div className="mt-3 flex justify-end">
                   <a
                     href={activeClip.gcsUrl}
                     target="_blank"
                     rel="noopener noreferrer"
                     download
-                    className="inline-flex items-center gap-2 border border-[#DC2626] text-[#DC2626] hover:bg-red-50 text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
+                    className="inline-flex items-center gap-2 bg-[#DC2626] hover:bg-[#B91C1C] text-white text-sm font-semibold px-4 py-2 rounded-lg transition-colors"
                   >
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
                     Download Snippet

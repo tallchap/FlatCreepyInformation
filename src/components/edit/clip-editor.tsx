@@ -663,7 +663,7 @@ export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = 
                 onMouseEnter={(e) => { if (!clipTooLong) e.currentTarget.style.backgroundColor = DINO_RED_HOVER; }}
                 onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
               >
-                Export MP4
+                Export Snippet
               </button>
             </div>
 
