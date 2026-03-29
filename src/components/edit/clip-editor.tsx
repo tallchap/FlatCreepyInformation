@@ -28,7 +28,7 @@ function formatDuration(sec: number): string {
 
 const MAX_CLIP_SEC = 11 * 60;
 
-export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
+export function ClipEditor({ cdnBaseUrl, videoSource }: { cdnBaseUrl?: string; videoSource?: "gcs" | "bunny" } = {}) {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
@@ -87,16 +87,35 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
     }
   }, []);
 
-  // Check GCS availability when video changes
+  // Bunny HLS state
+  const [bunnyHlsUrl, setBunnyHlsUrl] = useState<string | null>(null);
+
+  // Check GCS/Bunny availability when video changes
   useEffect(() => {
-    if (!videoId) { setGcsAvailable(null); setVideoRes(null); return; }
+    if (!videoId) { setGcsAvailable(null); setVideoRes(null); setBunnyHlsUrl(null); return; }
     setGcsAvailable(null);
     setVideoRes(null);
-    fetch(`/api/clip-gcs-check?videoId=${videoId}`)
-      .then(r => r.json())
-      .then(d => setGcsAvailable(!!d.available))
-      .catch(() => setGcsAvailable(false));
-  }, [videoId]);
+    setBunnyHlsUrl(null);
+
+    if (videoSource === "bunny") {
+      fetch(`/api/bunny-lookup?videoId=${videoId}`)
+        .then(r => r.json())
+        .then(d => {
+          if (d.available && d.hlsUrl) {
+            setBunnyHlsUrl(d.hlsUrl);
+            setGcsAvailable(false); // skip GCS path
+          } else {
+            setGcsAvailable(false); // fall back to YouTube
+          }
+        })
+        .catch(() => setGcsAvailable(false));
+    } else {
+      fetch(`/api/clip-gcs-check?videoId=${videoId}`)
+        .then(r => r.json())
+        .then(d => setGcsAvailable(!!d.available))
+        .catch(() => setGcsAvailable(false));
+    }
+  }, [videoId, videoSource]);
 
   // Track video wrapper width for proportional overlay font scaling
   useEffect(() => {
@@ -126,13 +145,79 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
     document.body.appendChild(s);
   }, []);
 
-  // Mount player when videoId changes — GCS or YouTube
+  // Mount player when videoId changes — Bunny HLS, GCS, or YouTube
   useEffect(() => {
-    if (!videoId || gcsAvailable === null) return; // wait for GCS check
+    if (!videoId || (gcsAvailable === null && !bunnyHlsUrl)) return; // wait for availability check
     playerReadyRef.current = false;
     setHas1080(false);
 
-    if (gcsAvailable) {
+    if (bunnyHlsUrl) {
+      // Bunny Stream: HLS via hls.js
+      const container = document.getElementById("clip-player");
+      if (!container) return;
+      container.innerHTML = "";
+      const video = document.createElement("video");
+      video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
+      video.controls = true;
+      video.setAttribute("controlsList", "nodownload nofullscreen");
+      video.setAttribute("disablePictureInPicture", "true");
+      video.style.width = "100%";
+      video.style.height = "100%";
+      video.style.backgroundColor = "#000";
+      container.appendChild(video);
+      videoElRef.current = video;
+
+      // Load hls.js and attach
+      const script = document.createElement("script");
+      script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
+      script.onload = () => {
+        const Hls = (window as any).Hls;
+        if (Hls.isSupported()) {
+          const hls = new Hls();
+          hls.loadSource(bunnyHlsUrl);
+          hls.attachMedia(video);
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            playerReadyRef.current = true;
+            // Duration available after manifest
+            video.addEventListener("loadedmetadata", () => {
+              setDuration(video.duration);
+              setVideoRes("ABR");
+              setHas1080(true);
+              setHandlesPlaced(false);
+              setStartSec(0);
+              setEndSec(0);
+              setPlayheadSec(0);
+            }, { once: true });
+          });
+        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+          // Safari native HLS
+          video.src = bunnyHlsUrl;
+          video.addEventListener("loadedmetadata", () => {
+            playerReadyRef.current = true;
+            setDuration(video.duration);
+            setVideoRes("ABR");
+            setHas1080(true);
+            setHandlesPlaced(false);
+            setStartSec(0);
+            setEndSec(0);
+            setPlayheadSec(0);
+          }, { once: true });
+        }
+      };
+      document.head.appendChild(script);
+
+      playerRef.current = {
+        seekTo: (sec: number) => { video.currentTime = sec; },
+        getCurrentTime: () => video.currentTime,
+        getDuration: () => video.duration,
+        playVideo: () => video.play(),
+        pauseVideo: () => video.pause(),
+        getPlayerState: () => (video.paused ? 2 : 1),
+        setPlaybackRate: (r: number) => { video.playbackRate = r; },
+        getVideoData: () => ({ title: "" }),
+        destroy: () => { video.pause(); video.src = ""; },
+      };
+    } else if (gcsAvailable) {
       // GCS: use native HTML5 video
       const container = document.getElementById("clip-player");
       if (!container) return;
@@ -220,7 +305,7 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
       playerRef.current = null;
       videoElRef.current = null;
     };
-  }, [videoId, gcsAvailable]);
+  }, [videoId, gcsAvailable, bunnyHlsUrl]);
 
   // Playhead sync + isPlaying state — update from player every 100ms
   useEffect(() => {
@@ -387,7 +472,7 @@ export function ClipEditor({ cdnBaseUrl }: { cdnBaseUrl?: string } = {}) {
     <div className="space-y-6">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900">Clip Editor</h1>
+        <h1 className="text-2xl font-bold text-gray-900">Snippet Editor</h1>
         <p className="text-sm text-gray-500 mt-1">
           Trim and export YouTube video clips (max {MAX_CLIP_SEC / 60} min) &middot; Spacebar to play/pause
         </p>
