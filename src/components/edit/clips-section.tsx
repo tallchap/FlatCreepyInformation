@@ -51,7 +51,7 @@ export function ClipsSection({ videoId }: { videoId: string }) {
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [activeClip]);
+  }, [activeClip, open]);
 
   // Don't render anything if no clips
   if (loading || clips.length === 0) return null;
