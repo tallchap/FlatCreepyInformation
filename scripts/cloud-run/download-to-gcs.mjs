@@ -12,6 +12,9 @@ const GCS_BUCKET = "snippysaurus-clips";
 const GCS_PREFIX = "videos";
 const RESULTS_PREFIX = "download-results";
 
+const BUNNY_STREAM_API_KEY = (process.env.BUNNY_STREAM_API_KEY || "").trim();
+const BUNNY_LIBRARY_ID = "627230";
+
 const TASK_INDEX = parseInt(process.env.CLOUD_RUN_TASK_INDEX) || 0;
 const TASK_COUNT = parseInt(process.env.CLOUD_RUN_TASK_COUNT) || 1;
 const STATUS_PATH = TASK_COUNT > 1 ? `download-status/task-${TASK_INDEX}.json` : "download-status/current.json";
@@ -46,6 +49,50 @@ function httpsGet(url, headers = {}) {
       res.on("end", () => { try { resolve(JSON.parse(body)); } catch (e) { reject(new Error(`Bad JSON: ${body.slice(0, 200)}`)); } });
     }).on("error", reject);
   });
+}
+
+async function ingestToBunny(videoId) {
+  if (!BUNNY_STREAM_API_KEY) {
+    console.log(`  [${videoId}] Bunny: skipped (no API key)`);
+    return "skipped";
+  }
+  try {
+    const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`;
+    const body = JSON.stringify({
+      url: `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_PREFIX}/${videoId}.mp4`,
+      title: videoId,
+    });
+    const res = await new Promise((resolve, reject) => {
+      const req = https.request(url, {
+        method: "POST",
+        headers: {
+          AccessKey: BUNNY_STREAM_API_KEY,
+          "Content-Type": "application/json",
+          "Content-Length": Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let data = "";
+        res.on("data", (c) => data += c);
+        res.on("end", () => {
+          try { resolve({ status: res.statusCode, body: JSON.parse(data) }); }
+          catch { resolve({ status: res.statusCode, body: data }); }
+        });
+      });
+      req.on("error", reject);
+      req.write(body);
+      req.end();
+    });
+    if (res.status >= 200 && res.status < 300) {
+      console.log(`  [${videoId}] Bunny: queued for transcoding`);
+      return "queued";
+    } else {
+      console.log(`  [${videoId}] Bunny: fetch API returned ${res.status}: ${JSON.stringify(res.body)}`);
+      return "failed";
+    }
+  } catch (err) {
+    console.log(`  [${videoId}] Bunny: ingest error: ${err.message}`);
+    return "failed";
+  }
 }
 
 const RUN_ID = `run-${Date.now()}`;
@@ -110,6 +157,7 @@ function buildStatus() {
       elapsed: r.elapsed || null,
       error: r.error || null,
       gcsUrl: r.gcsUrl || null,
+      bunnyStatus: r.bunnyStatus || null,
     })),
   };
 }
@@ -324,7 +372,12 @@ async function processVideo(video) {
           video.gcsUrl = `gs://${GCS_BUCKET}/${gcsPath}`;
           video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
           markDirty();
-          console.log(`  [${video.id}] DONE: ${video.elapsed}, ${quality}p, $${video.apiCost} | DL ${video.downloadSpeedMBs} MB/s | UL ${video.uploadSpeedMBs} MB/s\n`);
+          console.log(`  [${video.id}] DONE: ${video.elapsed}, ${quality}p, $${video.apiCost} | DL ${video.downloadSpeedMBs} MB/s | UL ${video.uploadSpeedMBs} MB/s`);
+
+          // Ingest to Bunny Stream (non-blocking)
+          video.bunnyStatus = await ingestToBunny(video.id);
+          markDirty();
+          console.log("");
           return;
         }
         if (progress.text === "Error" || progress.progress < 0) {
@@ -350,10 +403,22 @@ async function main() {
   if (SINGLE_VIDEO_ID) console.log(`Single-video mode: ${SINGLE_VIDEO_ID}`);
   console.log(`Run ID: ${RUN_ID}\n`);
 
+  const VIDEO_LIST = (process.env.VIDEO_LIST || "").trim();
+
   if (SINGLE_VIDEO_ID) {
     // Single-video mode — skip BigQuery query, process one video directly
     results = [{ id: SINGLE_VIDEO_ID, title: "single", duration: null, speaker: null, status: "pending" }];
     label = `Single video: ${SINGLE_VIDEO_ID}`;
+  } else if (VIDEO_LIST) {
+    // List mode — download specific video IDs, split across tasks
+    const allIds = VIDEO_LIST.split(',').map(id => id.trim()).filter(Boolean);
+    const allResults = allIds.map(id => ({ id, title: "listed", duration: null, speaker: null, status: "pending" }));
+    const perTask = Math.ceil(allResults.length / TASK_COUNT);
+    const myStart = TASK_INDEX * perTask;
+    results = allResults.slice(myStart, myStart + perTask);
+    if (results.length === 0) { console.log(`Task ${TASK_INDEX}: no videos in my slice, exiting.`); process.exit(0); }
+    label = `Task ${TASK_INDEX}: ${results.length} of ${allIds.length} videos from VIDEO_LIST`;
+    console.log(`VIDEO_LIST mode: ${allIds.length} total IDs, task ${TASK_INDEX} gets ${results.length}`);
   } else {
     // Batch mode — query BigQuery and slice by offset/task
     console.log(`Querying BigQuery for all videos...`);
@@ -399,8 +464,12 @@ async function main() {
     label = `Task ${TASK_INDEX}: ${results.length} videos (${speakerNames[0]} → ${speakerNames[speakerNames.length - 1]})`;
   }
 
-  console.log(`${results.length} videos across ${speakerNames.length} speakers:`);
-  for (const s of speakerNames) console.log(`  ${speakerCounts[s].toString().padStart(3)} ${s}`);
+  if (typeof speakerNames !== "undefined" && speakerNames.length > 0) {
+    console.log(`${results.length} videos across ${speakerNames.length} speakers:`);
+    for (const s of speakerNames) console.log(`  ${speakerCounts[s].toString().padStart(3)} ${s}`);
+  } else {
+    console.log(`${results.length} videos to process`);
+  }
   console.log(`\nDownloading to GCS (${GCS_BUCKET}/${GCS_PREFIX}/)\n`);
 
   // Start status broadcasting

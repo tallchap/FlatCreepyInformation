@@ -85,9 +85,12 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
 export async function fetchYoutubeTranscript(url: string) {
   const response = await axios.post(
     "https://afraid-sparkling-planes.vercel.app/transcript",
-    {
-      url,
-    }
+    { url },
+    { transformResponse: [(data: string) => {
+      // Strip control characters that break JSON.parse (keep \t, \n, \r)
+      const sanitized = data.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+      return JSON.parse(sanitized);
+    }] }
   );
   const transcript = response.data;
   return transcript;
@@ -106,6 +109,9 @@ export async function createTranscriptDoc(
   }
 ): Promise<string> {
   try {
+    // Strip control characters that break JSON serialization in Google Docs API calls
+    const sanitize = (s: string) => s.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+
     // Get docs client
     const docsClient = await getGoogleDocsAuth();
 
@@ -159,9 +165,9 @@ export async function createTranscriptDoc(
       console.log(`Using video ID for Google Doc: ${safeVideoId}`);
 
       const headerFields = [
-        { label: "Video title: ", value: metadata.title || "N/A" },
+        { label: "Video title: ", value: sanitize(metadata.title || "N/A") },
         // Removed Speaker line as requested
-        { label: "Channel: ", value: metadata.channelName || "N/A" },
+        { label: "Channel: ", value: sanitize(metadata.channelName || "N/A") },
         { label: "Published: ", value: metadata.publishedAt || "N/A" },
         { label: "Video ID: ", value: safeVideoId },
         {
@@ -309,7 +315,7 @@ export async function createTranscriptDoc(
       for (const segment of transcriptData) {
         // Handle different property naming conventions using type assertions for flexibility
         const startTime = segment.start || (segment as any).Start || 0;
-        const text = segment.text || (segment as any).Text || "";
+        const text = sanitize(segment.text || (segment as any).Text || "");
 
         const timestamp = formatTimestamp(startTime);
         const segmentText = `[${timestamp}] ${text}\n`;
@@ -362,7 +368,7 @@ export async function createTranscriptDoc(
       if (formattedTranscript) {
         console.log("Using formatted transcript from Search_Doc_1 field");
         // Split by newlines to format properly
-        const lines = formattedTranscript.split("\n");
+        const lines = sanitize(formattedTranscript).split("\n");
 
         for (const line of lines) {
           if (line.trim()) {
