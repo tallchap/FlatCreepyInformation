@@ -26,7 +26,27 @@ export async function GET(req: NextRequest) {
   const items = data.items || [];
 
   if (items.length === 0) {
-    return NextResponse.json({ available: false });
+    // Video not in Bunny yet — trigger on-demand fetch from GCS
+    const fetchRes = await fetch(
+      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`,
+      {
+        method: "POST",
+        headers: {
+          AccessKey: BUNNY_API_KEY,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          url: `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`,
+          title: videoId,
+        }),
+      }
+    );
+    const fetchData = await fetchRes.json();
+    return NextResponse.json({
+      available: false,
+      fetching: fetchData.success || false,
+      message: fetchData.success ? "Queued for transcoding — using GCS fallback" : "Fetch failed",
+    });
   }
 
   const video = items[0];

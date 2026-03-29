@@ -103,12 +103,22 @@ export function ClipEditor({ cdnBaseUrl, videoSource }: { cdnBaseUrl?: string; v
         .then(d => {
           if (d.available && d.hlsUrl) {
             setBunnyHlsUrl(d.hlsUrl);
-            setGcsAvailable(false); // skip GCS path
+            setGcsAvailable(false);
           } else {
-            setGcsAvailable(false); // fall back to YouTube
+            // Bunny not ready (fetching or transcoding) — fall back to GCS
+            fetch(`/api/clip-gcs-check?videoId=${videoId}`)
+              .then(r => r.json())
+              .then(g => setGcsAvailable(!!g.available))
+              .catch(() => setGcsAvailable(false));
           }
         })
-        .catch(() => setGcsAvailable(false));
+        .catch(() => {
+          // Bunny API error — fall back to GCS
+          fetch(`/api/clip-gcs-check?videoId=${videoId}`)
+            .then(r => r.json())
+            .then(g => setGcsAvailable(!!g.available))
+            .catch(() => setGcsAvailable(false));
+        });
     } else {
       fetch(`/api/clip-gcs-check?videoId=${videoId}`)
         .then(r => r.json())
