@@ -127,26 +127,28 @@ async function searchApify(speaker) {
 
   const allResults = new Map(); // videoId -> candidate
 
-  for (const q of queries) {
-    try {
-      const items = await runApifySearch(q);
-      for (const item of items) {
-        const vid = item.id;
-        if (!vid || allResults.has(vid)) continue;
-        allResults.set(vid, {
-          videoId: vid,
-          title: item.title || "",
-          channel: item.channelName || "",
-          channelId: item.channelId || "",
-          description: item.text || "",
-          publishedAt: item.date ? item.date.split("T")[0] : null,
-          thumbnail: item.thumbnailUrl || "",
-          durationSeconds: parseDurationStr(item.duration),
-          viewCount: item.viewCount || 0,
-        });
-      }
-    } catch (err) {
+  const searchResults = await Promise.all(
+    queries.map((q) => runApifySearch(q).catch((err) => {
       console.error(`  Error on "${q}": ${err.message}`);
+      return [];
+    }))
+  );
+
+  for (const items of searchResults) {
+    for (const item of items) {
+      const vid = item.id;
+      if (!vid || allResults.has(vid)) continue;
+      allResults.set(vid, {
+        videoId: vid,
+        title: item.title || "",
+        channel: item.channelName || "",
+        channelId: item.channelId || "",
+        description: item.text || "",
+        publishedAt: item.date ? item.date.split("T")[0] : null,
+        thumbnail: item.thumbnailUrl || "",
+        durationSeconds: parseDurationStr(item.duration),
+        viewCount: item.viewCount || 0,
+      });
     }
   }
 
