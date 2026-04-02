@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useRef, useState, useMemo, useCallback } from "react";
-import { Search, ChevronUp, ChevronDown, X } from "lucide-react";
+import { Search, ChevronUp, ChevronDown, X, ChevronRight } from "lucide-react";
+import Image from "next/image";
 
 type Line = { start: number; text: string };
 
@@ -10,6 +11,8 @@ interface TranscriptPanelProps {
   startSec: number;
   endSec: number;
   onLineClick: (sec: number) => void;
+  onOpenClipFinder?: () => void;
+  bare?: boolean;
 }
 
 function formatTime(sec: number): string {
@@ -18,7 +21,7 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: TranscriptPanelProps) {
+export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpenClipFinder, bare }: TranscriptPanelProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   const [query, setQuery] = useState("");
@@ -109,9 +112,13 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: Tran
     }
   };
 
+  const shellClass = bare
+    ? "flex flex-col h-full"
+    : "bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full";
+
   if (loading) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm h-full flex items-center justify-center">
+      <div className={bare ? "p-5 h-full flex items-center justify-center" : "bg-white rounded-xl border border-gray-200 p-5 shadow-sm h-full flex items-center justify-center"}>
         <p className="text-sm text-gray-400">Loading transcript...</p>
       </div>
     );
@@ -119,7 +126,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: Tran
 
   if (lines.length === 0) {
     return (
-      <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm h-full flex items-center justify-center">
+      <div className={bare ? "p-5 h-full flex items-center justify-center" : "bg-white rounded-xl border border-gray-200 p-5 shadow-sm h-full flex items-center justify-center"}>
         <p className="text-sm text-gray-400">No transcript available</p>
       </div>
     );
@@ -131,7 +138,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: Tran
   const currentMatchLineIdx = matchIndices.length > 0 ? matchIndices[currentMatchIdx] : -1;
 
   return (
-    <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full">
+    <div className={shellClass}>
       <div className="px-4 py-3 border-b border-gray-100 space-y-2">
         <div className="flex items-center justify-between">
           <div>
@@ -230,6 +237,19 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick }: Tran
           );
         })}
       </div>
+      {onOpenClipFinder && (
+        <button
+          onClick={onOpenClipFinder}
+          className="border-t border-gray-200 px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-green-50 transition-colors shrink-0"
+          style={{ background: "linear-gradient(to bottom, #f9fdfb, #f0fdf4)" }}
+        >
+          <Image src="/snippysaurus-logo.png" alt="" width={34} height={34} className="rounded-lg" />
+          <div className="text-left">
+            <div className="text-[15px] font-bold text-green-600">Find Snippets</div>
+          </div>
+          <ChevronRight className="ml-auto h-5 w-5 text-green-300" />
+        </button>
+      )}
     </div>
   );
 }

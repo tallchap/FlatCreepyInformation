@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Timeline } from "./timeline";
 import { TranscriptPanel } from "./transcript-panel";
+import { ClipFinder } from "./clip-finder";
 import { useDownload } from "@/lib/download-context";
 import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal";
 import { ClipsSection } from "./clips-section";
@@ -28,7 +29,7 @@ function formatDuration(sec: number): string {
 
 const MAX_CLIP_SEC = 11 * 60;
 
-export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = {}) {
+export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "gcs" | "bunny"; enableClipFinder?: boolean } = {}) {
   const [url, setUrl] = useState("");
   const [videoId, setVideoId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
@@ -53,6 +54,8 @@ export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = 
   // Text overlay state
   const [overlaySettings, setOverlaySettings] = useState<OverlaySettings | null>(null);
   const [overlayModalOpen, setOverlayModalOpen] = useState(false);
+  const [clipFinderOpen, setClipFinderOpen] = useState(true);
+  const [transcriptLines, setTranscriptLines] = useState<{ start: number; text: string }[]>([]);
   const playerRef = useRef<any>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const playerReadyRef = useRef(false);
@@ -126,6 +129,17 @@ export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = 
         .catch(() => setGcsAvailable(false));
     }
   }, [videoId, videoSource]);
+
+  // Fetch transcript for Clip Finder
+  useEffect(() => {
+    if (!videoId || !enableClipFinder) return;
+    fetch(`/api/transcript/${videoId}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data)) setTranscriptLines(data);
+      })
+      .catch(() => {});
+  }, [videoId, enableClipFinder]);
 
   // Track video wrapper width for proportional overlay font scaling
   useEffect(() => {
@@ -440,6 +454,17 @@ export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = 
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
 
+  const handleSnippetSelect = (start: number, end: number) => {
+    setStartSec(start);
+    setEndSec(end);
+    setHandlesPlaced(true);
+    if (playerReadyRef.current) {
+      playerRef.current?.seekTo(start, true);
+      playerRef.current?.playVideo();
+      setIsPlaying(true);
+    }
+  };
+
   const loadDebugLogs = useCallback(async () => {
     setDebugLoading(true);
     try {
@@ -546,12 +571,58 @@ export function ClipEditor({ videoSource }: { videoSource?: "gcs" | "bunny" } = 
               </div>
             </div>
             <div className="lg:col-span-2" style={videoHeight ? { height: videoHeight } : undefined}>
-              <TranscriptPanel
-                videoId={videoId}
-                startSec={startSec}
-                endSec={endSec}
-                onLineClick={handleTranscriptClick}
-              />
+              {enableClipFinder ? (
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full overflow-hidden">
+                  {/* Tab bar */}
+                  <div className="flex border-b border-gray-100 shrink-0">
+                    <button
+                      onClick={() => setClipFinderOpen(true)}
+                      className={`flex-1 py-2.5 text-[13px] font-semibold text-center transition-colors border-b-2 ${
+                        clipFinderOpen
+                          ? "text-green-600 border-green-600"
+                          : "text-gray-400 border-transparent hover:text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      Clip Finder
+                    </button>
+                    <button
+                      onClick={() => setClipFinderOpen(false)}
+                      className={`flex-1 py-2.5 text-[13px] font-semibold text-center transition-colors border-b-2 ${
+                        !clipFinderOpen
+                          ? "text-green-600 border-green-600"
+                          : "text-gray-400 border-transparent hover:text-gray-600 hover:bg-gray-50"
+                      }`}
+                    >
+                      Transcript
+                    </button>
+                  </div>
+                  {/* Tab content */}
+                  <div className="flex-1 overflow-hidden">
+                    {clipFinderOpen ? (
+                      <ClipFinder
+                        transcript={transcriptLines}
+                        onSelectSnippet={handleSnippetSelect}
+                        onClose={() => setClipFinderOpen(false)}
+                      />
+                    ) : (
+                      <TranscriptPanel
+                        videoId={videoId}
+                        startSec={startSec}
+                        endSec={endSec}
+                        onLineClick={handleTranscriptClick}
+                        bare
+                      />
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <TranscriptPanel
+                  videoId={videoId}
+                  startSec={startSec}
+                  endSec={endSec}
+                  onLineClick={handleTranscriptClick}
+                />
+              )}
             </div>
           </div>
 
