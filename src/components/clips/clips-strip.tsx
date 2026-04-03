@@ -1,5 +1,13 @@
 "use client";
 
+
+const DESC_LIMIT = 100;
+function truncateAtWord(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const cut = text.lastIndexOf(" ", limit);
+  const truncated = text.slice(0, cut > 0 ? cut : limit).replace(/[,;:\-–—'")\]}\s]+$/, "");
+  return truncated + "...";
+}
 import type { Clip } from "@/lib/types/clip";
 import Image from "next/image";
 
@@ -21,51 +29,47 @@ function ClipCard({
   active: boolean;
   onClick: () => void;
 }) {
+
   return (
-    <button
-      onClick={onClick}
-      className={`flex-shrink-0 w-[400px] rounded-lg overflow-hidden border bg-white text-left transition-all cursor-pointer ${
+    <div
+      className={`flex-shrink-0 w-[320px] rounded-lg overflow-hidden bg-white text-left cursor-pointer border-[6px] ${
         active
-          ? "border-blue-500 ring-2 ring-blue-200 shadow-md"
-          : "border-gray-200 hover:border-blue-300 hover:shadow-md"
+          ? "border-[#99cc66]"
+          : "border-transparent hover:border-gray-200"
       }`}
     >
-      <div className="relative aspect-video bg-black">
-        <img
-          src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
-          alt=""
-          className="w-full h-full object-cover"
-        />
-        {/* Dark overlay + snippysaurus logo */}
-        <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
-          <Image
-            src="/snippysaurus-logo.png"
+      <div onClick={onClick}>
+        <div className="relative aspect-video bg-black">
+          <img
+            src={`https://img.youtube.com/vi/${videoId}/mqdefault.jpg`}
             alt=""
-            width={48}
-            height={48}
-            className="rounded"
+            className="w-full h-full object-cover"
           />
+          <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
+            <Image
+              src="/snippysaurus-logo.png"
+              alt=""
+              width={48}
+              height={48}
+              className="rounded"
+            />
+          </div>
+          <span className="absolute bottom-1.5 right-1.5 bg-black/75 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded z-10">
+            {formatDuration(clip.durationMs)}
+          </span>
         </div>
-        <span className="absolute bottom-1.5 right-1.5 bg-black/75 text-white text-[9px] font-semibold px-1.5 py-0.5 rounded z-10">
-          {formatDuration(clip.durationMs)}
-        </span>
+        <div className="p-2">
+          <p className="text-sm font-medium text-gray-800 line-clamp-2 leading-snug">
+            {clip.title}
+          </p>
+        </div>
       </div>
-      <div className="p-2">
-        <p className="text-lg font-medium text-gray-800 line-clamp-2 leading-snug">
-          {clip.title}
+      <div className="px-2 pb-2">
+        <p className="text-[10px] text-gray-500 mt-0.5">
+          {clip.viralReason ? truncateAtWord(clip.viralReason, DESC_LIMIT) : "\u00A0"}
         </p>
-        {clip.viralReason && (
-          <p className="text-[10px] text-gray-500 line-clamp-2 mt-0.5">
-            {clip.viralReason}
-          </p>
-        )}
-        {active && (
-          <p className="text-[10px] text-blue-600 font-semibold mt-0.5">
-            Playing
-          </p>
-        )}
       </div>
-    </button>
+    </div>
   );
 }
 
@@ -83,7 +87,7 @@ export function ClipsStrip({
   if (clips.length === 0) return null;
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-2 scroll-smooth snap-x snap-mandatory">
+    <div className="flex gap-3 overflow-x-auto pb-2">
       {clips.map((clip) => (
         <ClipCard
           key={clip.clipId}

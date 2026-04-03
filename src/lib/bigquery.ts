@@ -72,14 +72,17 @@ export async function fetchVideoMeta(id: string) {
     const [rows] = await bigQuery.query({
       query: `
         SELECT
-          video_title AS title,
-          channel_name AS channel,
-          published_date AS published,
-          video_length AS video_length,
-          youtube_link AS youtube_url,
-          speaker_source AS speakers
-        FROM ${VIDEOS_TABLE}
-        WHERE video_id = @id
+          v.video_title AS title,
+          v.channel_name AS channel,
+          v.published_date AS published,
+          v.video_length AS video_length,
+          v.youtube_link AS youtube_url,
+          v.speaker_source AS speakers,
+          d.description
+        FROM ${VIDEOS_TABLE} v
+        LEFT JOIN \`youtubetranscripts-429803.reptranscripts.video_descriptions\` d
+          ON v.video_id = d.video_id
+        WHERE v.video_id = @id
         LIMIT 1
       `,
       params: { id },
@@ -362,14 +365,15 @@ export async function fetchTranscript(id: string) {
 
 /* ── Clips ── */
 
-import type { Clip } from "@/lib/types/clip";
+import type { Clip, AutoSnippet } from "@/lib/types/clip";
 
 const CLIPS_TABLE = "youtubetranscripts-429803.reptranscripts.clips";
+const SNIPPETS_AUTO_TABLE = "youtubetranscripts-429803.reptranscripts.snippets_auto";
 
 export async function fetchVideoClips(videoId: string): Promise<Clip[]> {
   const [rows] = await bigQuery.query({
     query: `SELECT clip_id, video_id, title, category, duration_ms, viral_score,
-                   viral_reason, transcript, speaker, gcs_url, vizard_editor_url
+                   viral_reason, transcript, speaker, gcs_url, vizard_editor_url, persona
             FROM \`${CLIPS_TABLE}\`
             WHERE video_id = @videoId
             ORDER BY category ASC`,
@@ -388,5 +392,31 @@ export async function fetchVideoClips(videoId: string): Promise<Clip[]> {
     speaker: r.speaker ?? null,
     gcsUrl: r.gcs_url,
     vizardEditorUrl: r.vizard_editor_url ?? null,
+    persona: r.persona ?? null,
+  }));
+}
+
+export async function fetchAutoSnippets(videoId: string): Promise<AutoSnippet[]> {
+  const [rows] = await bigQuery.query({
+    query: `SELECT snippet_id, original_video_id, title, description, category,
+                   duration_ms, transcript, gcs_url, provider, speaker, created_at
+            FROM \`${SNIPPETS_AUTO_TABLE}\`
+            WHERE original_video_id = @videoId
+            ORDER BY category ASC`,
+    params: { videoId },
+  });
+
+  return (rows || []).map((r: any) => ({
+    snippetId: r.snippet_id,
+    originalVideoId: r.original_video_id,
+    title: r.title,
+    description: r.description ?? null,
+    category: r.category,
+    durationMs: r.duration_ms,
+    transcript: r.transcript ?? null,
+    gcsUrl: r.gcs_url,
+    provider: r.provider ?? null,
+    speaker: r.speaker ?? null,
+    createdAt: r.created_at?.value ?? (r.created_at ? String(r.created_at) : null),
   }));
 }

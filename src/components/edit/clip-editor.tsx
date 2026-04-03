@@ -28,6 +28,13 @@ function formatDuration(sec: number): string {
 }
 
 const MAX_CLIP_SEC = 11 * 60;
+const META_DESC_LIMIT = 220;
+function truncateAtWord(text: string, limit: number): string {
+  if (text.length <= limit) return text;
+  const cut = text.lastIndexOf(" ", limit);
+  const truncated = text.slice(0, cut > 0 ? cut : limit).replace(/[,;:\-–—'")\]}\s]+$/, "");
+  return truncated + "...";
+}
 
 export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "gcs" | "bunny"; enableClipFinder?: boolean } = {}) {
   const [url, setUrl] = useState("");
@@ -67,17 +74,36 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const [videoHeight, setVideoHeight] = useState<number | null>(null);
   const [playerWidth, setPlayerWidth] = useState(700);
   const [videoRes, setVideoRes] = useState<string | null>(null);
+  const [videoMeta, setVideoMeta] = useState<{ title?: string; channel?: string; published?: string; speakers?: string; description?: string; video_length?: string } | null>(null);
+  const [metaDescExpanded, setMetaDescExpanded] = useState(false);
 
-  // Track video player height for transcript matching
   useEffect(() => {
-    const el = playerContainerRef.current;
+    if (!videoId) { setVideoMeta(null); return; }
+    setMetaDescExpanded(false);
+    fetch(`/api/video-meta?videoId=${videoId}`)
+      .then((r) => r.json())
+      .then((data) => setVideoMeta(data))
+      .catch(() => setVideoMeta(null));
+  }, [videoId]);
+
+  const leftColRef = useRef<HTMLDivElement>(null);
+  const lockedHeightRef = useRef<number | null>(null);
+
+  // Track left column height (video + collapsed description) for transcript pane
+  useEffect(() => {
+    const el = leftColRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
-      setVideoHeight(entry.contentRect.height);
+      // Only update height when description is NOT expanded
+      if (!metaDescExpanded) {
+        const h = entry.contentRect.height;
+        setVideoHeight(h);
+        lockedHeightRef.current = h;
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [videoId]);
+  }, [videoId, metaDescExpanded]);
 
   // Auto-load from ?v= query param
   useEffect(() => {
@@ -410,9 +436,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
 
   const handleFromStart = () => {
     if (!playerReadyRef.current) return;
-    playerRef.current?.seekTo(startSec, true);
-    playerRef.current?.playVideo();
-    startAutoPause();
+    if (handlesPlaced) {
+      playerRef.current?.seekTo(startSec, true);
+      playerRef.current?.playVideo();
+      startAutoPause();
+    } else {
+      playerRef.current?.seekTo(0, true);
+      playerRef.current?.playVideo();
+    }
   };
 
   const handlePlayPause = () => {
@@ -422,15 +453,20 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
       if (previewTimerRef.current) clearInterval(previewTimerRef.current);
     } else {
       playerRef.current?.playVideo();
-      startAutoPause();
+      if (handlesPlaced) startAutoPause();
     }
   };
 
   const handleLast5 = () => {
     if (!playerReadyRef.current) return;
-    playerRef.current?.seekTo(Math.max(startSec, endSec - 5), true);
+    if (handlesPlaced) {
+      playerRef.current?.seekTo(Math.max(startSec, endSec - 3), true);
+    } else {
+      const t = playerRef.current?.getCurrentTime?.() ?? 0;
+      playerRef.current?.seekTo(Math.max(0, t - 3), true);
+    }
     playerRef.current?.playVideo();
-    startAutoPause();
+    if (handlesPlaced) startAutoPause();
   };
 
   const handlePlaybackRateChange = (rate: number) => {
@@ -514,7 +550,7 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
         <>
           {/* Player + Transcript side by side */}
           <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3" ref={videoContainerRef}>
+            <div className="lg:col-span-3" ref={(el) => { videoContainerRef.current = el; leftColRef.current = el; }}>
               <div ref={playerContainerRef} className="bg-black rounded-xl overflow-hidden [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
                 <div ref={videoWrapperRef} className="relative aspect-video w-full max-h-full">
                   <div id="clip-player" className="w-full h-full" />
@@ -569,10 +605,38 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                   */}
                 </div>
               </div>
+              {videoMeta?.title && (
+                <div className="mt-2">
+                  <h3 className="text-base font-bold text-gray-900 line-clamp-2 leading-snug">{videoMeta.title}</h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    {[videoMeta.channel, typeof videoMeta.published === "object" ? (videoMeta.published as any)?.value : videoMeta.published].filter(Boolean).join(" · ")}
+                  </p>
+                  {videoMeta.description && (
+                    <p className="text-sm text-gray-600 mt-1">
+                      {metaDescExpanded ? (
+                        <>
+                          {videoMeta.description}{" "}
+                          <button onClick={() => setMetaDescExpanded(false)} className="text-blue-500 font-medium">Show less</button>
+                        </>
+                      ) : (
+                        <>
+                          {truncateAtWord(videoMeta.description, META_DESC_LIMIT)}
+                          {videoMeta.description.length > META_DESC_LIMIT && (
+                            <>
+                              {" "}
+                              <button onClick={() => setMetaDescExpanded(true)} className="text-blue-500 font-medium">See more</button>
+                            </>
+                          )}
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
-            <div className="lg:col-span-2" style={videoHeight ? { height: videoHeight } : undefined}>
+            <div className="lg:col-span-2 flex flex-col" style={videoHeight ? { maxHeight: videoHeight } : undefined}>
               {enableClipFinder ? (
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col h-full overflow-hidden">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 overflow-hidden">
                   {/* Tab bar */}
                   <div className="flex border-b border-gray-100 shrink-0">
                     <button
@@ -640,42 +704,47 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
             handlesPlaced={handlesPlaced}
             onAddText={() => setOverlayModalOpen(true)}
             hasOverlay={!!overlaySettings?.text}
+            isPlaying={isPlaying}
+            onPlayPause={handlePlayPause}
+            onFromStart={handleFromStart}
+            onLast5={handleLast5}
+            clipRangeNode={
+              <>
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-medium text-gray-500 uppercase">Start</label>
+                  <TimeInput value={startSec} onChange={(s) => setStartSec(Math.min(s, endSec - 0.01))} />
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[11px] font-medium text-gray-500 uppercase">End</label>
+                  <TimeInput value={endSec} onChange={(s) => setEndSec(Math.max(s, startSec + 0.01))} />
+                </div>
+                <div className="text-[11px] text-gray-500 whitespace-nowrap">
+                  Clip: <span className="font-semibold text-gray-700 font-mono">{formatDuration(clipDuration)}</span>
+                  {clipTooLong && (
+                    <span className="text-red-500 ml-1">(max {MAX_CLIP_SEC / 60}m)</span>
+                  )}
+                </div>
+              </>
+            }
           />
 
-          {/* Controls */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-            <div className="flex flex-wrap items-center gap-3">
-              {/* Time inputs */}
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-medium text-gray-500 uppercase">Start</label>
-                <TimeInput value={startSec} onChange={(s) => setStartSec(Math.min(s, endSec - 0.01))} />
-              </div>
-              <div className="flex items-center gap-2">
-                <label className="text-xs font-medium text-gray-500 uppercase">End</label>
-                <TimeInput value={endSec} onChange={(s) => setEndSec(Math.max(s, startSec + 0.01))} />
-              </div>
-
-              <div className="text-sm text-gray-500">
-                Clip: <span className="font-semibold text-gray-700 font-mono">{formatDuration(clipDuration)}</span>
-                {clipTooLong && (
-                  <span className="text-red-500 ml-2">
-                    (exceeds {MAX_CLIP_SEC / 60} min limit)
-                  </span>
-                )}
-              </div>
-
+          {/* Controls — single row */}
+          <div className="bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm">
+            <div className="flex items-center gap-3">
+              <button
+                onClick={() => { setDebugOpen((v) => !v); if (!debugOpen) void loadDebugLogs(); }}
+                className="px-3 py-1.5 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50 whitespace-nowrap"
+              >
+                {debugOpen ? "Hide Debug" : "Show Debug"}
+              </button>
               <div className="flex-1" />
-
-              {/* Quality toggle — 1080p only when video supports it */}
               <div className="flex rounded-lg border border-gray-200 overflow-hidden">
                 {(has1080 ? ["720p", "1080p"] as Quality[] : ["720p"] as Quality[]).map((q) => (
                   <button
                     key={q}
                     onClick={() => setQuality(q)}
                     className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                      quality === q
-                        ? "text-white"
-                        : "bg-white text-gray-600 hover:bg-gray-50"
+                      quality === q ? "text-white" : "bg-white text-gray-600 hover:bg-gray-50"
                     }`}
                     style={quality === q ? { backgroundColor: DINO_RED } : undefined}
                   >
@@ -683,49 +752,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                   </button>
                 ))}
               </div>
-            </div>
-
-
-            {/* Play buttons row */}
-            <div className="flex flex-wrap items-center gap-3 mt-4 pt-4 border-t border-gray-100">
-              <button
-                onClick={handleFromStart}
-                className={btnClass}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                From Start
-              </button>
-              <button
-                onClick={handlePlayPause}
-                className={`${btnClass} min-w-[80px]`}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                {isPlaying ? "Pause" : "Play"}
-              </button>
-              <button
-                onClick={handleLast5}
-                className={btnClass}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                Last 5s
-              </button>
-
-              <div className="flex-1" />
-
-              <button
-                onClick={() => { setDebugOpen((v) => !v); if (!debugOpen) void loadDebugLogs(); }}
-                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-              >
-                {debugOpen ? "Hide Debug" : "Show Debug"}
-              </button>
-
-
               <button
                 onClick={handleExport}
                 disabled={clipTooLong}
@@ -737,7 +763,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                 Export Snippet
               </button>
             </div>
-
           </div>
 
           {debugOpen && (
@@ -901,7 +926,7 @@ function TimeInput({ value, onChange }: { value: number; onChange: (sec: number)
       onChange={(e) => setText(e.target.value)}
       onBlur={commit}
       onKeyDown={(e) => e.key === "Enter" && commit()}
-      className="w-20 text-center rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
+      className="w-24 text-center rounded border border-gray-300 px-2 py-1 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-red-400"
     />
   );
 }

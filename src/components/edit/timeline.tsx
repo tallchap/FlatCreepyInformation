@@ -18,6 +18,11 @@ interface TimelineProps {
   handlesPlaced: boolean;
   onAddText?: () => void;
   hasOverlay?: boolean;
+  isPlaying?: boolean;
+  onPlayPause?: () => void;
+  onFromStart?: () => void;
+  onLast5?: () => void;
+  clipRangeNode?: React.ReactNode;
 }
 
 function formatTime(sec: number): string {
@@ -45,6 +50,11 @@ export function Timeline({
   handlesPlaced,
   onAddText,
   hasOverlay,
+  isPlaying,
+  onPlayPause,
+  onFromStart,
+  onLast5,
+  clipRangeNode,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
@@ -213,20 +223,38 @@ export function Timeline({
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <span className="text-xs font-medium text-gray-500 uppercase tracking-wide">
-            Timeline
-          </span>
-          {false && onAddText && (
-            <button
-              onClick={onAddText}
-              className="px-2.5 py-1 text-xs font-semibold text-white rounded transition-colors"
-              style={{ backgroundColor: hasOverlay ? "#16a34a" : "#DC2626" }}
-            >
-              {hasOverlay ? "Edit Text Overlay" : "Add Text Overlay"}
-            </button>
+        <div className="flex items-center gap-1">
+          {onFromStart && (
+            <>
+              <button
+                onClick={onFromStart}
+                className="px-2 py-1 text-[11px] font-semibold rounded text-white hover:opacity-90"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                From Start
+              </button>
+              <button
+                onClick={onPlayPause}
+                className="px-2 py-1 text-[11px] font-semibold rounded text-white hover:opacity-90 min-w-[52px]"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                {isPlaying ? "Pause" : "Play"}
+              </button>
+              <button
+                onClick={onLast5}
+                className="px-2 py-1 text-[11px] font-semibold rounded text-white hover:opacity-90"
+                style={{ backgroundColor: "#DC2626" }}
+              >
+                Last 3s
+              </button>
+            </>
           )}
         </div>
+        {clipRangeNode && (
+          <div className="flex items-center gap-3">
+            {clipRangeNode}
+          </div>
+        )}
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <button
