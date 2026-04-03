@@ -338,10 +338,10 @@ export async function fetchTranscript(id: string) {
   if (useNewTranscriptTables()) {
     const [rows] = await bigQuery.query({
       query: `
-        SELECT start_sec, text
+        SELECT DISTINCT start_sec, text
         FROM ${SEGMENTS_TABLE}
         WHERE video_id = @id
-        ORDER BY COALESCE(start_sec, 1e12), segment_index
+        ORDER BY COALESCE(start_sec, 1e12)
       `,
       params: { id },
     });
