@@ -5,12 +5,28 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, FormEvent } from "react";
 import { toast } from "sonner";
 import { Loader } from "../loader";
 import { BulkForm } from "./bulk-form";
 import { singleExtract } from "./utils/actions";
 import { useDebugLog } from "./utils/hooks/useDebugLog";
+
+function extractVideoId(url: string): string | null {
+  if (!url) return null;
+  const patterns = [
+    /[?&]v=([a-zA-Z0-9_-]{11})/,
+    /youtu\.be\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/shorts\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/live\/([a-zA-Z0-9_-]{11})/,
+    /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
+  ];
+  for (const re of patterns) {
+    const m = url.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
 
 export function SingleForm() {
   const [state, action, isPending] = useActionState(singleExtract, null);
@@ -91,31 +107,6 @@ export function SingleForm() {
             videoTitle: state.videoTitle,
           });
         });
-
-      // Trigger Bunny Stream fetch via RapidAPI → Bunny (fire-and-forget, no GCS)
-      fetch("/api/trigger-bunny", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: state.vectorData?.videoId }),
-      })
-        .then((res) => {
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          addEntry({
-            step: "bunny-download",
-            status: "info",
-            message: "Bunny Stream fetch triggered (RapidAPI → Bunny, no GCS)",
-            videoTitle: state.videoTitle,
-          });
-        })
-        .catch((err) => {
-          console.error("Bunny download trigger failed:", err);
-          addEntry({
-            step: "bunny-download",
-            status: "error",
-            message: `Bunny download trigger failed: ${err.message} (non-blocking)`,
-            videoTitle: state.videoTitle,
-          });
-        });
     } else {
       addTranscript({
         videoTitle: state.videoTitle,
@@ -129,7 +120,25 @@ export function SingleForm() {
   return (
     <Card>
       <CardContent>
-        <form className="flex flex-col gap-6" action={action}>
+        <form
+          className="flex flex-col gap-6"
+          action={action}
+          onSubmit={(e: FormEvent<HTMLFormElement>) => {
+            const url = (e.currentTarget.elements.namedItem("url") as HTMLInputElement | null)?.value || "";
+            const videoId = extractVideoId(url);
+            if (!videoId) return;
+            fetch("/api/trigger-bunny", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ videoId }),
+            }).catch(() => {});
+            addEntry({
+              step: "bunny-download",
+              status: "info",
+              message: `Bunny fetch triggered at submit (videoId=${videoId})`,
+            });
+          }}
+        >
           <div className="flex flex-col gap-2">
             <div className="flex justify-between items-end gap-2">
               <Label htmlFor="url">YouTube URL</Label>
