@@ -153,17 +153,20 @@ async function pollBunnyUntilReady(videoId, pipelineName) {
         status: "success",
         detail: { availableResolutions, width, height, elapsedSec, guid },
       });
-      return;
+      return { outcome: "ready", elapsedSec, guid };
     }
-    // Terminal: error
+    // Terminal: error. If Bunny received 0 bytes within 30s we tag it as
+    // "empty-source" so the caller can self-heal with a fresh RapidAPI URL.
     if (status === 5 || status === 6) {
+      const storageSize = typeof match.storageSize === "number" ? match.storageSize : null;
+      const empty = elapsedSec <= 30 && (storageSize === 0 || storageSize === null);
       await logEvent({
         videoId, pipeline: pipelineName,
-        step: "bunny-failed",
+        step: empty ? "bunny-empty-source" : "bunny-failed",
         status: "error",
-        detail: { bunnyStatus: status, elapsedSec, guid },
+        detail: { bunnyStatus: status, storageSize, elapsedSec, guid },
       });
-      return;
+      return { outcome: empty ? "empty-source" : "failed", elapsedSec, guid };
     }
   }
   // Timeout
@@ -172,6 +175,34 @@ async function pollBunnyUntilReady(videoId, pipelineName) {
     step: "bunny-poll-timeout",
     status: "error",
     detail: { timeoutMinutes: 30, lastStatus },
+  });
+  return { outcome: "timeout", lastStatus };
+}
+
+// HEAD request with a short timeout. Used to verify a RapidAPI download_url
+// is actually alive before handing it to Bunny's fetch-from-URL endpoint —
+// stale URLs cause Bunny to accept the fetch job, receive 0 bytes, and
+// status=5 within ~10 s (see Px3HfB2UkyU 2026-04-13).
+function headUrl(url, timeoutMs = 5000) {
+  return new Promise((resolve) => {
+    const t0 = Date.now();
+    let settled = false;
+    const req = https.request(url, { method: "HEAD" }, (res) => {
+      settled = true;
+      resolve({ ok: res.statusCode >= 200 && res.statusCode < 400, status: res.statusCode, elapsedMs: Date.now() - t0 });
+    });
+    req.on("error", (err) => {
+      if (settled) return;
+      settled = true;
+      resolve({ ok: false, status: 0, elapsedMs: Date.now() - t0, error: err.message });
+    });
+    req.setTimeout(timeoutMs, () => {
+      if (settled) return;
+      settled = true;
+      req.destroy();
+      resolve({ ok: false, status: 0, elapsedMs: Date.now() - t0, error: "timeout" });
+    });
+    req.end();
   });
 }
 
@@ -513,6 +544,13 @@ async function processVideo(video) {
         if (pollCount % 6 === 0) {
           video.apiPollSamples.push({ poll: pollCount, elapsed: `${pollCount * 5}s`, ...progress });
           console.log(`  [${video.id}] RapidAPI: ${progress.progress}% ${progress.text} (${pollCount * 5}s)`);
+          await logEvent({
+            videoId: video.id,
+            pipeline: MODE === "bunny-only" ? "transcribe" : "research",
+            step: "rapidapi-progress",
+            status: "info",
+            detail: { quality: `${quality}p`, progress: progress.progress, text: progress.text, elapsedSec: pollCount * 5 },
+          });
         }
         markDirty();
 
@@ -536,6 +574,20 @@ async function processVideo(video) {
             // Bunny-only mode: skip disk download + GCS upload. Hand the
             // RapidAPI download_url straight to Bunny's fetch-from-URL API.
             console.log(`  [${video.id}] MODE=bunny-only → Bunny fetching directly from RapidAPI (${quality}p). No GCS.`);
+
+            // Freshness check: HEAD the download URL before handing to Bunny.
+            // Stale URLs cause Bunny to accept the fetch but receive 0 bytes.
+            const head = await headUrl(progress.download_url);
+            await logEvent({
+              videoId: video.id, pipeline: "transcribe", step: "rapidapi-url-check",
+              status: head.ok ? "success" : "error",
+              detail: { quality: `${quality}p`, httpStatus: head.status, elapsedMs: head.elapsedMs, error: head.error },
+            });
+            if (!head.ok) {
+              console.log(`  [${video.id}] rapidapi-url-check failed (${head.status || head.error}); falling through to next format`);
+              continue;
+            }
+
             video.bunnyStatus = await ingestToBunny(video.id, progress.download_url);
             video.status = video.bunnyStatus === "queued" ? "complete" : "failed";
             video.resolution = `${quality}p`;
@@ -543,10 +595,17 @@ async function processVideo(video) {
             markDirty();
             console.log(`  [${video.id}] DONE (bunny-only): ${video.elapsed}, ${quality}p, bunny=${video.bunnyStatus}`);
             await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus, elapsedSec: Math.round((Date.now() - start) / 1000) } });
-            // Stay alive and follow Bunny's encode progress so the admin log
-            // sees every status transition + progress milestone + early-play.
+
+            // Stay alive and follow Bunny's encode progress. If Bunny reports
+            // empty-source (status=5, storageSize=0 inside 30s) the URL died
+            // between our HEAD check and Bunny's fetch — fall through to the
+            // next format for a fresh RapidAPI URL.
             if (video.bunnyStatus === "queued") {
-              await pollBunnyUntilReady(video.id, "transcribe");
+              const result = await pollBunnyUntilReady(video.id, "transcribe");
+              if (result?.outcome === "empty-source") {
+                console.log(`  [${video.id}] bunny empty-source; falling through to next format for a fresh URL`);
+                continue;
+              }
             }
             console.log("");
             return;
