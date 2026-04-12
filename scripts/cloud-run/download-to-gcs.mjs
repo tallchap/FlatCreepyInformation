@@ -120,9 +120,9 @@ async function pollBunnyUntilReady(videoId, pipelineName) {
       lastStatus = status;
     }
 
-    // Progress milestones — every 20% during status 2/3
+    // Progress milestones — every 5% during status 2/3
     if ((status === 2 || status === 3) && typeof encodeProgress === "number") {
-      const bucket = Math.floor(encodeProgress / 20) * 20;
+      const bucket = Math.floor(encodeProgress / 5) * 5;
       if (bucket > lastProgressBucket && bucket > 0) {
         lastProgressBucket = bucket;
         await logEvent({
