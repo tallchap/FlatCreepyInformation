@@ -804,6 +804,77 @@ function pickBunnyRendition(availableResolutions, heightLimit) {
   return heights.find((h) => h <= heightLimit) || heights[0] || null;
 }
 
+// Fetch a URL as text with a Referer header (Bunny gates CDN on this).
+async function fetchText(url, referer) {
+  const { execFile: ef } = require("child_process");
+  return new Promise((resolve, reject) => {
+    const args = ["-fsSL", "-H", `Referer: ${referer}`, url];
+    ef("curl", args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
+      if (err) reject(err); else resolve(stdout);
+    });
+  });
+}
+
+// Parse Bunny master playlist → [{height, url}].
+function parseHlsMaster(text, baseUrl) {
+  const out = [];
+  const re = /#EXT-X-STREAM-INF:[^\n]*RESOLUTION=(\d+)x(\d+)[^\n]*\n([^\n]+)/g;
+  let m;
+  while ((m = re.exec(text))) {
+    out.push({ height: parseInt(m[2], 10), url: new URL(m[3].trim(), baseUrl).toString() });
+  }
+  return out;
+}
+
+// Parse a rendition playlist → [{index, startOffset, duration, url}].
+function parseHlsRendition(text, baseUrl) {
+  const out = [];
+  const re = /#EXTINF:([\d.]+),\s*\n([^\n]+)/g;
+  let m, offset = 0, i = 0;
+  while ((m = re.exec(text))) {
+    const dur = parseFloat(m[1]);
+    const url = new URL(m[2].trim(), baseUrl).toString();
+    out.push({ index: i++, startOffset: offset, duration: dur, url });
+    offset += dur;
+  }
+  return out;
+}
+
+// Download .ts segments covering [startSec, endSec] for a Bunny video, write
+// an ffmpeg concat list, and return { concatFile, segmentStartOffset, bytes }.
+async function fetchBunnyHlsSegments(guid, heightLimit, startSec, endSec, scratchDir) {
+  const masterUrl = `https://${BUNNY_CDN_HOST}/${guid}/playlist.m3u8`;
+  const masterText = await fetchText(masterUrl, BUNNY_REFERER);
+  const renditions = parseHlsMaster(masterText, masterUrl)
+    .sort((a, b) => b.height - a.height);
+  const picked = renditions.find((r) => r.height <= heightLimit) || renditions[renditions.length - 1];
+  if (!picked) throw new Error("No rendition in master HLS playlist");
+
+  const renditionText = await fetchText(picked.url, BUNNY_REFERER);
+  const segments = parseHlsRendition(renditionText, picked.url);
+  if (!segments.length) throw new Error("No segments in rendition playlist");
+
+  const firstIdx = Math.max(0, segments.findIndex((s) => s.startOffset + s.duration > startSec));
+  let lastIdx = segments.findIndex((s) => s.startOffset + s.duration >= endSec);
+  if (lastIdx === -1) lastIdx = segments.length - 1;
+  const covering = segments.slice(firstIdx, lastIdx + 1);
+  const segmentStartOffset = covering[0].startOffset;
+
+  fs.mkdirSync(scratchDir, { recursive: true });
+  let totalBytes = 0;
+  await Promise.all(covering.map(async (seg, i) => {
+    const outPath = join(scratchDir, `seg${String(i).padStart(4, "0")}.ts`);
+    await execCapture("curl", ["-fsSL", "-H", `Referer: ${BUNNY_REFERER}`, "-o", outPath, seg.url], { timeout: 120_000 });
+    totalBytes += fs.statSync(outPath).size;
+  }));
+
+  const concatFile = join(scratchDir, "concat.txt");
+  const list = covering.map((_, i) => `file '${join(scratchDir, `seg${String(i).padStart(4, "0")}.ts`).replace(/'/g, "'\\''")}'`).join("\n");
+  fs.writeFileSync(concatFile, list + "\n");
+
+  return { concatFile, segmentStartOffset, bytes: totalBytes, pickedHeight: picked.height, segmentCount: covering.length };
+}
+
 async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay, source }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
@@ -811,40 +882,68 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
   const srcFile = join(tmpdir(), `gcs-src-${jobId}.mp4`);
+  const hlsScratchDir = join(tmpdir(), `hls-${jobId}`);
   const duration = endSec - startSec;
 
   // Resolve the source URL + any required headers.
-  // `source` comes from the POST handler: { type: "bunny" | "gcs", url, referer? }.
+  // `source` comes from the POST handler: { type: "bunny" | "gcs", url, referer?, guid? }.
   const srcUrl = source.url;
   const srcReferer = source.referer || null;
+  const useHlsPath = source.type === "bunny" && source.guid && process.env.HLS_CLIP_EXPORT !== "0";
 
   const timings = { start: Date.now(), downloadDone: 0, trimDone: 0 };
 
   try {
-    logDebug("gcs-clip.start", { jobId, videoId, startSec, endSec, quality: `${heightLimit}p`, source: source.type });
+    logDebug("gcs-clip.start", { jobId, videoId, startSec, endSec, quality: `${heightLimit}p`, source: source.type, mode: useHlsPath ? "hls" : "mp4" });
 
-    // Step 1: Download source (Bunny or GCS)
-    job.stage = source.type === "bunny" ? "downloading-from-bunny" : "downloading-from-gcs";
-    job.stageDetail = source.type === "bunny" ? "Downloading from Bunny..." : "Downloading from GCS...";
-    job.progress = 10;
-    logDebug("gcs-clip.downloading", { srcUrl, type: source.type });
-    const curlArgs = ["-fL", "-o", srcFile];
-    if (srcReferer) curlArgs.push("-H", `Referer: ${srcReferer}`);
-    curlArgs.push(srcUrl);
-    await execCapture("curl", curlArgs, { timeout: 600_000 });
-    timings.downloadDone = Date.now();
-    job.progress = 40;
+    let ffmpegInputArgs; // [...input-opts, "-i", path-or-concat]
+    let ffmpegSeekSec;   // -ss value (output-side for HLS, skipped for MP4 path)
+    let videoMeta = null;
 
-    // Step 2: ffprobe + re-mux if needed
-    const videoMeta = await getVideoMetadata(srcFile);
-    if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
-      job.stageDetail = "Re-muxing corrupt container...";
-      logDebug("gcs-clip.remux-start", { warnings: videoMeta.warnings.trim() });
-      const remuxFile = srcFile.replace(".mp4", "-remux.mp4");
-      await execCapture("ffmpeg", ["-i", srcFile, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
-      await unlink(srcFile).catch(() => {});
-      fs.renameSync(remuxFile, srcFile);
-      logDebug("gcs-clip.remux-done", {});
+    if (useHlsPath) {
+      // HLS path: fetch only the .ts segments covering [startSec, endSec].
+      job.stage = "downloading-from-bunny-hls";
+      job.stageDetail = "Fetching HLS segments...";
+      job.progress = 10;
+      const hls = await fetchBunnyHlsSegments(source.guid, heightLimit, startSec, endSec, hlsScratchDir);
+      timings.downloadDone = Date.now();
+      logDebug("gcs-clip.hls-fetched", {
+        segmentCount: hls.segmentCount,
+        bytes: hls.bytes,
+        mb: (hls.bytes / 1024 / 1024).toFixed(1),
+        pickedHeight: hls.pickedHeight,
+        segmentStartOffset: hls.segmentStartOffset,
+      });
+      job.progress = 40;
+      ffmpegInputArgs = ["-f", "concat", "-safe", "0", "-i", hls.concatFile];
+      ffmpegSeekSec = Math.max(0, startSec - hls.segmentStartOffset);
+      videoMeta = { width: hls.pickedHeight >= 1080 ? 1920 : hls.pickedHeight >= 720 ? 1280 : hls.pickedHeight >= 480 ? 854 : hls.pickedHeight >= 360 ? 640 : 426 };
+    } else {
+      // Legacy full-MP4 path (GCS or Bunny MP4 fallback).
+      job.stage = source.type === "bunny" ? "downloading-from-bunny" : "downloading-from-gcs";
+      job.stageDetail = source.type === "bunny" ? "Downloading from Bunny..." : "Downloading from GCS...";
+      job.progress = 10;
+      logDebug("gcs-clip.downloading", { srcUrl, type: source.type });
+      const curlArgs = ["-fL", "-o", srcFile];
+      if (srcReferer) curlArgs.push("-H", `Referer: ${srcReferer}`);
+      curlArgs.push(srcUrl);
+      await execCapture("curl", curlArgs, { timeout: 600_000 });
+      timings.downloadDone = Date.now();
+      job.progress = 40;
+
+      videoMeta = await getVideoMetadata(srcFile);
+      if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
+        job.stageDetail = "Re-muxing corrupt container...";
+        logDebug("gcs-clip.remux-start", { warnings: videoMeta.warnings.trim() });
+        const remuxFile = srcFile.replace(".mp4", "-remux.mp4");
+        await execCapture("ffmpeg", ["-i", srcFile, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
+        await unlink(srcFile).catch(() => {});
+        fs.renameSync(remuxFile, srcFile);
+        logDebug("gcs-clip.remux-done", {});
+      }
+      // Legacy seek: -ss before -i (fast input seek; with re-encode, frame-accurate)
+      ffmpegInputArgs = ["-err_detect", "ignore_err", "-fflags", "+genpts", "-ss", String(startSec), "-i", srcFile];
+      ffmpegSeekSec = null;
     }
 
     // Step 3: ffmpeg trim with progress
@@ -852,12 +951,12 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     job.stageDetail = "Trimming: 0%";
     job.progress = 50;
     const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
-        const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
-    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
+    const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
+    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no", mode: useHlsPath ? "hls" : "mp4" });
     await new Promise((resolve, reject) => {
       const args = [
-        "-err_detect", "ignore_err", "-fflags", "+genpts",
-        "-ss", String(startSec), "-i", srcFile,
+        ...ffmpegInputArgs,
+        ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
         "-t", String(duration),
         ...(overlayFilter ? ["-vf", overlayFilter] : []),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
@@ -899,6 +998,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       });
     });
     await unlink(srcFile).catch(() => {});
+    fs.rmSync(hlsScratchDir, { recursive: true, force: true });
     timings.trimDone = Date.now();
 
     const { size } = fs.statSync(clipFile);
@@ -907,11 +1007,12 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     job.clipFile = clipFile;
     job.fileSize = size;
     const totalSec = (Date.now() - timings.start) / 1000;
-    logDebug("gcs-clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1), route: "gcs" });
+    logDebug("gcs-clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1), route: useHlsPath ? "bunny-hls" : source.type });
 
   } catch (error) {
     await unlink(clipFile).catch(() => {});
     await unlink(srcFile).catch(() => {});
+    fs.rmSync(hlsScratchDir, { recursive: true, force: true });
     const detail = error.stderr || error.message || "Unknown error";
     job.status = "failed";
     job.error = detail;
@@ -946,6 +1047,7 @@ app.post("/clip-gcs", async (req, res) => {
         url: `https://${BUNNY_CDN_HOST}/${bunny.guid}/play_${pickedHeight}p.mp4`,
         referer: BUNNY_REFERER,
         pickedHeight,
+        guid: bunny.guid,
       };
       logDebug("clip-gcs.source-bunny", { videoId, guid: bunny.guid, pickedHeight, requested: heightLimit, available: bunny.availableResolutions });
     }
