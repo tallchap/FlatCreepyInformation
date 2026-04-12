@@ -976,7 +976,6 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
         "-t", String(duration),
         ...(overlayFilter ? ["-vf", overlayFilter] : []),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
-        ...(useHlsPath ? ["-af", "aresample=async=1:first_pts=0"] : []),
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", "-y", clipFile,
       ];
