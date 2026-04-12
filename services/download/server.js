@@ -1141,6 +1141,52 @@ app.get("/clip/:jobId/file", async (req, res) => {
   }
 });
 
+// Stream the full-length Bunny MP4 rendition to the client as a download.
+// No re-encode. Bunny → Render → user. Supports Range requests.
+app.get("/full-video", async (req, res) => {
+  const videoId = String(req.query.videoId || "");
+  const quality = String(req.query.quality || "1080p");
+  if (!videoId) return res.status(400).json({ error: "Missing videoId" });
+
+  const heightLimit = quality === "1080p" ? 1080 : 720;
+  const bunny = await bunnyLookup(videoId).catch(() => null);
+  if (!bunny) return res.status(404).json({ error: "Video not in Bunny" });
+  const pickedHeight = pickBunnyRendition(bunny.availableResolutions, heightLimit);
+  if (!pickedHeight) return res.status(404).json({ error: "No rendition available" });
+
+  const upstreamUrl = `https://${BUNNY_CDN_HOST}/${bunny.guid}/play_${pickedHeight}p.mp4`;
+  const filename = `${videoId}-${pickedHeight}p.mp4`;
+
+  const https = require("https");
+  const headers = { Referer: BUNNY_REFERER };
+  if (req.headers.range) headers.Range = req.headers.range;
+
+  logDebug("full-video.start", { videoId, quality: `${pickedHeight}p`, range: req.headers.range || null });
+
+  const upstream = https.get(upstreamUrl, { headers }, (upRes) => {
+    if (upRes.statusCode >= 400) {
+      res.status(upRes.statusCode).json({ error: `Upstream ${upRes.statusCode}` });
+      upRes.resume();
+      return;
+    }
+    res.status(upRes.statusCode);
+    res.set({
+      "Content-Type": "video/mp4",
+      "Content-Disposition": `attachment; filename="${filename}"`,
+      "Accept-Ranges": "bytes",
+    });
+    if (upRes.headers["content-length"]) res.set("Content-Length", upRes.headers["content-length"]);
+    if (upRes.headers["content-range"]) res.set("Content-Range", upRes.headers["content-range"]);
+    upRes.pipe(res);
+    upRes.on("end", () => logDebug("full-video.done", { videoId, bytes: upRes.headers["content-length"] || "?" }));
+  });
+  upstream.on("error", (err) => {
+    logDebug("full-video.error", { videoId, err: err.message });
+    if (!res.headersSent) res.status(502).json({ error: "Upstream fetch failed" });
+  });
+  req.on("close", () => { try { upstream.destroy(); } catch (_) {} });
+});
+
 app.get("/debug", async (_req, res) => {
   const results = { debug_events: debugEvents.length, warp_available: warpAvailable };
 
