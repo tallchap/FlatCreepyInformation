@@ -69,6 +69,112 @@ const bigquery = new BigQuery({ projectId: credentials.project_id, credentials }
 
 // --- Helpers ---
 
+// Poll Bunny for the given videoId's encoding status. Logs events at status
+// transitions, progress milestones (every 20%), and when early-play / final
+// HLS become ready. Caps at ~30 min.
+const BUNNY_STATUS_LABEL = {
+  0: "created", 1: "queued", 2: "processing", 3: "encoding",
+  4: "ready", 5: "error", 6: "upload-failed",
+};
+async function pollBunnyUntilReady(videoId, pipelineName) {
+  if (!BUNNY_STREAM_API_KEY) return;
+  const startPoll = Date.now();
+  const maxMs = 30 * 60 * 1000;
+  const intervalMs = 10_000;
+  let lastStatus = -1;
+  let lastProgressBucket = -1;
+  let loggedEarlyPlay = false;
+  while (Date.now() - startPoll < maxMs) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    let v;
+    try {
+      v = await new Promise((resolve, reject) => {
+        https.get(
+          `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?search=${encodeURIComponent(videoId)}&itemsPerPage=3`,
+          { headers: { AccessKey: BUNNY_STREAM_API_KEY } },
+          (res) => {
+            let b = "";
+            res.on("data", (c) => (b += c));
+            res.on("end", () => { try { resolve(JSON.parse(b)); } catch (e) { reject(e); } });
+          }
+        ).on("error", reject);
+      });
+    } catch (e) {
+      console.log(`  [${videoId}] Bunny poll error: ${e.message}`);
+      continue;
+    }
+    const match = (v?.items || []).find((x) => x.title === videoId);
+    if (!match) continue;
+    const { status, encodeProgress, availableResolutions, width, height, guid } = match;
+    const elapsedSec = Math.round((Date.now() - startPoll) / 1000);
+
+    // Status transition events
+    if (status !== lastStatus) {
+      console.log(`  [${videoId}] Bunny status ${lastStatus}→${status} (${BUNNY_STATUS_LABEL[status] || status}) at ${elapsedSec}s`);
+      await logEvent({
+        videoId, pipeline: pipelineName,
+        step: `bunny-status-${BUNNY_STATUS_LABEL[status] || status}`,
+        status: status === 5 || status === 6 ? "error" : "info",
+        detail: { bunnyStatus: status, encodeProgress, elapsedSec, guid },
+      });
+      lastStatus = status;
+    }
+
+    // Progress milestones — every 20% during status 2/3
+    if ((status === 2 || status === 3) && typeof encodeProgress === "number") {
+      const bucket = Math.floor(encodeProgress / 20) * 20;
+      if (bucket > lastProgressBucket && bucket > 0) {
+        lastProgressBucket = bucket;
+        await logEvent({
+          videoId, pipeline: pipelineName,
+          step: "bunny-progress",
+          status: "info",
+          detail: { encodeProgress, bucket, availableResolutions, elapsedSec },
+        });
+      }
+    }
+
+    // Early-Play: once the first rendition is listed, it's playable
+    if (!loggedEarlyPlay && availableResolutions && availableResolutions.length > 0 && status !== 4) {
+      loggedEarlyPlay = true;
+      await logEvent({
+        videoId, pipeline: pipelineName,
+        step: "bunny-earlyplay-ready",
+        status: "success",
+        detail: { availableResolutions, elapsedSec, guid },
+      });
+    }
+
+    // Terminal: ready
+    if (status === 4) {
+      await logEvent({
+        videoId, pipeline: pipelineName,
+        step: "bunny-ready",
+        status: "success",
+        detail: { availableResolutions, width, height, elapsedSec, guid },
+      });
+      return;
+    }
+    // Terminal: error
+    if (status === 5 || status === 6) {
+      await logEvent({
+        videoId, pipeline: pipelineName,
+        step: "bunny-failed",
+        status: "error",
+        detail: { bunnyStatus: status, elapsedSec, guid },
+      });
+      return;
+    }
+  }
+  // Timeout
+  await logEvent({
+    videoId, pipeline: pipelineName,
+    step: "bunny-poll-timeout",
+    status: "error",
+    detail: { timeoutMinutes: 30, lastStatus },
+  });
+}
+
 function httpsGet(url, headers = {}) {
   return new Promise((resolve, reject) => {
     https.get(url, { headers }, (res) => {
@@ -379,6 +485,11 @@ async function processVideo(video) {
             markDirty();
             console.log(`  [${video.id}] DONE (bunny-only): ${video.elapsed}, ${quality}p, bunny=${video.bunnyStatus}`);
             await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus, elapsedSec: Math.round((Date.now() - start) / 1000) } });
+            // Stay alive and follow Bunny's encode progress so the admin log
+            // sees every status transition + progress milestone + early-play.
+            if (video.bunnyStatus === "queued") {
+              await pollBunnyUntilReady(video.id, "transcribe");
+            }
             console.log("");
             return;
           }
