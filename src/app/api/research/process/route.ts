@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
 
     // Mark all as queued via streaming inserts to log table (no DML limit)
     const logTable = bigQuery.dataset("reptranscripts").table("research_processing_log");
-    const logRows = videoIds.map((vid) => ({
+    const logRows = videoIds.map((vid: string) => ({
       run_id: runId, video_id: vid, status: "queued", step: "", steps_json: "", error: "", created_at: new Date().toISOString(),
     }));
     try { await logTable.insert(logRows, { ignoreUnknownValues: true }); } catch {}
