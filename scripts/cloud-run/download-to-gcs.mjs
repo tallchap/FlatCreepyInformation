@@ -185,6 +185,59 @@ function httpsGet(url, headers = {}) {
   });
 }
 
+// Like httpsGet but returns {parsed, raw, status} so callers can inspect the
+// raw body + status code when the response shape is unexpected.
+function httpsGetFull(url, headers = {}) {
+  return new Promise((resolve, reject) => {
+    https.get(url, { headers }, (res) => {
+      let body = "";
+      res.on("data", (c) => body += c);
+      res.on("end", () => {
+        let parsed = null;
+        try { parsed = JSON.parse(body); } catch {}
+        resolve({ parsed, raw: body, status: res.statusCode });
+      });
+    }).on("error", reject);
+  });
+}
+
+// Retry init on transient RapidAPI failure. Returns the successful initRes,
+// or throws after all attempts fail. Each failure logs to console + admin log.
+async function rapidapiInitWithRetry({ videoId, pipelineName, requestUrl, headers, quality }) {
+  const backoffsMs = [5_000, 15_000, 45_000];
+  let lastErr = null;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const t0 = Date.now();
+    try {
+      const { parsed, raw, status } = await httpsGetFull(requestUrl, headers);
+      const elapsedMs = Date.now() - t0;
+      if (parsed && parsed.success) {
+        return parsed;
+      }
+      const rawSnippet = (raw || "").slice(0, 300);
+      const reason = parsed?.message || parsed?.error || `status=${status}, raw="${rawSnippet}"`;
+      console.log(`  [${videoId}] RapidAPI init attempt ${attempt}/3 at ${quality}p failed in ${elapsedMs}ms: ${reason}`);
+      await logEvent({
+        videoId, pipeline: pipelineName, step: "rapidapi-init-failed", status: "error",
+        detail: { attempt, quality: `${quality}p`, elapsedMs, httpStatus: status, rawSnippet, parsed },
+      });
+      lastErr = new Error(`attempt ${attempt}/3: ${reason}`);
+    } catch (err) {
+      const elapsedMs = Date.now() - t0;
+      console.log(`  [${videoId}] RapidAPI init attempt ${attempt}/3 at ${quality}p threw in ${elapsedMs}ms: ${err.message}`);
+      await logEvent({
+        videoId, pipeline: pipelineName, step: "rapidapi-init-failed", status: "error",
+        detail: { attempt, quality: `${quality}p`, elapsedMs, error: err.message },
+      });
+      lastErr = err;
+    }
+    if (attempt < 3) {
+      await new Promise((r) => setTimeout(r, backoffsMs[attempt - 1]));
+    }
+  }
+  throw lastErr || new Error("rapidapi init failed after 3 attempts");
+}
+
 async function ingestToBunny(videoId, sourceUrl = null) {
   if (!BUNNY_STREAM_API_KEY) {
     console.log(`  [${videoId}] Bunny: skipped (no API key)`);
@@ -426,14 +479,19 @@ async function processVideo(video) {
         "x-rapidapi-key": RAPIDAPI_KEY.slice(0, 8) + "...",
       };
 
-      const initRes = await httpsGet(requestUrl, {
+      const initHeaders = {
         "Content-Type": "application/json",
         "x-rapidapi-host": RAPIDAPI_HOST,
         "x-rapidapi-key": RAPIDAPI_KEY,
+      };
+      const initRes = await rapidapiInitWithRetry({
+        videoId: video.id,
+        pipelineName: MODE === "bunny-only" ? "transcribe" : "research",
+        requestUrl,
+        headers: initHeaders,
+        quality,
       });
-
       video.apiInitResponse = initRes;
-      if (!initRes.success) throw new Error(`RapidAPI init failed: ${initRes.message}`);
 
       video.apiCost = (video.apiCost || 0) + (initRes.extended_duration?.final_price || 0);
       console.log(`  [${video.id}] RapidAPI cost: $${initRes.extended_duration?.final_price || "?"} (${initRes.extended_duration?.multiplier || "?"}x)`);
