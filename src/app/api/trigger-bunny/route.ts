@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { google } from "googleapis";
+import { logEvent } from "@/lib/pipeline-log";
 
 /* ─────────────────────────────────────────────────────────────────────────────
  * SECONDARY PATHWAY — Vercel-local RapidAPI → Bunny direct (commented out).
@@ -67,12 +68,14 @@ export async function POST(req: NextRequest) {
     if (!res.ok) {
       const text = await res.text();
       console.error("Cloud Run API error:", res.status, text);
+      await logEvent({ videoId, pipeline: "transcribe", step: "bunny-trigger", status: "error", detail: `Cloud Run API ${res.status}: ${text.slice(0, 200)}` });
       return NextResponse.json({ error: `Cloud Run API ${res.status}: ${text}` }, { status: 502 });
     }
 
     const data = await res.json();
     const executionName = data.metadata?.name || data.name || "unknown";
     console.log(`[trigger-bunny] ${videoId}: Cloud Run ${JOB} → ${executionName}`);
+    await logEvent({ videoId, pipeline: "transcribe", step: "bunny-trigger", status: "success", detail: { execution: executionName, job: JOB } });
 
     return NextResponse.json({ ok: true, execution: executionName, videoId, method: "cloud-run-bunny-only" });
   } catch (error: any) {

@@ -1,5 +1,6 @@
 import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
+import Redis from "ioredis";
 import https from "https";
 import { spawn } from "child_process";
 import { unlinkSync, statSync } from "fs";
@@ -23,6 +24,32 @@ const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 2;
 const BATCH_OFFSET = parseInt(process.env.BATCH_OFFSET) || 0;
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT) || 20;
 const MODE = (process.env.MODE || "").trim(); // "bunny-only" → skip GCS, fetch RapidAPI URL direct to Bunny
+
+// Redis-backed pipeline event log (admin dashboard).
+const REDIS_URL = (process.env.REDIS_URL || "").trim();
+let _redis = null;
+if (REDIS_URL) {
+  _redis = new Redis(REDIS_URL, { lazyConnect: false, maxRetriesPerRequest: 2 });
+  _redis.on("error", (e) => console.log(`[pipeline-log] redis error: ${e.message}`));
+}
+async function logEvent({ videoId, pipeline, step, status, detail }) {
+  if (!_redis) return;
+  try {
+    const payload = JSON.stringify({ ts: Date.now(), videoId, pipeline, step, status, detail });
+    const videoKey = `pipeline:video:${videoId}`;
+    await Promise.all([
+      _redis.lpush("pipeline:events", payload),
+      _redis.ltrim("pipeline:events", 0, 9999),
+      _redis.lpush(videoKey, payload),
+      _redis.ltrim(videoKey, 0, 99),
+      _redis.expire(videoKey, 60 * 60 * 24 * 30),
+      _redis.hset(`pipeline:latest:${videoId}`, { step, status, pipeline, ts: String(Date.now()) }),
+      _redis.expire(`pipeline:latest:${videoId}`, 60 * 60 * 24 * 30),
+    ]);
+  } catch (e) {
+    console.log(`[pipeline-log] logEvent failed: ${e.message}`);
+  }
+}
 
 if (!RAPIDAPI_KEY) { console.error("Missing RAPIDAPI_KEY env var"); process.exit(1); }
 
@@ -283,6 +310,7 @@ async function processVideo(video) {
       video.apiPollSamples = [];
       markDirty();
       console.log(`  [${video.id}] RapidAPI: requesting ${quality}p...`);
+      await logEvent({ videoId: video.id, pipeline: MODE === "bunny-only" ? "transcribe" : "research", step: "rapidapi-init", status: "info", detail: { quality: `${quality}p` } });
 
       const requestUrl = `https://${RAPIDAPI_HOST}/ajax/download.php?${params}`;
       video.apiRequestUrl = requestUrl;
@@ -338,6 +366,7 @@ async function processVideo(video) {
 
         if (progress.success === 1 && progress.download_url) {
           console.log(`  [${video.id}] RapidAPI: ready (${pollCount * 5}s)`);
+          await logEvent({ videoId: video.id, pipeline: MODE === "bunny-only" ? "transcribe" : "research", step: "rapidapi-ready", status: "success", detail: { quality: `${quality}p`, elapsedSec: pollCount * 5 } });
 
           if (MODE === "bunny-only") {
             // Bunny-only mode: skip disk download + GCS upload. Hand the
@@ -349,6 +378,7 @@ async function processVideo(video) {
             video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
             markDirty();
             console.log(`  [${video.id}] DONE (bunny-only): ${video.elapsed}, ${quality}p, bunny=${video.bunnyStatus}`);
+            await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus, elapsedSec: Math.round((Date.now() - start) / 1000) } });
             console.log("");
             return;
           }
@@ -392,6 +422,7 @@ async function processVideo(video) {
           // Ingest to Bunny Stream (non-blocking)
           video.bunnyStatus = await ingestToBunny(video.id);
           markDirty();
+          await logEvent({ videoId: video.id, pipeline: "research", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus } });
           console.log("");
           return;
         }
@@ -524,4 +555,8 @@ async function saveResultsToGCS(totalCost) {
   await bucket.file(`${RESULTS_PREFIX}/${RUN_ID}.json`).save(JSON.stringify(runData, null, 2), { contentType: "application/json" });
 }
 
-main().catch(console.error);
+main()
+  .catch(console.error)
+  .finally(async () => {
+    if (_redis) { try { await _redis.quit(); } catch {} }
+  });
