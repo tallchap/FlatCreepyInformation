@@ -511,10 +511,11 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
         await new Promise((resolve, reject) => {
           const args = [
             "-err_detect", "ignore_err", "-fflags", "+genpts",
-            "-ss", String(startSec), "-i", rapidRaw,
-            "-t", String(duration),
+            "-ss", String(startSec), "-to", String(startSec + duration), "-i", rapidRaw,
             ...(overlayFilter ? ["-vf", overlayFilter] : []),
             "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+            "-af", `afade=t=out:st=${Math.max(0, duration - 0.05)}:d=0.05`,
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", "-y", clipFile,
           ];
@@ -595,9 +596,10 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
       const duration = endSec - startSec;
       await execCapture("ffmpeg", [
         "-err_detect", "ignore_err", "-fflags", "+genpts",
-        "-ss", String(startSec), "-i", rawFile,
-        "-t", String(duration),
+        "-ss", String(startSec), "-to", String(endSec), "-i", rawFile,
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+        "-af", `afade=t=out:st=${Math.max(0, duration - 0.05)}:d=0.05`,
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", clipFile,
       ], { timeout: 300_000 });
@@ -931,7 +933,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       logDebug("gcs-clip.hls-merged", { bytes: mergedBytes, mb: (mergedBytes / 1024 / 1024).toFixed(1) });
       job.progress = 40;
       const hlsSeek = Math.max(0, startSec - hls.segmentStartOffset);
-      ffmpegInputArgs = ["-ss", String(hlsSeek), "-i", mergedFile];
+      ffmpegInputArgs = ["-ss", String(hlsSeek), "-to", String(hlsSeek + duration), "-i", mergedFile];
       ffmpegSeekSec = null;
       videoMeta = { width: hls.pickedHeight >= 1080 ? 1920 : hls.pickedHeight >= 720 ? 1280 : hls.pickedHeight >= 480 ? 854 : hls.pickedHeight >= 360 ? 640 : 426 };
     } else {
@@ -957,8 +959,8 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
         fs.renameSync(remuxFile, srcFile);
         logDebug("gcs-clip.remux-done", {});
       }
-      // Legacy seek: -ss before -i (fast input seek; with re-encode, frame-accurate)
-      ffmpegInputArgs = ["-err_detect", "ignore_err", "-fflags", "+genpts", "-ss", String(startSec), "-i", srcFile];
+      // Legacy seek: -ss and -to before -i (fast input seek + exact AV end alignment).
+      ffmpegInputArgs = ["-err_detect", "ignore_err", "-fflags", "+genpts", "-ss", String(startSec), "-to", String(endSec), "-i", srcFile];
       ffmpegSeekSec = null;
     }
 
@@ -973,9 +975,10 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       const args = [
         ...ffmpegInputArgs,
         ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
-        "-t", String(duration),
         ...(overlayFilter ? ["-vf", overlayFilter] : []),
         "-c:v", "libx264", "-crf", "18", "-preset", "fast",
+        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+        "-af", `afade=t=out:st=${Math.max(0, duration - 0.05)}:d=0.05`,
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", "-y", clipFile,
       ];
