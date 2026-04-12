@@ -26,44 +26,60 @@ export async function GET(req: NextRequest) {
   const items = data.items || [];
 
   if (items.length === 0) {
-    // Video not in Bunny yet — trigger on-demand fetch from GCS
-    const fetchRes = await fetch(
-      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`,
-      {
-        method: "POST",
-        headers: {
-          AccessKey: BUNNY_API_KEY,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          url: `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`,
-          title: videoId,
-        }),
-      }
-    );
-    const fetchData = await fetchRes.json();
+    // GCS fallback disabled — Bunny-only mode. Video should be created by
+    // /api/trigger-download (RapidAPI → Bunny direct) before this endpoint is hit.
+    // To re-enable GCS on-demand fetch, uncomment the block below.
+    // const fetchRes = await fetch(
+    //   `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`,
+    //   {
+    //     method: "POST",
+    //     headers: {
+    //       AccessKey: BUNNY_API_KEY,
+    //       "Content-Type": "application/json",
+    //     },
+    //     body: JSON.stringify({
+    //       url: `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`,
+    //       title: videoId,
+    //     }),
+    //   }
+    // );
+    // const fetchData = await fetchRes.json();
+    // return NextResponse.json({
+    //   available: false,
+    //   fetching: fetchData.success || false,
+    //   message: fetchData.success ? "Queued for transcoding — using GCS fallback" : "Fetch failed",
+    // });
     return NextResponse.json({
       available: false,
-      fetching: fetchData.success || false,
-      message: fetchData.success ? "Queued for transcoding — using GCS fallback" : "Fetch failed",
+      fetching: false,
+      message: "Video not in Bunny (GCS fallback disabled)",
     });
   }
 
   const video = items[0];
-  // Status 4 = finished transcoding
-  if (video.status !== 4) {
+
+  // With Early-Play enabled on the library, HLS serves the original file while
+  // transcoding continues, so status >= 1 is playable.
+  if (video.status >= 1) {
     return NextResponse.json({
-      available: false,
+      available: true,
+      earlyPlay: video.status !== 4,
+      guid: video.guid,
+      libraryId: BUNNY_LIBRARY_ID,
+      hlsUrl: `https://vz-27263f38-8d7.b-cdn.net/${video.guid}/playlist.m3u8`,
+      embedUrl: `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${video.guid}`,
+      availableResolutions: video.availableResolutions || "",
+      width: video.width,
+      height: video.height,
       status: video.status,
       encodeProgress: video.encodeProgress,
     });
   }
 
+  // Status 0 or unknown — not playable yet
   return NextResponse.json({
-    available: true,
-    guid: video.guid,
-    libraryId: BUNNY_LIBRARY_ID,
-    hlsUrl: `https://vz-27263f38-8d7.b-cdn.net/${video.guid}/playlist.m3u8`,
-    embedUrl: `https://iframe.mediadelivery.net/embed/${BUNNY_LIBRARY_ID}/${video.guid}`,
+    available: false,
+    status: video.status,
+    encodeProgress: video.encodeProgress,
   });
 }

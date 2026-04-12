@@ -150,6 +150,17 @@ export async function singleExtract(prevState: any, formData: FormData) {
       metadata.speaker ||
       "";
 
+    // Trigger Bunny Stream download (RapidAPI → Bunny direct, no GCS)
+    try {
+      const baseUrl = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3001";
+      fetch(`${baseUrl}/api/trigger-bunny`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId: metadata.videoId }),
+      }).catch(() => {}); // fire-and-forget
+      console.log(`Triggered Bunny download for ${metadata.videoId}`);
+    } catch {}
+
     return {
       videoTitle: metadata.title,
       youtubeLink: metadata.cleanUrl,

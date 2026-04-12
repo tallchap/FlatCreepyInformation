@@ -118,13 +118,15 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
 
   // Bunny HLS state
   const [bunnyHlsUrl, setBunnyHlsUrl] = useState<string | null>(null);
+  const [bunnyResolutions, setBunnyResolutions] = useState<string[]>([]);
 
   // Check GCS/Bunny availability when video changes
   useEffect(() => {
-    if (!videoId) { setGcsAvailable(null); setVideoRes(null); setBunnyHlsUrl(null); return; }
+    if (!videoId) { setGcsAvailable(null); setVideoRes(null); setBunnyHlsUrl(null); setBunnyResolutions([]); return; }
     setGcsAvailable(null);
     setVideoRes(null);
     setBunnyHlsUrl(null);
+    setBunnyResolutions([]);
 
     if (videoSource === "bunny") {
       fetch(`/api/bunny-lookup?videoId=${videoId}`)
@@ -133,6 +135,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
           if (d.available && d.hlsUrl) {
             setBunnyHlsUrl(d.hlsUrl);
             setGcsAvailable(false);
+            if (d.availableResolutions) {
+              setBunnyResolutions(
+                d.availableResolutions.split(",").map((s: string) => s.trim()).filter(Boolean)
+              );
+            }
           } else {
             // Bunny not ready (fetching or transcoding) — fall back to GCS
             fetch(`/api/clip-gcs-check?videoId=${videoId}`)
@@ -739,7 +746,17 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
               </button>
               <div className="flex-1" />
               <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                {(has1080 ? ["720p", "1080p"] as Quality[] : ["720p"] as Quality[]).map((q) => (
+                {((): Quality[] => {
+                  // Prefer Bunny's availableResolutions when present (Bunny-only videos).
+                  // Fall back to has1080 (GCS videos use video metadata).
+                  if (bunnyResolutions.length) {
+                    const out: Quality[] = [];
+                    if (bunnyResolutions.includes("720p")) out.push("720p");
+                    if (bunnyResolutions.includes("1080p")) out.push("1080p");
+                    return out.length ? out : ["720p"];
+                  }
+                  return has1080 ? ["720p", "1080p"] : ["720p"];
+                })().map((q) => (
                   <button
                     key={q}
                     onClick={() => setQuality(q)}

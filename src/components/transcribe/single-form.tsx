@@ -92,8 +92,8 @@ export function SingleForm() {
           });
         });
 
-      // Trigger GCS video download via Cloud Run (fire-and-forget)
-      fetch("/api/trigger-download", {
+      // Trigger Bunny Stream fetch via RapidAPI → Bunny (fire-and-forget, no GCS)
+      fetch("/api/trigger-bunny", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ videoId: state.vectorData?.videoId }),
@@ -101,18 +101,18 @@ export function SingleForm() {
         .then((res) => {
           if (!res.ok) throw new Error(`HTTP ${res.status}`);
           addEntry({
-            step: "gcs-download",
+            step: "bunny-download",
             status: "info",
-            message: "Video download to GCS triggered",
+            message: "Bunny Stream fetch triggered (RapidAPI → Bunny, no GCS)",
             videoTitle: state.videoTitle,
           });
         })
         .catch((err) => {
-          console.error("GCS download trigger failed:", err);
+          console.error("Bunny download trigger failed:", err);
           addEntry({
-            step: "gcs-download",
+            step: "bunny-download",
             status: "error",
-            message: `GCS download trigger failed: ${err.message} (non-blocking)`,
+            message: `Bunny download trigger failed: ${err.message} (non-blocking)`,
             videoTitle: state.videoTitle,
           });
         });

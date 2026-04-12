@@ -22,6 +22,7 @@ const STATUS_PATH = TASK_COUNT > 1 ? `download-status/task-${TASK_INDEX}.json` :
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE) || 2;
 const BATCH_OFFSET = parseInt(process.env.BATCH_OFFSET) || 0;
 const MAX_CONCURRENT = parseInt(process.env.MAX_CONCURRENT) || 20;
+const MODE = (process.env.MODE || "").trim(); // "bunny-only" → skip GCS, fetch RapidAPI URL direct to Bunny
 
 if (!RAPIDAPI_KEY) { console.error("Missing RAPIDAPI_KEY env var"); process.exit(1); }
 
@@ -51,7 +52,7 @@ function httpsGet(url, headers = {}) {
   });
 }
 
-async function ingestToBunny(videoId) {
+async function ingestToBunny(videoId, sourceUrl = null) {
   if (!BUNNY_STREAM_API_KEY) {
     console.log(`  [${videoId}] Bunny: skipped (no API key)`);
     return "skipped";
@@ -59,7 +60,7 @@ async function ingestToBunny(videoId) {
   try {
     const url = `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`;
     const body = JSON.stringify({
-      url: `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_PREFIX}/${videoId}.mp4`,
+      url: sourceUrl || `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_PREFIX}/${videoId}.mp4`,
       title: videoId,
     });
     const res = await new Promise((resolve, reject) => {
@@ -337,6 +338,20 @@ async function processVideo(video) {
 
         if (progress.success === 1 && progress.download_url) {
           console.log(`  [${video.id}] RapidAPI: ready (${pollCount * 5}s)`);
+
+          if (MODE === "bunny-only") {
+            // Bunny-only mode: skip disk download + GCS upload. Hand the
+            // RapidAPI download_url straight to Bunny's fetch-from-URL API.
+            console.log(`  [${video.id}] MODE=bunny-only → Bunny fetching directly from RapidAPI (${quality}p). No GCS.`);
+            video.bunnyStatus = await ingestToBunny(video.id, progress.download_url);
+            video.status = video.bunnyStatus === "queued" ? "complete" : "failed";
+            video.resolution = `${quality}p`;
+            video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
+            markDirty();
+            console.log(`  [${video.id}] DONE (bunny-only): ${video.elapsed}, ${quality}p, bunny=${video.bunnyStatus}`);
+            console.log("");
+            return;
+          }
 
           video.status = "downloading";
           video.downloadedMB = "0";

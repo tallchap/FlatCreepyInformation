@@ -728,6 +728,10 @@ function buildOverlayFilter(overlay, fontPath, videoWidth) {
 // ─── GCS-based clip endpoints ────────────────────────────────────────
 const GCS_BUCKET = "snippysaurus-clips";
 const GCS_VIDEO_PREFIX = "videos";
+const BUNNY_STREAM_API_KEY = (process.env.BUNNY_STREAM_API_KEY || "").trim();
+const BUNNY_LIBRARY_ID = "627230";
+const BUNNY_CDN_HOST = "vz-27263f38-8d7.b-cdn.net";
+const BUNNY_REFERER = "https://iframe.mediadelivery.net/";
 const GCS_PUBLIC_BASE = `https://storage.googleapis.com/${GCS_BUCKET}/${GCS_VIDEO_PREFIX}`;
 
 app.get("/clip-gcs-check", async (req, res) => {
@@ -753,27 +757,81 @@ app.get("/clip-gcs-check", async (req, res) => {
   }
 });
 
-async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay }) {
+// Look up a video on Bunny Stream by its YouTube videoId (stored as title).
+// Returns { guid, availableResolutions, status } or null if not found/ready.
+async function bunnyLookup(videoId) {
+  if (!BUNNY_STREAM_API_KEY) return null;
+  try {
+    const https = require("https");
+    const data = await new Promise((resolve, reject) => {
+      const req = https.request(
+        `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?search=${encodeURIComponent(videoId)}&itemsPerPage=5`,
+        { headers: { AccessKey: BUNNY_STREAM_API_KEY } },
+        (resp) => {
+          let body = "";
+          resp.on("data", (c) => (body += c));
+          resp.on("end", () => {
+            try { resolve(JSON.parse(body)); } catch { resolve(null); }
+          });
+        }
+      );
+      req.on("error", reject);
+      req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+      req.end();
+    });
+    if (!data || !Array.isArray(data.items)) return null;
+    const v = data.items.find((x) => x.title === videoId && x.status >= 1);
+    if (!v) return null;
+    return {
+      guid: v.guid,
+      availableResolutions: v.availableResolutions || "",
+      status: v.status,
+      width: v.width,
+      height: v.height,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Pick the best MP4 rendition ≤ heightLimit that Bunny actually has.
+function pickBunnyRendition(availableResolutions, heightLimit) {
+  const heights = (availableResolutions || "")
+    .split(",")
+    .map((s) => parseInt(s.trim().replace("p", ""), 10))
+    .filter((n) => Number.isFinite(n))
+    .sort((a, b) => b - a);
+  return heights.find((h) => h <= heightLimit) || heights[0] || null;
+}
+
+async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay, source }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
 
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
-  const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
   const srcFile = join(tmpdir(), `gcs-src-${jobId}.mp4`);
   const duration = endSec - startSec;
+
+  // Resolve the source URL + any required headers.
+  // `source` comes from the POST handler: { type: "bunny" | "gcs", url, referer? }.
+  const srcUrl = source.url;
+  const srcReferer = source.referer || null;
 
   const timings = { start: Date.now(), downloadDone: 0, trimDone: 0 };
 
   try {
-    logDebug("gcs-clip.start", { jobId, videoId, startSec, endSec, quality: `${heightLimit}p` });
+    logDebug("gcs-clip.start", { jobId, videoId, startSec, endSec, quality: `${heightLimit}p`, source: source.type });
 
-    // Step 1: Download from GCS
-    job.stage = "downloading-from-gcs";
-    job.stageDetail = "Downloading from GCS...";
+    // Step 1: Download source (Bunny or GCS)
+    job.stage = source.type === "bunny" ? "downloading-from-bunny" : "downloading-from-gcs";
+    job.stageDetail = source.type === "bunny" ? "Downloading from Bunny..." : "Downloading from GCS...";
     job.progress = 10;
-    logDebug("gcs-clip.downloading", { gcsUrl });
-    await execCapture("curl", ["-fL", "-o", srcFile, gcsUrl], { timeout: 600_000 });
+    logDebug("gcs-clip.downloading", { srcUrl, type: source.type });
+    const curlArgs = ["-fL", "-o", srcFile];
+    if (srcReferer) curlArgs.push("-H", `Referer: ${srcReferer}`);
+    curlArgs.push(srcUrl);
+    await execCapture("curl", curlArgs, { timeout: 600_000 });
     timings.downloadDone = Date.now();
     job.progress = 40;
 
@@ -873,26 +931,47 @@ app.post("/clip-gcs", async (req, res) => {
     return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
   }
 
-  // Quick check if video is in GCS
-  const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+  // Resolve source: try Bunny first, fall back to GCS for legacy videos.
   const https = require("https");
-  const available = await new Promise((resolve) => {
-    const r = https.request(gcsUrl, { method: "HEAD" }, (resp) => { resolve(resp.statusCode === 200); });
-    r.on("error", () => resolve(false));
-    r.setTimeout(5000, () => { r.destroy(); resolve(false); });
-    r.end();
-  });
+  const heightLimit = quality === "1080p" ? 1080 : 720;
 
-  if (!available) {
-    return res.status(404).json({ error: "Video not in GCS", videoId });
+  let source = null;
+
+  const bunny = await bunnyLookup(videoId);
+  if (bunny) {
+    const pickedHeight = pickBunnyRendition(bunny.availableResolutions, heightLimit);
+    if (pickedHeight) {
+      source = {
+        type: "bunny",
+        url: `https://${BUNNY_CDN_HOST}/${bunny.guid}/play_${pickedHeight}p.mp4`,
+        referer: BUNNY_REFERER,
+        pickedHeight,
+      };
+      logDebug("clip-gcs.source-bunny", { videoId, guid: bunny.guid, pickedHeight, requested: heightLimit, available: bunny.availableResolutions });
+    }
+  }
+
+  if (!source) {
+    const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+    const gcsAvailable = await new Promise((resolve) => {
+      const r = https.request(gcsUrl, { method: "HEAD" }, (resp) => { resolve(resp.statusCode === 200); });
+      r.on("error", () => resolve(false));
+      r.setTimeout(5000, () => { r.destroy(); resolve(false); });
+      r.end();
+    });
+    if (!gcsAvailable) {
+      return res.status(404).json({ error: "Video not available in Bunny or GCS", videoId });
+    }
+    source = { type: "gcs", url: gcsUrl };
+    logDebug("clip-gcs.source-gcs", { videoId, gcsUrl });
   }
 
   const jobId = crypto.randomUUID();
   clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
 
-  processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay }).catch(() => {});
+  processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay, source }).catch(() => {});
 
-  res.json({ jobId, route: "gcs" });
+  res.json({ jobId, route: source.type });
 });
 
 // ─── RapidAPI-realtime clip endpoint (original) ─────────────────────
