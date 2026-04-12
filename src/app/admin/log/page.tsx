@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 
 interface Ev {
@@ -32,7 +32,15 @@ function statusColor(s: string) {
   return "#6b7280";
 }
 
-export default function AdminLog() {
+export default function AdminLogPage() {
+  return (
+    <Suspense fallback={<main style={{ padding: 40, fontFamily: "system-ui" }}>Loading…</main>}>
+      <AdminLog />
+    </Suspense>
+  );
+}
+
+function AdminLog() {
   const params = useSearchParams();
   const key = params.get("key") || "";
 
