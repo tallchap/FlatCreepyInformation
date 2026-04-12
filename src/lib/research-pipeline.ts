@@ -162,7 +162,7 @@ export async function runPipeline(
     idLog.push(`[${ts()}] UPDATE youtube_transcripts SET Speakers_Claude, Speakers_GPT_Third`);
     try {
       await bigQuery.query({
-        query: `UPDATE ${TABLE_REFS.transcripts} SET Speakers_Claude = @claude, Speakers_GPT_Third = @gpt WHERE ID = @videoId`,
+        query: `UPDATE ${TABLE_REFS.legacyTranscripts} SET Speakers_Claude = @claude, Speakers_GPT_Third = @gpt WHERE ID = @videoId`,
         params: { claude: metadata.speakersClaude || "", gpt: metadata.speakersGptThird || "", videoId },
       });
       idLog.push(`[${ts()}] BigQuery updated`);
