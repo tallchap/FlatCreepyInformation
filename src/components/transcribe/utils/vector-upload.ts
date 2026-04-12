@@ -14,8 +14,9 @@ function slugify(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-function parseDurationToSec(raw: string | null | undefined): number | null {
+function parseDurationToSec(raw: string | number | null | undefined): number | null {
   if (!raw) return null;
+  if (typeof raw === "number") return raw;
   const parts = raw.split(":").map((p) => Number(p.trim())).filter((n) => Number.isFinite(n));
   if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
   if (parts.length === 2) return parts[0] * 60 + parts[1];

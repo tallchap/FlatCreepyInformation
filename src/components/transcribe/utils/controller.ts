@@ -82,18 +82,143 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
   }
 }
 
-export async function fetchYoutubeTranscript(url: string) {
-  const response = await axios.post(
-    "https://afraid-sparkling-planes.vercel.app/transcript",
-    { url },
-    { transformResponse: [(data: string) => {
-      // Strip control characters that break JSON.parse (keep \t, \n, \r)
-      const sanitized = data.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
-      return JSON.parse(sanitized);
-    }] }
+// --- Transcript fallback chain (Apify → Proxy → ElevenLabs) ---
+
+async function fetchTranscriptApify(videoId: string) {
+  const token = process.env.APIFY_TOKEN;
+  if (!token) return null;
+
+  const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  const res = await fetch(
+    `https://api.apify.com/v2/acts/scrape-creators~best-youtube-transcripts-scraper/runs?token=${token}`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoUrls: [ytUrl] }),
+    }
   );
-  const transcript = response.data;
-  return transcript;
+  const run = await res.json();
+  const runId = run.data?.id;
+  if (!runId) return null;
+
+  // Poll until done (max 2 min)
+  const maxWait = 120_000;
+  const start = Date.now();
+  let status = "";
+  let datasetId = "";
+  while (Date.now() - start < maxWait) {
+    await new Promise((r) => setTimeout(r, 5000));
+    const pollRes = await fetch(`https://api.apify.com/v2/actor-runs/${runId}?token=${token}`);
+    let pollData;
+    try { pollData = await pollRes.json(); } catch { continue; }
+    status = pollData.data?.status || "";
+    datasetId = pollData.data?.defaultDatasetId || "";
+    if (status === "SUCCEEDED" || status === "FAILED" || status === "ABORTED") break;
+  }
+  if (status !== "SUCCEEDED" || !datasetId) return null;
+
+  const itemsRes = await fetch(
+    `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&format=json`
+  );
+  const items = await itemsRes.json();
+  if (!items.length || !items[0].transcript) return null;
+
+  const item = items[0];
+  const segments = item.transcript.map((s: any) => ({
+    text: s.text,
+    start: parseFloat(s.startMs) / 1000,
+    end: parseFloat(s.endMs) / 1000,
+  }));
+  return {
+    transcript_data: segments,
+    video_id: videoId,
+    language: item.language || "en",
+    is_generated: item.isGenerated ?? true,
+    _source: "apify",
+  };
+}
+
+async function fetchTranscriptProxy(url: string) {
+  try {
+    const response = await axios.post(
+      "https://afraid-sparkling-planes.vercel.app/transcript",
+      { url },
+      { transformResponse: [(data: string) => {
+        const sanitized = data.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f]/g, "");
+        return JSON.parse(sanitized);
+      }] }
+    );
+    const transcript = response.data;
+    if (transcript.error) return null;
+    return { ...transcript, _source: "proxy" };
+  } catch {
+    return null;
+  }
+}
+
+async function fetchTranscriptElevenLabs(videoId: string) {
+  const serviceUrl = process.env.FFMPEG_TRANSCRIBE_URL;
+  if (!serviceUrl) return null;
+
+  try {
+    const res = await fetch(`${serviceUrl}/transcribe`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoId }),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (!data.transcript_data?.length) return null;
+    return { ...data, _source: "elevenlabs" };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchYoutubeTranscript(url: string) {
+  const videoId = extractVideoId(url);
+  const errors: string[] = [];
+
+  // 1. Apify (cheapest, most reliable)
+  console.log("[transcript] Trying Apify...");
+  try {
+    const r1 = await fetchTranscriptApify(videoId!);
+    if (r1?.transcript_data?.length) {
+      console.log(`[transcript] Apify succeeded (${r1.transcript_data.length} segments)`);
+      return r1;
+    }
+    errors.push("Apify: returned no data");
+  } catch (e: any) {
+    errors.push(`Apify: ${e.message}`);
+  }
+
+  // 2. Vercel proxy (current default)
+  console.log("[transcript] Trying proxy...");
+  try {
+    const r2 = await fetchTranscriptProxy(url);
+    if (r2?.transcript_data?.length) {
+      console.log(`[transcript] Proxy succeeded (${r2.transcript_data.length} segments)`);
+      return r2;
+    }
+    errors.push("Proxy: returned no data or error");
+  } catch (e: any) {
+    errors.push(`Proxy: ${e.message}`);
+  }
+
+  // 3. ElevenLabs via ffmpeg-audio-service
+  console.log("[transcript] Trying ElevenLabs...");
+  try {
+    const r3 = await fetchTranscriptElevenLabs(videoId!);
+    if (r3?.transcript_data?.length) {
+      console.log(`[transcript] ElevenLabs succeeded (${r3.transcript_data.length} segments)`);
+      return r3;
+    }
+    errors.push("ElevenLabs: returned no data");
+  } catch (e: any) {
+    errors.push(`ElevenLabs: ${e.message}`);
+  }
+
+  throw new Error(`All transcript sources failed: ${errors.join("; ")}`);
 }
 
 export async function createTranscriptDoc(
@@ -553,14 +678,21 @@ export async function addToBigQuery(transcript: any, metadata: any) {
       created_time: nowIso,
     };
 
-    await bigQuery.query({
-      query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\` WHERE video_id = @videoId`,
-      params: { videoId: metadata.videoId },
-    });
-    await bigQuery.query({
-      query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\` WHERE video_id = @videoId`,
-      params: { videoId: metadata.videoId },
-    });
+    // Delete existing rows (skip if rows are in streaming buffer — BigQuery
+    // doesn't allow DELETE on recently-streamed rows, but the insert below
+    // will still succeed; duplicates are harmless for this use case).
+    try {
+      await bigQuery.query({
+        query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\` WHERE video_id = @videoId`,
+        params: { videoId: metadata.videoId },
+      });
+      await bigQuery.query({
+        query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\` WHERE video_id = @videoId`,
+        params: { videoId: metadata.videoId },
+      });
+    } catch (e: any) {
+      console.warn(`[bigquery] DELETE skipped (streaming buffer): ${e.message}`);
+    }
 
     await dataset.table("youtube_videos").insert(videoRow, { ignoreUnknownValues: true });
 

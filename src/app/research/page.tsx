@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { CandidateTable } from "@/components/research/candidate-table";
 import { DetailDrawer } from "@/components/research/detail-drawer";
 import { RejectModal } from "@/components/research/reject-modal";
+import { StepDetailDrawer } from "@/components/research/step-detail-drawer";
 import { toast } from "sonner";
 
 interface Candidate {
@@ -25,6 +26,8 @@ interface Candidate {
   reject_reason: string | null;
   processing_status: string | null;
   processing_error: string | null;
+  processing_step: string | null;
+  processing_steps_json: string | null;
   matched_rules: string[];
 }
 
@@ -59,6 +62,7 @@ function ResearchPageInner() {
   const [statusFilter, setStatusFilter] = useState<string>("pending");
   const [loading, setLoading] = useState(false);
   const [processing, setProcessing] = useState(false);
+  const [stepDrawer, setStepDrawer] = useState<{ step: string; data: any } | null>(null);
 
   // Load runs list
   useEffect(() => {
@@ -95,9 +99,13 @@ function ResearchPageInner() {
 
   const currentRun = runs.find((r) => r.run_id === selectedRunId);
 
-  // Filter candidates
+  // Filter candidates (handles both old status column and new satellite rejection table)
   const filtered = statusFilter === "all"
     ? candidates
+    : statusFilter === "pending"
+    ? candidates.filter((c) => c.status === "pending" && !(c as any).rejection_type)
+    : statusFilter === "rejected"
+    ? candidates.filter((c) => c.status?.startsWith("rejected") || (c as any).rejection_type)
     : candidates.filter((c) => c.status === statusFilter);
 
   // Vet a candidate
@@ -132,24 +140,83 @@ function ResearchPageInner() {
     }
   }
 
-  // Batch vet
+  // Batch vet — single API call
   async function batchVet(action: "approved" | "rejected" | "skipped") {
-    for (const id of selectedIds) {
-      await vetCandidate(id, action);
+    if (selectedIds.size === 0) return;
+    try {
+      await fetch("/api/research/vet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: selectedRunId,
+          videoIds: [...selectedIds],
+          action,
+        }),
+      });
+      setCandidates((prev) =>
+        prev.map((c) =>
+          selectedIds.has(c.video_id) ? { ...c, status: action } : c
+        )
+      );
+      toast.success(`${action} ${selectedIds.size} videos`);
+      setSelectedIds(new Set());
+    } catch (e: any) {
+      toast.error("Batch vet failed: " + e.message);
     }
-    setSelectedIds(new Set());
   }
 
-  // Process approved videos
+  // Approve & Process — one button
+  async function approveAndProcess() {
+    if (selectedIds.size === 0) return;
+    const ids = [...selectedIds];
+
+    // 1. Bulk approve
+    try {
+      await fetch("/api/research/vet", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ runId: selectedRunId, videoIds: ids, action: "approved" }),
+      });
+    } catch (e: any) {
+      toast.error("Approve failed: " + e.message);
+      return;
+    }
+
+    // 2. Update UI + mark queued
+    setCandidates((prev) =>
+      prev.map((c) =>
+        ids.includes(c.video_id) ? { ...c, status: "approved", processing_status: "queued" } : c
+      )
+    );
+    setSelectedIds(new Set());
+
+    // 3. Fire off processing
+    try {
+      const res = await fetch("/api/research/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: selectedRunId,
+          videoIds: ids,
+          speaker: currentRun?.speaker || "",
+        }),
+      });
+      const data = await res.json();
+      toast.info(`Approved & queued ${data.queued} videos for processing`);
+      setProcessing(true);
+      startPolling();
+    } catch (e: any) {
+      toast.error("Process failed: " + e.message);
+    }
+  }
+
+  // Process approved videos — fire and forget, poll for status
   async function processApproved() {
     const approved = candidates.filter((c) => c.status === "approved" && !c.processing_status);
     if (approved.length === 0) {
       toast.error("No approved videos to process");
       return;
     }
-
-    setProcessing(true);
-    toast.info(`Processing ${approved.length} videos...`);
 
     // Mark as queued locally
     setCandidates((prev) =>
@@ -171,34 +238,79 @@ function ResearchPageInner() {
         }),
       });
       const data = await res.json();
-
-      if (data.results) {
-        setCandidates((prev) =>
-          prev.map((c) => {
-            const result = data.results.find((r: any) => r.videoId === c.video_id);
-            if (result) {
-              return {
-                ...c,
-                processing_status: result.success ? "complete" : "failed",
-                processing_error: result.error || null,
-              };
-            }
-            return c;
-          })
-        );
-      }
-
-      toast.success(`Processed: ${data.succeeded} succeeded, ${data.failed} failed`);
+      toast.info(`Queued ${data.queued} videos for processing`);
+      setProcessing(true);
+      startPolling();
     } catch (e: any) {
       toast.error("Processing failed: " + e.message);
-    } finally {
       setProcessing(false);
     }
+  }
+
+  // Poll for processing status updates — only updates if user is still on that run
+  function startPolling() {
+    const pollingRunId = selectedRunId;
+    const interval = setInterval(async () => {
+      if (!pollingRunId) { clearInterval(interval); return; }
+      try {
+        const res = await fetch(`/api/research/candidates?runId=${pollingRunId}`);
+        const data = await res.json();
+        if (data.candidates) {
+          // Only update UI if user is still viewing this run
+          setCandidates((prev) => {
+            if (prev.length > 0 && prev[0].run_id !== pollingRunId) return prev;
+            return data.candidates;
+          });
+          const queued = data.candidates.filter((c: any) => c.processing_status === "queued" || c.processing_status === "processing");
+          if (queued.length === 0) {
+            clearInterval(interval);
+            setProcessing(false);
+            const complete = data.candidates.filter((c: any) => c.processing_status === "complete").length;
+            const failed = data.candidates.filter((c: any) => c.processing_status === "failed").length;
+            toast.success(`Done: ${complete} succeeded, ${failed} failed`);
+          }
+        }
+      } catch {}
+    }, 5000);
   }
 
   const approvedCount = candidates.filter(
     (c) => c.status === "approved" && !c.processing_status
   ).length;
+
+  const failedCount = candidates.filter(
+    (c) => c.processing_status === "failed"
+  ).length;
+
+  async function retryFailed() {
+    const failed = candidates.filter((c) => c.processing_status === "failed");
+    if (failed.length === 0) return;
+
+    setCandidates((prev) =>
+      prev.map((c) =>
+        c.processing_status === "failed" ? { ...c, processing_status: "queued", processing_error: null } : c
+      )
+    );
+
+    try {
+      const res = await fetch("/api/research/process", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          runId: selectedRunId,
+          videoIds: failed.map((c) => c.video_id),
+          speaker: currentRun?.speaker || "",
+        }),
+      });
+      const data = await res.json();
+      toast.info(`Queued ${data.queued} failed videos for retry`);
+      setProcessing(true);
+      startPolling();
+    } catch (e: any) {
+      toast.error("Retry failed: " + e.message);
+      setProcessing(false);
+    }
+  }
 
   return (
     <div className="max-w-[1600px] mx-auto">
@@ -250,10 +362,17 @@ function ResearchPageInner() {
           <>
             <span className="text-sm text-gray-500">{selectedIds.size} selected</span>
             <button
+              className="px-3 py-1 text-sm bg-green-700 text-white rounded hover:bg-green-800 font-medium"
+              onClick={approveAndProcess}
+              disabled={processing}
+            >
+              {processing ? "Processing..." : `Approve & Process ${selectedIds.size}`}
+            </button>
+            <button
               className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700"
               onClick={() => batchVet("approved")}
             >
-              Approve selected
+              Approve only
             </button>
             <button
               className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700"
@@ -270,6 +389,16 @@ function ResearchPageInner() {
           </>
         )}
 
+        {failedCount > 0 && (
+          <button
+            className="px-4 py-1.5 text-sm bg-red-600 text-white rounded hover:bg-red-700 disabled:opacity-50"
+            onClick={retryFailed}
+            disabled={processing}
+          >
+            {processing ? "Retrying..." : `Retry ${failedCount} failed`}
+          </button>
+        )}
+
         {approvedCount > 0 && (
           <button
             className="ml-auto px-4 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
@@ -282,6 +411,23 @@ function ResearchPageInner() {
           </button>
         )}
       </div>
+
+      {/* Processing summary bar */}
+      {(() => {
+        const complete = candidates.filter((c) => c.processing_status === "complete").length;
+        const inProgress = candidates.filter((c) => c.processing_status === "processing").length;
+        const queued = candidates.filter((c) => c.processing_status === "queued").length;
+        const pFailed = candidates.filter((c) => c.processing_status === "failed").length;
+        if (complete + inProgress + queued + pFailed === 0) return null;
+        return (
+          <div className="mb-3 px-3 py-2 bg-gray-50 rounded text-xs text-gray-600 flex gap-4">
+            {complete > 0 && <span className="text-green-700 font-medium">{complete} complete</span>}
+            {inProgress > 0 && <span className="text-blue-700 font-medium">{inProgress} in progress</span>}
+            {queued > 0 && <span className="text-gray-500">{queued} queued</span>}
+            {pFailed > 0 && <span className="text-red-700 font-medium">{pFailed} failed</span>}
+          </div>
+        );
+      })()}
 
       {/* Main table */}
       {loading ? (
@@ -308,6 +454,7 @@ function ResearchPageInner() {
           onApprove={(id) => vetCandidate(id, "approved")}
           onReject={(c) => setRejectCandidate(c)}
           onSkip={(id) => vetCandidate(id, "skipped")}
+          onStepClick={(step, data) => setStepDrawer({ step, data })}
         />
       )}
 
@@ -328,6 +475,15 @@ function ResearchPageInner() {
             vetCandidate(selectedCandidate.video_id, "skipped");
             setSelectedCandidate(null);
           }}
+        />
+      )}
+
+      {/* Step detail drawer */}
+      {stepDrawer && (
+        <StepDetailDrawer
+          stepName={stepDrawer.step}
+          stepData={stepDrawer.data}
+          onClose={() => setStepDrawer(null)}
         />
       )}
 

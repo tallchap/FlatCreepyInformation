@@ -1,5 +1,6 @@
 "use client";
 
+import { useState, useMemo } from "react";
 import {
   Table,
   TableBody,
@@ -8,7 +9,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { CheckCircle2, XCircle, SkipForward, ExternalLink, Loader2, CheckCheck } from "lucide-react";
+import { CheckCircle2, XCircle, SkipForward, ExternalLink, Loader2, CheckCheck, ArrowUp, ArrowDown } from "lucide-react";
 
 interface Candidate {
   video_id: string;
@@ -21,7 +22,12 @@ interface Candidate {
   status: string;
   processing_status: string | null;
   processing_error: string | null;
+  processing_step: string | null;
+  processing_steps_json: string | null;
 }
+
+type SortField = "title" | "channel" | "confidence" | "duration_seconds" | "published_at";
+type SortDir = "asc" | "desc";
 
 function formatDuration(sec: number) {
   const h = Math.floor(sec / 3600);
@@ -45,15 +51,53 @@ function confidenceBadge(conf: number) {
   );
 }
 
+const STEP_ORDER = ["bigquery", "speaker_id", "vector_store", "gcs_download"];
+const STEP_SHORT = { bigquery: "BQ", speaker_id: "ID", vector_store: "Vec", gcs_download: "GCS" };
+
+function StepProgressBar({ processingStep, stepsJson, onStepClick }: { processingStep: string | null; stepsJson: string | null; onStepClick: (step: string, data: any) => void }) {
+  let steps: Record<string, any> = {};
+  try { if (stepsJson) steps = JSON.parse(stepsJson); } catch {}
+
+  return (
+    <div className="flex gap-0.5">
+      {STEP_ORDER.map((step) => {
+        const data = steps[step];
+        const status = data?.status || (processingStep === step ? "active" : "pending");
+        const colors: Record<string, string> = {
+          complete: "bg-green-500",
+          active: "bg-blue-500 animate-pulse",
+          failed: "bg-red-500",
+          skipped: "bg-gray-300",
+          pending: "bg-gray-200",
+        };
+        return (
+          <button
+            key={step}
+            title={`${(STEP_SHORT as any)[step]}: ${status}`}
+            className={`w-5 h-5 rounded text-[9px] font-bold text-white flex items-center justify-center cursor-pointer hover:opacity-80 ${colors[status] || colors.pending}`}
+            onClick={(e) => { e.stopPropagation(); if (data) onStepClick(step, data); }}
+          >
+            {(STEP_SHORT as any)[step]}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 function statusBadge(status: string, processingStatus: string | null) {
-  if (processingStatus === "complete") return <CheckCheck className="w-4 h-4 text-green-600" />;
-  if (processingStatus === "processing") return <Loader2 className="w-4 h-4 text-blue-500 animate-spin" />;
-  if (processingStatus === "queued") return <Loader2 className="w-4 h-4 text-gray-400" />;
-  if (processingStatus === "failed") return <XCircle className="w-4 h-4 text-red-500" />;
-  if (status === "approved") return <CheckCircle2 className="w-4 h-4 text-green-500" />;
-  if (status === "rejected") return <XCircle className="w-4 h-4 text-red-400" />;
+  if (status === "approved" && !processingStatus) return <CheckCircle2 className="w-4 h-4 text-green-500" />;
+  if (status === "rejected" || status?.startsWith("rejected_")) return <XCircle className="w-4 h-4 text-red-400" />;
   if (status === "skipped") return <SkipForward className="w-4 h-4 text-gray-400" />;
+  if (processingStatus === "queued") return <Loader2 className="w-4 h-4 text-gray-400" />;
   return null;
+}
+
+function SortIcon({ field, sortField, sortDir }: { field: SortField; sortField: SortField | null; sortDir: SortDir }) {
+  if (sortField !== field) return <ArrowDown className="w-3 h-3 opacity-0 group-hover:opacity-30 inline ml-1" />;
+  return sortDir === "asc"
+    ? <ArrowUp className="w-3 h-3 inline ml-1" />
+    : <ArrowDown className="w-3 h-3 inline ml-1" />;
 }
 
 export function CandidateTable({
@@ -64,6 +108,7 @@ export function CandidateTable({
   onApprove,
   onReject,
   onSkip,
+  onStepClick,
 }: {
   candidates: Candidate[];
   selectedIds: Set<string>;
@@ -72,7 +117,33 @@ export function CandidateTable({
   onApprove: (videoId: string) => void;
   onReject: (c: any) => void;
   onSkip: (videoId: string) => void;
+  onStepClick?: (step: string, data: any) => void;
 }) {
+  const [sortField, setSortField] = useState<SortField | null>(null);
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function handleSort(field: SortField) {
+    if (sortField === field) {
+      setSortDir(sortDir === "asc" ? "desc" : "asc");
+    } else {
+      setSortField(field);
+      setSortDir(field === "title" || field === "channel" ? "asc" : "desc");
+    }
+  }
+
+  const sorted = useMemo(() => {
+    if (!sortField) return candidates;
+    return [...candidates].sort((a, b) => {
+      let av: any = a[sortField];
+      let bv: any = b[sortField];
+      if (typeof av === "string") av = av.toLowerCase();
+      if (typeof bv === "string") bv = bv.toLowerCase();
+      if (av < bv) return sortDir === "asc" ? -1 : 1;
+      if (av > bv) return sortDir === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [candidates, sortField, sortDir]);
+
   const allSelected = candidates.length > 0 && candidates.every((c) => selectedIds.has(c.video_id));
 
   function toggleAll() {
@@ -90,6 +161,18 @@ export function CandidateTable({
     onSelectionChange(next);
   }
 
+  function sortableHeader(label: string, field: SortField, className?: string) {
+    return (
+      <TableHead
+        className={`${className || ""} cursor-pointer select-none group`}
+        onClick={() => handleSort(field)}
+      >
+        {label}
+        <SortIcon field={field} sortField={sortField} sortDir={sortDir} />
+      </TableHead>
+    );
+  }
+
   return (
     <Table>
       <TableHeader>
@@ -103,17 +186,17 @@ export function CandidateTable({
             />
           </TableHead>
           <TableHead className="w-8"></TableHead>
-          <TableHead>Title</TableHead>
-          <TableHead>Channel</TableHead>
-          <TableHead className="w-20 text-center">Score</TableHead>
-          <TableHead className="w-20">Duration</TableHead>
-          <TableHead className="w-24">Date</TableHead>
+          {sortableHeader("Title", "title")}
+          {sortableHeader("Channel", "channel")}
+          {sortableHeader("Score", "confidence", "w-20 text-center")}
+          {sortableHeader("Duration", "duration_seconds", "w-20")}
+          {sortableHeader("Date", "published_at", "w-24")}
           <TableHead className="w-20">Type</TableHead>
           <TableHead className="w-32 text-center">Actions</TableHead>
         </TableRow>
       </TableHeader>
       <TableBody>
-        {candidates.map((c) => (
+        {sorted.map((c) => (
           <TableRow
             key={c.video_id}
             className="cursor-pointer hover:bg-gray-50"
@@ -127,7 +210,17 @@ export function CandidateTable({
                 className="rounded"
               />
             </TableCell>
-            <TableCell>{statusBadge(c.status, c.processing_status)}</TableCell>
+            <TableCell>
+              {c.processing_status && c.processing_status !== "queued" ? (
+                <StepProgressBar
+                  processingStep={c.processing_step}
+                  stepsJson={c.processing_steps_json}
+                  onStepClick={onStepClick || (() => {})}
+                />
+              ) : (
+                statusBadge(c.status, c.processing_status)
+              )}
+            </TableCell>
             <TableCell className="max-w-[400px]">
               <div className="truncate font-medium" title={c.title}>
                 {c.title}

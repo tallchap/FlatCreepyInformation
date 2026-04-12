@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
+  serverExternalPackages: ["@remotion/bundler", "@remotion/renderer", "esbuild"],
   env: {
     BUILD_VERSION: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
     BUILD_TIME: new Date().toISOString(),

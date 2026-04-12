@@ -1,6 +1,25 @@
 "use client";
 
+import { useState } from "react";
 import { X, CheckCircle2, XCircle, SkipForward, ExternalLink } from "lucide-react";
+
+function DescriptionBlock({ text }: { text: string }) {
+  const [expanded, setExpanded] = useState(false);
+  const isLong = text.length > 200;
+  return (
+    <div>
+      <h3 className="text-sm font-semibold text-gray-700 mb-1">Description</h3>
+      <p className={`text-sm text-gray-600 whitespace-pre-line ${expanded ? "" : "line-clamp-3"}`}>
+        {text}
+      </p>
+      {isLong && (
+        <button className="text-xs text-blue-600 hover:underline mt-1" onClick={() => setExpanded(!expanded)}>
+          {expanded ? "See less" : "See more"}
+        </button>
+      )}
+    </div>
+  );
+}
 
 interface Candidate {
   video_id: string;
@@ -9,14 +28,14 @@ interface Candidate {
   duration_seconds: number;
   published_at: string;
   description: string;
-  confidence: number;
-  reasoning: string;
-  red_flags: string[];
-  category: string;
+  confidence: number | null;
+  reasoning: string | null;
+  red_flags: string[] | string | null;
+  category: string | null;
   status: string;
   processing_status: string | null;
   processing_error: string | null;
-  matched_rules: string[];
+  matched_rules: string[] | null;
 }
 
 function formatDuration(sec: number) {
@@ -85,7 +104,7 @@ export function DetailDrawer({
             </div>
             <div>
               <span className="text-gray-500">Confidence:</span>{" "}
-              <span className="font-bold">{c.confidence}</span>
+              <span className="font-bold">{c.confidence ?? "—"}</span>
             </div>
             <div>
               <span className="text-gray-500">Status:</span>{" "}
@@ -94,29 +113,34 @@ export function DetailDrawer({
           </div>
 
           {/* AI Reasoning */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-1">AI Reasoning</h3>
-            <p className="text-sm text-gray-600 bg-gray-50 rounded p-2">{c.reasoning}</p>
-          </div>
-
-          {/* Red flags */}
-          {c.red_flags?.length > 0 && (
+          {c.reasoning && (
             <div>
-              <h3 className="text-sm font-semibold text-red-600 mb-1">Red Flags</h3>
-              <ul className="text-sm text-red-600 list-disc list-inside">
-                {c.red_flags.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
+              <h3 className="text-sm font-semibold text-gray-700 mb-1">AI Reasoning</h3>
+              <p className="text-sm text-gray-600 bg-gray-50 rounded p-2">{c.reasoning}</p>
             </div>
           )}
 
+          {/* Red flags */}
+          {(() => {
+            const flags = Array.isArray(c.red_flags) ? c.red_flags : typeof c.red_flags === "string" && c.red_flags ? c.red_flags.split(", ") : [];
+            const filtered = flags.filter((f) => f && f !== "none");
+            if (filtered.length === 0) return null;
+            return (
+              <div>
+                <h3 className="text-sm font-semibold text-red-600 mb-1">Red Flags</h3>
+                <ul className="text-sm text-red-600 list-disc list-inside">
+                  {filtered.map((f, i) => (<li key={i}>{f}</li>))}
+                </ul>
+              </div>
+            );
+          })()}
+
           {/* Matched rules */}
-          {c.matched_rules?.length > 0 && (
+          {c.matched_rules && c.matched_rules.length > 0 && (
             <div>
               <h3 className="text-sm font-semibold text-gray-700 mb-1">Matched Rules</h3>
               <div className="flex flex-wrap gap-1">
-                {c.matched_rules.map((r, i) => (
+                {(Array.isArray(c.matched_rules) ? c.matched_rules : []).map((r, i) => (
                   <span key={i} className="text-xs bg-blue-50 text-blue-700 px-2 py-0.5 rounded">
                     {r}
                   </span>
@@ -126,12 +150,7 @@ export function DetailDrawer({
           )}
 
           {/* Description */}
-          <div>
-            <h3 className="text-sm font-semibold text-gray-700 mb-1">Description</h3>
-            <p className="text-sm text-gray-600 whitespace-pre-line max-h-48 overflow-y-auto">
-              {c.description}
-            </p>
-          </div>
+          {c.description && <DescriptionBlock text={c.description} />}
 
           {/* Processing error */}
           {c.processing_error && (

@@ -60,6 +60,7 @@ async function createTables() {
         processing_error STRING,
         processed_at TIMESTAMP,
         matched_rules ARRAY<STRING>,
+        transcript_json STRING,
         source STRING DEFAULT 'api_search',
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
       )
@@ -67,7 +68,35 @@ async function createTables() {
   });
   console.log("  -> research_candidates created.");
 
-  console.log("\nDone! Both tables created in", `${credentials.project_id}.${DATASET}`);
+  // Add transcript_json column if table already exists without it
+  console.log("Ensuring transcript_json column exists...");
+  try {
+    await bigquery.query({
+      query: `ALTER TABLE \`${credentials.project_id}.${DATASET}.research_candidates\` ADD COLUMN IF NOT EXISTS transcript_json STRING`,
+    });
+    console.log("  -> transcript_json column ensured.");
+  } catch (err) {
+    // Column may already exist or ALTER not supported — safe to ignore
+    console.log("  -> (skipped, column likely exists)");
+  }
+
+  console.log("Creating research_transcript_logs table...");
+  await bigquery.query({
+    query: `
+      CREATE TABLE IF NOT EXISTS \`${credentials.project_id}.${DATASET}.research_transcript_logs\` (
+        run_id STRING NOT NULL,
+        video_id STRING NOT NULL,
+        source STRING NOT NULL,
+        success BOOL NOT NULL,
+        error_message STRING,
+        duration_ms INT64,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()
+      )
+    `,
+  });
+  console.log("  -> research_transcript_logs created.");
+
+  console.log("\nDone! All tables created in", `${credentials.project_id}.${DATASET}`);
 }
 
 createTables().catch((err) => {

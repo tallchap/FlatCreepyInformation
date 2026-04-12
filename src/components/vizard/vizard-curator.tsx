@@ -12,10 +12,8 @@ type VideoMeta = {
   speakers: string | null;
 };
 
-type Selection = {
-  viral: VizardClip | null;
-  ai_safety: VizardClip | null;
-};
+type SelectedClip = VizardClip & { category: "viral" | "ai_safety" };
+type Selection = SelectedClip[];
 
 /* ── All Vizard API params with docs ── */
 const VIZARD_PARAMS_DOCS: {
@@ -390,6 +388,20 @@ function ClipCard({
 }
 
 /* ── Main Curator ── */
+const SAFETY_KEYWORDS = [
+  "ai safety", "alignment", "existential risk", "catastrophic", "superintelligence",
+  "ai doom", "x-risk", "agi risk", "deceptive alignment", "mesa-optimization",
+  "ai control", "shutdown problem", "ai extinction", "ai risk", "ai threat",
+  "ai regulation", "ai governance", "misalignment",
+];
+
+function isSafetyClip(clip: VizardClip): boolean {
+  const topics = (clip.relatedTopic || "").toLowerCase();
+  const title = (clip.title || "").toLowerCase();
+  const transcript = (clip.transcript || "").toLowerCase();
+  return SAFETY_KEYWORDS.some(kw => topics.includes(kw) || title.includes(kw) || transcript.includes(kw));
+}
+
 export function VizardCurator({
   videoId,
   videoMeta,
@@ -402,71 +414,132 @@ export function VizardCurator({
   safetyResponse: VizardResponse | null;
 }) {
   const [tab, setTab] = useState<"general" | "safety">("general");
-  const [selection, setSelection] = useState<Selection>({
-    viral: null,
-    ai_safety: null,
+
+  // Merge all clips from both responses (dedup by videoId), or use single response
+  const allClips = (() => {
+    const seen = new Set<number>();
+    const merged: VizardClip[] = [];
+    for (const clip of [...(generalResponse?.videos ?? []), ...(safetyResponse?.videos ?? [])]) {
+      if (!seen.has(clip.videoId)) {
+        seen.add(clip.videoId);
+        merged.push(clip);
+      }
+    }
+    return merged;
+  })();
+
+  // Split into general (non-safety) and safety clips
+  const safetyClips = allClips.filter(isSafetyClip);
+  const generalClips = allClips.filter(c => !isSafetyClip(c));
+
+  const [selection, setSelection] = useState<Selection>(() => {
+    // Auto-select up to 3 clips with priority rules:
+    // 1. If viral clip scores 10, take it (ties → shortest)
+    // 2. Fill with AI safety clips ≥8 (ranked score DESC, duration ASC)
+    // 3. Backfill with viral clips ≥9 (skip any already picked)
+    const MAX_CLIPS = 3;
+    const VIRAL_THRESHOLD = 9;
+    const SAFETY_THRESHOLD = 8;
+
+    const scoreOf = (c: VizardClip) => parseFloat(c.viralScore) || 0;
+    const byScoreDescDurationAsc = (a: VizardClip, b: VizardClip) =>
+      scoreOf(b) - scoreOf(a) || a.videoMsDuration - b.videoMsDuration;
+
+    const eligibleViral = [...generalClips]
+      .filter(c => scoreOf(c) >= VIRAL_THRESHOLD)
+      .sort(byScoreDescDurationAsc);
+    const eligibleSafety = [...safetyClips]
+      .filter(c => scoreOf(c) >= SAFETY_THRESHOLD)
+      .sort(byScoreDescDurationAsc);
+
+    const selected: SelectedClip[] = [];
+    const usedIds = new Set<number>();
+
+    // Rule 1: If any viral clip scores 10, it gets slot 1 (ties → shortest)
+    const viral10 = eligibleViral.find(c => scoreOf(c) >= 10);
+    if (viral10) {
+      selected.push({ ...viral10, category: "viral" });
+      usedIds.add(viral10.videoId);
+    }
+
+    // Rule 2: Fill remaining slots with AI safety clips ≥8
+    // (If rule 1 had no result, all 3 slots are available for safety)
+    for (const clip of eligibleSafety) {
+      if (selected.length >= MAX_CLIPS) break;
+      if (usedIds.has(clip.videoId)) continue;
+      selected.push({ ...clip, category: "ai_safety" });
+      usedIds.add(clip.videoId);
+    }
+
+    // Rule 3: Backfill remaining slots with viral clips ≥9
+    for (const clip of eligibleViral) {
+      if (selected.length >= MAX_CLIPS) break;
+      if (usedIds.has(clip.videoId)) continue;
+      selected.push({ ...clip, category: "viral" });
+      usedIds.add(clip.videoId);
+    }
+
+    return selected;
   });
   const [exporting, setExporting] = useState(false);
 
-  const generalPrompt = {
+  const vizardPrompt = {
     videoUrl: `https://www.youtube.com/watch?v=${videoId}`,
     videoType: 2,
     lang: "en",
     preferLength: [0],
-    ratioOfClip: 4,
     maxClipNumber: 20,
+    keywords: "AI safety, existential risk, alignment, superintelligence, AI capabilities, breakthrough",
     subtitleSwitch: 0,
     headlineSwitch: 0,
   };
 
-  const safetyPrompt = {
-    ...generalPrompt,
-    keywords:
-      "AI safety, existential risk, alignment, catastrophic risk, superintelligence",
-  };
-
-  const clips =
-    tab === "general"
-      ? generalResponse?.videos ?? []
-      : safetyResponse?.videos ?? [];
+  const clips = tab === "general" ? generalClips : safetyClips;
   const sortedClips = [...clips].sort(
     (a, b) => parseFloat(b.viralScore) - parseFloat(a.viralScore)
   );
 
   const handleSelect = (clip: VizardClip, category: "viral" | "ai_safety") => {
-    setSelection((prev) => ({
-      ...prev,
-      [category]: prev[category]?.videoId === clip.videoId ? null : clip,
-    }));
+    setSelection((prev) => {
+      const existing = prev.find(s => s.videoId === clip.videoId);
+      if (existing) {
+        // Deselect
+        return prev.filter(s => s.videoId !== clip.videoId);
+      }
+      if (prev.length >= 3) {
+        toast.error("Max 3 clips selected. Deselect one first.");
+        return prev;
+      }
+      return [...prev, { ...clip, category }];
+    });
   };
 
   const isSelected = (clip: VizardClip) =>
-    selection.viral?.videoId === clip.videoId ||
-    selection.ai_safety?.videoId === clip.videoId;
+    selection.some(s => s.videoId === clip.videoId);
 
   const getSlotLabel = (clip: VizardClip) => {
-    if (selection.viral?.videoId === clip.videoId) return "Most Viral";
-    if (selection.ai_safety?.videoId === clip.videoId) return "AI Safety";
-    return undefined;
+    const sel = selection.find(s => s.videoId === clip.videoId);
+    if (!sel) return undefined;
+    return sel.category === "viral" ? "Most Viral" : "AI Safety";
   };
 
   const handleExport = async () => {
-    if (!selection.viral && !selection.ai_safety) {
+    if (selection.length === 0) {
       toast.error("Select at least one clip to export");
       return;
     }
     setExporting(true);
     try {
-      const exportClips = [];
-      if (selection.viral)
-        exportClips.push({ ...selection.viral, category: "viral" });
-      if (selection.ai_safety)
-        exportClips.push({ ...selection.ai_safety, category: "ai_safety" });
-
       const res = await fetch("/api/clips/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId, clips: exportClips }),
+        body: JSON.stringify({
+          videoId,
+          allClips: allClips,
+          selectedClips: selection,
+          projectId: activeResponse?.projectId ?? null,
+          creditsUsed: activeResponse?.creditsUsed ?? null,
+        }),
       });
 
       if (!res.ok) {
@@ -476,7 +549,7 @@ export function VizardCurator({
 
       const result = await res.json();
       toast.success(
-        `Exported ${result.exported} clip(s) to GCS + BigQuery!`
+        `Saved ${result.vizardSaved} to snippets_vizard, exported ${result.exported} to snippets_auto + GCS!`
       );
     } catch (e: any) {
       toast.error(`Export failed: ${e.message}`);
@@ -485,11 +558,9 @@ export function VizardCurator({
     }
   };
 
-  const selectedCount =
-    (selection.viral ? 1 : 0) + (selection.ai_safety ? 1 : 0);
+  const selectedCount = selection.length;
 
-  const activeResponse =
-    tab === "general" ? generalResponse : safetyResponse;
+  const activeResponse = generalResponse || safetyResponse;
 
   return (
     <div className="space-y-6 pb-24">
@@ -620,24 +691,14 @@ export function VizardCurator({
             </table>
           </div>
 
-          {/* Actual prompts used */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                General Prompt Used
-              </h4>
-              <pre className="text-[10px] font-mono bg-white border rounded p-2 overflow-auto max-h-48">
-                {JSON.stringify(generalPrompt, null, 2)}
-              </pre>
-            </div>
-            <div>
-              <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
-                AI Safety Prompt Used
-              </h4>
-              <pre className="text-[10px] font-mono bg-white border rounded p-2 overflow-auto max-h-48">
-                {JSON.stringify(safetyPrompt, null, 2)}
-              </pre>
-            </div>
+          {/* Prompt used */}
+          <div>
+            <h4 className="text-xs font-semibold text-gray-500 uppercase mb-1">
+              Vizard Prompt Used (single request, clips auto-tagged by topic)
+            </h4>
+            <pre className="text-[10px] font-mono bg-white border rounded p-2 overflow-auto max-h-48">
+              {JSON.stringify(vizardPrompt, null, 2)}
+            </pre>
           </div>
         </div>
       </details>
@@ -652,7 +713,7 @@ export function VizardCurator({
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
-          General Virality ({generalResponse?.videos?.length ?? 0})
+          General Virality ({generalClips.length})
         </button>
         <button
           onClick={() => setTab("safety")}
@@ -662,7 +723,7 @@ export function VizardCurator({
               : "bg-gray-100 text-gray-600 hover:bg-gray-200"
           }`}
         >
-          AI Safety ({safetyResponse?.videos?.length ?? 0})
+          AI Safety ({safetyClips.length})
         </button>
       </div>
 
@@ -745,38 +806,24 @@ export function VizardCurator({
       <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-lg z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between gap-4 px-6 py-3">
           <div className="flex gap-6 min-w-0">
-            <div className="min-w-0">
-              <span className="text-[10px] font-semibold text-red-600 uppercase">
-                Most Viral
-              </span>
-              <p className="text-xs text-gray-800 truncate max-w-[200px]">
-                {selection.viral?.title ?? (
-                  <span className="text-gray-400 italic">Not selected</span>
-                )}
-              </p>
-              {selection.viral && (
-                <span className="text-[10px] text-gray-400">
-                  {selection.viral.viralScore}/10 ·{" "}
-                  {formatDuration(selection.viral.videoMsDuration)}
+            {selection.length === 0 && (
+              <span className="text-xs text-gray-400 italic">No clips selected</span>
+            )}
+            {selection.map((clip, i) => (
+              <div key={clip.videoId} className="min-w-0">
+                <span className={`text-[10px] font-semibold uppercase ${
+                  clip.category === "viral" ? "text-red-600" : "text-blue-600"
+                }`}>
+                  {clip.category === "viral" ? "Viral" : "AI Safety"} #{i + 1}
                 </span>
-              )}
-            </div>
-            <div className="min-w-0">
-              <span className="text-[10px] font-semibold text-blue-600 uppercase">
-                AI Safety
-              </span>
-              <p className="text-xs text-gray-800 truncate max-w-[200px]">
-                {selection.ai_safety?.title ?? (
-                  <span className="text-gray-400 italic">Not selected</span>
-                )}
-              </p>
-              {selection.ai_safety && (
+                <p className="text-xs text-gray-800 truncate max-w-[200px]">
+                  {clip.title}
+                </p>
                 <span className="text-[10px] text-gray-400">
-                  {selection.ai_safety.viralScore}/10 ·{" "}
-                  {formatDuration(selection.ai_safety.videoMsDuration)}
+                  {clip.viralScore}/10 · {formatDuration(clip.videoMsDuration)}
                 </span>
-              )}
-            </div>
+              </div>
+            ))}
           </div>
           <button
             onClick={handleExport}

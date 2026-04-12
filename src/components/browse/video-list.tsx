@@ -43,59 +43,57 @@ export function VideoList({
     <div className="space-y-4">
       <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider px-1">
         <span className="text-blue-700 normal-case">{speaker}</span>
-        {!isLoading && (
-          <span className="font-normal text-gray-400 normal-case ml-2">
-            ({total} {total === 1 ? "video" : "videos"})
-          </span>
-        )}
+        <span className="font-normal text-gray-400 normal-case ml-2">
+          ({total} {total === 1 ? "video" : "videos"})
+        </span>
       </h2>
 
-      {isLoading ? (
-        <div className="text-center py-8 text-gray-500">Loading videos...</div>
-      ) : groupedByYear.map((group) => (
-        <div key={group.year} className="space-y-3">
-          <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1">
-            {group.year}
-          </h3>
-          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-            {group.videos.map((video) => (
-              <Link
-                key={video.id}
-                href={`/video/${video.id}`}
-                className="group block"
-              >
-                <div className="rounded-lg overflow-hidden border border-gray-200 bg-white hover:border-blue-300 hover:shadow-md transition-all">
-                  <Image
-                    src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-                    alt={video.title}
-                    width={320}
-                    height={180}
-                    className="w-full aspect-video object-cover"
-                  />
-                  <div className="p-2.5">
-                    <p className="text-xs font-medium text-gray-800 line-clamp-2 group-hover:text-blue-700 transition-colors">
-                      {video.title}
-                    </p>
-                    <p className="text-[11px] text-gray-400 mt-1 truncate">
-                      {video.channel}
-                    </p>
-                    <p className="text-[11px] text-gray-400 truncate">
-                      {video.published}
-                      {video.videoLength && ` · ${video.videoLength}`}
-                    </p>
+      <div className={`transition-opacity ${isLoading ? "opacity-50 pointer-events-none" : ""}`}>
+        {groupedByYear.map((group) => (
+          <div key={group.year} className="space-y-3">
+            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1">
+              {group.year}
+            </h3>
+            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+              {group.videos.map((video) => (
+                <Link
+                  key={video.id}
+                  href={`/video/${video.id}`}
+                  className="group block"
+                >
+                  <div className="rounded-lg overflow-hidden border border-gray-200 bg-white hover:border-blue-300 hover:shadow-md transition-all">
+                    <Image
+                      src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
+                      alt={video.title}
+                      width={320}
+                      height={180}
+                      className="w-full aspect-video object-cover"
+                    />
+                    <div className="p-2.5">
+                      <p className="text-xs font-medium text-gray-800 line-clamp-2 group-hover:text-blue-700 transition-colors">
+                        {video.title}
+                      </p>
+                      <p className="text-[11px] text-gray-400 mt-1 truncate">
+                        {video.channel}
+                      </p>
+                      <p className="text-[11px] text-gray-400 truncate">
+                        {video.published}
+                        {video.videoLength && ` · ${video.videoLength}`}
+                      </p>
+                    </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              ))}
+            </div>
           </div>
-        </div>
-      ))}
+        ))}
 
-      {!isLoading && videos.length === 0 && (
-        <p className="text-center text-gray-500 py-4">
-          No videos found.
-        </p>
-      )}
+        {videos.length === 0 && !isLoading && (
+          <p className="text-center text-gray-500 py-4">
+            No videos found.
+          </p>
+        )}
+      </div>
 
       {totalPages > 1 && (
         <div className="flex items-center justify-center gap-4 pt-2">

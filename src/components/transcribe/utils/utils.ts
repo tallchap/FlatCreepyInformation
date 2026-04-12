@@ -392,8 +392,18 @@ export async function getGoogleDocsAuth() {
       throw new Error("Google service account credentials are not configured");
     }
 
-    // Parse service account credentials
-    const serviceAccountContent = JSON.parse(serviceAccount);
+    // Parse service account credentials (fix private_key newlines)
+    let serviceAccountContent;
+    try {
+      serviceAccountContent = JSON.parse(serviceAccount);
+    } catch {
+      const fixed = serviceAccount.replace(
+        /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
+        (_m: string, key: string) =>
+          `"private_key":"${key.replace(/\n/g, "\\n")}","client_email"`,
+      );
+      serviceAccountContent = JSON.parse(fixed);
+    }
 
     // Create JWT auth client
     const auth = new JWT({
@@ -422,8 +432,18 @@ export async function getGoogleSheetsAuth() {
       throw new Error("Google service account credentials are not configured");
     }
 
-    // Parse service account credentials
-    const serviceAccountContent = JSON.parse(serviceAccount);
+    // Parse service account credentials (fix private_key newlines)
+    let serviceAccountContent;
+    try {
+      serviceAccountContent = JSON.parse(serviceAccount);
+    } catch {
+      const fixed = serviceAccount.replace(
+        /"private_key"\s*:\s*"([\s\S]*?)",\s*"client_email"/,
+        (_m: string, key: string) =>
+          `"private_key":"${key.replace(/\n/g, "\\n")}","client_email"`,
+      );
+      serviceAccountContent = JSON.parse(fixed);
+    }
 
     // Create JWT auth client
     const auth = new JWT({
