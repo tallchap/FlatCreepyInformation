@@ -769,21 +769,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                   </button>
                 ))}
               </div>
-              <button
-                onClick={handleExport}
-                disabled={clipTooLong}
-                className={btnClass}
-                style={{ backgroundColor: DINO_RED }}
-                onMouseEnter={(e) => { if (!clipTooLong) e.currentTarget.style.backgroundColor = DINO_RED_HOVER; }}
-                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
-              >
-                Export Snippet
-              </button>
               <a
                 href={videoId ? `/api/full-video?videoId=${encodeURIComponent(videoId)}&quality=${quality}` : undefined}
                 download
-                className="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
-                title="Stream the full video file from Bunny (no trim, no re-encode)"
+                className={btnClass}
+                style={{ backgroundColor: DINO_RED }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = DINO_RED_HOVER)}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = DINO_RED)}
+                title="Download the full video file from Bunny (no trim, no re-encode — clip locally in your editor)"
               >
                 Download full video
               </a>
