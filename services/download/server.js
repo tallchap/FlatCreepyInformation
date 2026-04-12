@@ -914,9 +914,25 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
         pickedHeight: hls.pickedHeight,
         segmentStartOffset: hls.segmentStartOffset,
       });
+      job.progress = 30;
+      // Merge all covering .ts segments into one clean mp4 (copy codecs, regen timestamps)
+      // to eliminate per-segment PTS/DTS discontinuities and AAC priming glitches at the
+      // ~6s segment boundaries. Then input-side seek on the merged file is frame-accurate.
+      const mergedFile = join(hlsScratchDir, "merged.mp4");
+      job.stageDetail = "Merging HLS segments...";
+      await execCapture("ffmpeg", [
+        "-fflags", "+genpts",
+        "-f", "concat", "-safe", "0", "-i", hls.concatFile,
+        "-c", "copy", "-bsf:a", "aac_adtstoasc",
+        "-movflags", "+faststart",
+        "-y", mergedFile,
+      ], { timeout: 300_000 });
+      const mergedBytes = fs.statSync(mergedFile).size;
+      logDebug("gcs-clip.hls-merged", { bytes: mergedBytes, mb: (mergedBytes / 1024 / 1024).toFixed(1) });
       job.progress = 40;
-      ffmpegInputArgs = ["-f", "concat", "-safe", "0", "-i", hls.concatFile];
-      ffmpegSeekSec = Math.max(0, startSec - hls.segmentStartOffset);
+      const hlsSeek = Math.max(0, startSec - hls.segmentStartOffset);
+      ffmpegInputArgs = ["-ss", String(hlsSeek), "-i", mergedFile];
+      ffmpegSeekSec = null;
       videoMeta = { width: hls.pickedHeight >= 1080 ? 1920 : hls.pickedHeight >= 720 ? 1280 : hls.pickedHeight >= 480 ? 854 : hls.pickedHeight >= 360 ? 640 : 426 };
     } else {
       // Legacy full-MP4 path (GCS or Bunny MP4 fallback).
