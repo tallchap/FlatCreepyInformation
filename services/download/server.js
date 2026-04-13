@@ -891,7 +891,10 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
   // `source` comes from the POST handler: { type: "bunny" | "gcs", url, referer?, guid? }.
   const srcUrl = source.url;
   const srcReferer = source.referer || null;
-  const useHlsPath = source.type === "bunny" && source.guid && process.env.HLS_CLIP_EXPORT !== "0";
+  // Always download the full Bunny MP4 and stream-copy trim from it. This gives a
+  // bit-identical clip matching the source (which user confirmed plays smooth) with
+  // no re-encode artifacts. HLS segment fetching is disabled.
+  const useHlsPath = false;
 
   const timings = { start: Date.now(), downloadDone: 0, trimDone: 0 };
 
@@ -972,14 +975,12 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
     logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no", mode: useHlsPath ? "hls" : "mp4" });
     await new Promise((resolve, reject) => {
+      // Stream-copy trim: no re-encode, bit-identical to source, guaranteed smooth playback.
+      // -ss on input seeks to nearest keyframe before startSec (Bunny = 1s GOP, so ≤1s earlier).
+      // Overlay and audio fade are not compatible with -c copy and are intentionally dropped.
       const args = [
         ...ffmpegInputArgs,
-        ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
-        ...(overlayFilter ? ["-vf", overlayFilter] : []),
-        "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
-        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
-        "-af", `afade=t=out:st=${Math.max(0, duration - 0.05)}:d=0.05`,
-        "-c:a", "aac", "-b:a", "128k",
+        "-c", "copy", "-avoid_negative_ts", "make_zero",
         "-movflags", "+faststart", "-y", clipFile,
       ];
       const proc = execFile("ffmpeg", args, (error) => {
