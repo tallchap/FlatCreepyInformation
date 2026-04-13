@@ -975,12 +975,17 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
     logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no", mode: useHlsPath ? "hls" : "mp4" });
     await new Promise((resolve, reject) => {
-      // Stream-copy trim: no re-encode, bit-identical to source, guaranteed smooth playback.
-      // -ss on input seeks to nearest keyframe before startSec (Bunny = 1s GOP, so ≤1s earlier).
-      // Overlay and audio fade are not compatible with -c copy and are intentionally dropped.
+      // Re-encode trim from full Bunny MP4 with Z-settings: frame-accurate AND smooth
+      // in QuickTime. 2.5 Mbps bitrate cap + zerolatency tune eliminates the bitrate
+      // spikes that cause QT's HW decoder to stall at regular intervals.
       const args = [
         ...ffmpegInputArgs,
-        "-c", "copy", "-avoid_negative_ts", "make_zero",
+        ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
+        ...(overlayFilter ? ["-vf", overlayFilter] : []),
+        "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
+        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+        "-af", `afade=t=out:st=${Math.max(0, duration - 0.05)}:d=0.05`,
+        "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", "-y", clipFile,
       ];
       const proc = execFile("ffmpeg", args, (error) => {
@@ -1140,52 +1145,6 @@ app.get("/clip/:jobId/file", async (req, res) => {
   } catch (e) {
     res.status(500).json({ error: "File read failed" });
   }
-});
-
-// Stream the full-length Bunny MP4 rendition to the client as a download.
-// No re-encode. Bunny → Render → user. Supports Range requests.
-app.get("/full-video", async (req, res) => {
-  const videoId = String(req.query.videoId || "");
-  const quality = String(req.query.quality || "1080p");
-  if (!videoId) return res.status(400).json({ error: "Missing videoId" });
-
-  const heightLimit = quality === "1080p" ? 1080 : 720;
-  const bunny = await bunnyLookup(videoId).catch(() => null);
-  if (!bunny) return res.status(404).json({ error: "Video not in Bunny" });
-  const pickedHeight = pickBunnyRendition(bunny.availableResolutions, heightLimit);
-  if (!pickedHeight) return res.status(404).json({ error: "No rendition available" });
-
-  const upstreamUrl = `https://${BUNNY_CDN_HOST}/${bunny.guid}/play_${pickedHeight}p.mp4`;
-  const filename = `${videoId}-${pickedHeight}p.mp4`;
-
-  const https = require("https");
-  const headers = { Referer: BUNNY_REFERER };
-  if (req.headers.range) headers.Range = req.headers.range;
-
-  logDebug("full-video.start", { videoId, quality: `${pickedHeight}p`, range: req.headers.range || null });
-
-  const upstream = https.get(upstreamUrl, { headers }, (upRes) => {
-    if (upRes.statusCode >= 400) {
-      res.status(upRes.statusCode).json({ error: `Upstream ${upRes.statusCode}` });
-      upRes.resume();
-      return;
-    }
-    res.status(upRes.statusCode);
-    res.set({
-      "Content-Type": "video/mp4",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "Accept-Ranges": "bytes",
-    });
-    if (upRes.headers["content-length"]) res.set("Content-Length", upRes.headers["content-length"]);
-    if (upRes.headers["content-range"]) res.set("Content-Range", upRes.headers["content-range"]);
-    upRes.pipe(res);
-    upRes.on("end", () => logDebug("full-video.done", { videoId, bytes: upRes.headers["content-length"] || "?" }));
-  });
-  upstream.on("error", (err) => {
-    logDebug("full-video.error", { videoId, err: err.message });
-    if (!res.headersSent) res.status(502).json({ error: "Upstream fetch failed" });
-  });
-  req.on("close", () => { try { upstream.destroy(); } catch (_) {} });
 });
 
 app.get("/debug", async (_req, res) => {
