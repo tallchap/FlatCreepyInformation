@@ -29,6 +29,29 @@ export async function singleExtract(prevState: any, formData: FormData) {
 
   const { url, speaker, store_in_bigquery, store_in_sheet } =
     validatedFields.data;
+  // Outer bulletproof wrapper — any throw that escapes the per-step try/catch
+  // blocks below still returns a serializable graceful shape, so the Next.js
+  // error.tsx boundary never renders from a /transcribe submit.
+  try {
+    return await _singleExtract(url, speaker, store_in_bigquery, store_in_sheet);
+  } catch (error: any) {
+    console.error("singleExtract outer catch — unexpected throw:", error);
+    return {
+      videoTitle: url,
+      youtubeLink: url,
+      status: "failed" as const,
+      failedStep: "unknown",
+      errorMessage: error?.message || "Unexpected error during processing",
+    };
+  }
+}
+
+async function _singleExtract(
+  url: string,
+  speaker: string,
+  store_in_bigquery: string | undefined,
+  store_in_sheet: string | undefined,
+) {
 
   console.log(`Extracting metadata for: ${url}`);
   let metadata;

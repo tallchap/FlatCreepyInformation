@@ -44,6 +44,16 @@ export function SingleForm() {
         status: "error",
         message: state.error,
       });
+      // Also surface in Recent Uploads so the user has a row instead of a
+      // disappearing toast.
+      addTranscript({
+        videoTitle: "(metadata fetch failed)",
+        youtubeLink: "",
+        googleDocUrl: undefined,
+        status: "failed",
+        failedStep: "metadata",
+        errorMessage: state.error,
+      });
       return;
     }
 
