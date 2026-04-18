@@ -51,6 +51,10 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
     // Convert ISO 8601 duration to human-readable format
     const duration = contentDetails?.duration || "PT0S";
     const durationStr = formatDuration(duration);
+    const durMatch = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/.exec(duration);
+    const durationSeconds = durMatch
+      ? Number(durMatch[1] || 0) * 3600 + Number(durMatch[2] || 0) * 60 + Number(durMatch[3] || 0)
+      : null;
 
     // Extract human names using OpenAI
     const names = await extractHumanNames(
@@ -69,6 +73,7 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
       channelId: snippet.channelId,
       publishedAt: publishedDate,
       duration: durationStr,
+      durationSeconds,
       viewCount: statistics?.viewCount || "0",
       speaker,
       extractedNames: names,

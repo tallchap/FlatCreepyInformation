@@ -420,3 +420,72 @@ export async function fetchAutoSnippets(videoId: string): Promise<AutoSnippet[]>
     createdAt: r.created_at?.value ?? (r.created_at ? String(r.created_at) : null),
   }));
 }
+
+/* ── Transcribe log (admin Pipeline Log data source) ── */
+
+const TRANSCRIBE_LOG_TABLE = "youtubetranscripts-429803.reptranscripts.transcribe_log";
+
+export interface TranscribeLogRow {
+  video_id: string;
+  requested_at: string;
+  speaker: string | null;
+  video_title: string | null;
+  channel_name: string | null;
+  channel_id: string | null;
+  published_date: string | null;
+  duration_seconds: number | null;
+  youtube_link: string;
+}
+
+export async function fetchTranscribeLog(opts: {
+  page?: number;
+  pageSize?: number;
+  videoId?: string | null;
+}): Promise<{ rows: TranscribeLogRow[]; total: number }> {
+  const page = Math.max(1, opts.page ?? 1);
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 20));
+  const offset = (page - 1) * pageSize;
+  const videoId = opts.videoId ?? null;
+  const where = videoId ? "WHERE video_id = @videoId" : "";
+
+  const [countRows] = await bigQuery.query({
+    query: `SELECT COUNT(*) AS total FROM \`${TRANSCRIBE_LOG_TABLE}\` ${where}`,
+    params: { videoId },
+  });
+  const total = Number(countRows[0]?.total ?? 0);
+
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT
+        video_id,
+        FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', requested_at, 'UTC') AS requested_at,
+        speaker,
+        video_title,
+        channel_name,
+        channel_id,
+        CAST(published_date AS STRING) AS published_date,
+        duration_seconds,
+        youtube_link
+      FROM \`${TRANSCRIBE_LOG_TABLE}\`
+      ${where}
+      ORDER BY requested_at DESC
+      LIMIT @pageSize OFFSET @offset
+    `,
+    params: { videoId, pageSize, offset },
+  });
+
+  return {
+    rows: rows.map((r: any) => ({
+      video_id: String(r.video_id),
+      requested_at: String(r.requested_at),
+      speaker: r.speaker ?? null,
+      video_title: r.video_title ?? null,
+      channel_name: r.channel_name ?? null,
+      channel_id: r.channel_id ?? null,
+      published_date: r.published_date ?? null,
+      duration_seconds: r.duration_seconds === null || r.duration_seconds === undefined ? null : Number(r.duration_seconds),
+      youtube_link: String(r.youtube_link || `https://youtu.be/${r.video_id}`),
+    })),
+    total,
+  };
+}

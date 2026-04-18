@@ -12,21 +12,25 @@ interface Ev {
   detail?: any;
 }
 
+interface Row {
+  video_id: string;
+  requested_at: string;
+  speaker: string | null;
+  video_title: string | null;
+  channel_name: string | null;
+  channel_id: string | null;
+  published_date: string | null;
+  duration_seconds: number | null;
+  youtube_link: string;
+}
+
 interface ApiResp {
-  events: Ev[];
+  rows: Row[];
+  events: Record<string, Ev[]>;
   page: number;
   pageSize: number;
   hasMore: boolean;
   total: number;
-}
-
-interface Rollup {
-  videoId: string;
-  latest: Ev;
-  first: Ev;
-  count: number;
-  hasError: boolean;
-  events: Ev[];
 }
 
 function fmt(ts: number) {
@@ -49,14 +53,20 @@ function statusColor(s: string) {
   return "#6b7280";
 }
 
-function rollupBadge(r: Rollup): { label: string; color: string } {
-  if (r.hasError) return { label: "error", color: "#dc2626" };
-  if (r.latest.status === "success" && r.latest.step === "bunny-fetch-queued") return { label: "complete", color: "#16a34a" };
-  if (r.latest.status === "success") return { label: "success", color: "#16a34a" };
+function rowBadge(events: Ev[]): { label: string; color: string } | null {
+  if (!events.length) return null;
+  const latest = events[0];
+  const hasError = events.some((e) => e.status === "error");
+  if (latest.status === "error") return { label: "error", color: "#dc2626" };
+  if (latest.status === "success" && latest.step === "bunny-ready") return { label: "complete", color: "#16a34a" };
+  if (latest.status === "success" && latest.step === "bunny-fetch-queued") return { label: "in-flight", color: "#ca8a04" };
+  if (latest.status === "success") return { label: "success", color: "#16a34a" };
+  if (hasError) return { label: "retried", color: "#ca8a04" };
   return { label: "in-flight", color: "#ca8a04" };
 }
 
-const VIDEOS_PER_PAGE = 20;
+const PAGE_SIZE = 20;
+const DASH = <span style={{ color: "#9ca3af" }}>—</span>;
 
 export default function AdminLogPage() {
   return (
@@ -75,13 +85,13 @@ function AdminLog() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filterVideoId, setFilterVideoId] = useState<string | null>(null);
-  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [expanded, setExpanded] = useState<Set<number>>(new Set());
 
   const load = useCallback(async () => {
     if (!key) return;
     setLoading(true); setError(null);
     try {
-      const qs = new URLSearchParams({ key, page: "1", pageSize: "500" });
+      const qs = new URLSearchParams({ key, page: String(page), pageSize: String(PAGE_SIZE) });
       if (filterVideoId) qs.set("videoId", filterVideoId);
       const res = await fetch(`/api/admin/log?${qs}`, { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -92,40 +102,19 @@ function AdminLog() {
     } finally {
       setLoading(false);
     }
-  }, [key, filterVideoId]);
+  }, [key, filterVideoId, page]);
 
   useEffect(() => { load(); }, [load]);
 
-  const rollups = useMemo<Rollup[]>(() => {
-    if (!data?.events?.length) return [];
-    const groups = new Map<string, Ev[]>();
-    for (const e of data.events) {
-      if (!groups.has(e.videoId)) groups.set(e.videoId, []);
-      groups.get(e.videoId)!.push(e);
-    }
-    return [...groups.entries()]
-      .map(([videoId, evs]) => ({
-        videoId,
-        latest: evs[0],
-        first: evs[evs.length - 1],
-        count: evs.length,
-        hasError: evs.some((e) => e.status === "error"),
-        events: evs,
-      }))
-      .sort((a, b) => b.latest.ts - a.latest.ts);
-  }, [data]);
-
-  const pageCount = Math.max(1, Math.ceil(rollups.length / VIDEOS_PER_PAGE));
-  const visible = filterVideoId
-    ? rollups
-    : rollups.slice((page - 1) * VIDEOS_PER_PAGE, page * VIDEOS_PER_PAGE);
+  const pageCount = Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE));
+  const rows = data?.rows ?? [];
+  const events = data?.events ?? {};
 
   useEffect(() => {
-    // auto-expand single row in filter mode
-    if (filterVideoId && rollups.length === 1) {
-      setExpanded(new Set([rollups[0].videoId]));
+    if (filterVideoId && rows.length === 1) {
+      setExpanded(new Set([0]));
     }
-  }, [filterVideoId, rollups]);
+  }, [filterVideoId, rows.length]);
 
   if (!key) {
     return (
@@ -136,10 +125,10 @@ function AdminLog() {
     );
   }
 
-  const toggle = (vid: string) => {
+  const toggle = (idx: number) => {
     setExpanded((prev) => {
       const next = new Set(prev);
-      if (next.has(vid)) next.delete(vid); else next.add(vid);
+      if (next.has(idx)) next.delete(idx); else next.add(idx);
       return next;
     });
   };
@@ -170,6 +159,7 @@ function AdminLog() {
           <tr style={{ background: "#f9fafb", textAlign: "left" }}>
             <th style={{ ...th, width: 30 }}></th>
             <th style={th}>Video</th>
+            <th style={th}>Title</th>
             <th style={th}>Latest Step</th>
             <th style={th}>Status</th>
             <th style={th}>Events</th>
@@ -178,59 +168,89 @@ function AdminLog() {
           </tr>
         </thead>
         <tbody>
-          {visible.length ? visible.flatMap((r) => {
-            const isOpen = expanded.has(r.videoId);
-            const badge = rollupBadge(r);
-            const dur = r.latest.ts - r.first.ts;
-            const rows: ReactElement[] = [
-              <tr key={`row-${r.videoId}`}
+          {rows.length ? rows.flatMap((r, idx) => {
+            const isOpen = expanded.has(idx);
+            const evs = events[r.video_id] || [];
+            const badge = rowBadge(evs);
+            const latest = evs[0];
+            const first = evs[evs.length - 1];
+            const dur = latest && first ? latest.ts - first.ts : null;
+
+            const out: ReactElement[] = [
+              <tr key={`row-${idx}`}
                   style={{ borderTop: "1px solid #e5e7eb", cursor: "pointer" }}
-                  onClick={() => toggle(r.videoId)}>
+                  onClick={() => toggle(idx)}>
                 <td style={td}>{isOpen ? "▼" : "▶"}</td>
-                <td style={{ ...td, fontFamily: "ui-monospace, monospace" }}>{r.videoId}</td>
-                <td style={td}><code>{r.latest.step}</code></td>
-                <td style={{ ...td, color: badge.color, fontWeight: 600 }}>{badge.label}</td>
-                <td style={td}>{r.count}</td>
-                <td style={td}>{elapsed(dur)}</td>
-                <td style={td}>{fmt(r.latest.ts)}</td>
+                <td style={{ ...td, fontFamily: "ui-monospace, monospace" }}>{r.video_id}</td>
+                <td style={{ ...td, maxWidth: 320, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                    title={r.video_title || ""}>
+                  {r.video_title || DASH}
+                </td>
+                <td style={td}>{latest ? <code>{latest.step}</code> : DASH}</td>
+                <td style={{ ...td, ...(badge ? { color: badge.color, fontWeight: 600 } : {}) }}>
+                  {badge ? badge.label : DASH}
+                </td>
+                <td style={td}>{evs.length || DASH}</td>
+                <td style={td}>{dur !== null ? elapsed(dur) : DASH}</td>
+                <td style={td}>{latest ? fmt(latest.ts) : DASH}</td>
               </tr>,
             ];
+
             if (isOpen) {
-              rows.push(
-                <tr key={`exp-${r.videoId}`} style={{ background: "#fafafa" }}>
-                  <td colSpan={7} style={{ padding: 0 }}>
-                    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
-                      <thead>
-                        <tr style={{ background: "#f3f4f6", textAlign: "left" }}>
-                          <th style={subTh}>Time</th>
-                          <th style={subTh}>Pipeline</th>
-                          <th style={subTh}>Step</th>
-                          <th style={subTh}>Status</th>
-                          <th style={subTh}>Detail</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {r.events.map((e, i) => (
-                          <tr key={i} style={{ borderTop: "1px solid #e5e7eb" }}>
-                            <td style={subTd}>{fmt(e.ts)}</td>
-                            <td style={subTd}>{e.pipeline}</td>
-                            <td style={subTd}><code>{e.step}</code></td>
-                            <td style={{ ...subTd, color: statusColor(e.status), fontWeight: 500 }}>{e.status}</td>
-                            <td style={subTd}>
-                              {e.detail ? <code style={{ fontSize: 11 }}>{typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail)}</code> : "—"}
-                            </td>
+              out.push(
+                <tr key={`exp-${idx}`} style={{ background: "#fafafa" }}>
+                  <td colSpan={8} style={{ padding: 0 }}>
+                    <div style={{ padding: "12px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 24, fontSize: 13, flexWrap: "wrap" }}>
+                      <span><b>Channel:</b> {r.channel_name || DASH}</span>
+                      <span><b>Uploaded:</b> {r.published_date || DASH}</span>
+                      <span><b>Requested:</b> {fmt(new Date(r.requested_at).getTime())}</span>
+                      {r.speaker && <span><b>Speaker:</b> {r.speaker}</span>}
+                      <a href={r.youtube_link}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         onClick={(e) => e.stopPropagation()}
+                         style={{ color: "#2563eb", textDecoration: "none", marginLeft: "auto" }}>
+                        YouTube ↗
+                      </a>
+                    </div>
+                    {evs.length ? (
+                      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                        <thead>
+                          <tr style={{ background: "#f3f4f6", textAlign: "left" }}>
+                            <th style={subTh}>Time</th>
+                            <th style={subTh}>Pipeline</th>
+                            <th style={subTh}>Step</th>
+                            <th style={subTh}>Status</th>
+                            <th style={subTh}>Detail</th>
                           </tr>
-                        ))}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {evs.map((e, i) => (
+                            <tr key={i} style={{ borderTop: "1px solid #e5e7eb" }}>
+                              <td style={subTd}>{fmt(e.ts)}</td>
+                              <td style={subTd}>{e.pipeline}</td>
+                              <td style={subTd}><code>{e.step}</code></td>
+                              <td style={{ ...subTd, color: statusColor(e.status), fontWeight: 500 }}>{e.status}</td>
+                              <td style={subTd}>
+                                {e.detail ? <code style={{ fontSize: 11 }}>{typeof e.detail === "string" ? e.detail : JSON.stringify(e.detail)}</code> : "—"}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    ) : (
+                      <div style={{ padding: "12px 16px", color: "#6b7280", fontSize: 12 }}>
+                        No pipeline events recorded for this video.
+                      </div>
+                    )}
                   </td>
                 </tr>,
               );
             }
-            return rows;
+            return out;
           }) : (
-            <tr><td style={{ ...td, textAlign: "center", color: "#6b7280" }} colSpan={7}>
-              {loading ? "Loading…" : "No events"}
+            <tr><td style={{ ...td, textAlign: "center", color: "#6b7280" }} colSpan={8}>
+              {loading ? "Loading…" : "No transcribe requests yet"}
             </td></tr>
           )}
         </tbody>
@@ -240,7 +260,7 @@ function AdminLog() {
         <div style={{ marginTop: 16, display: "flex", gap: 8, alignItems: "center" }}>
           <button onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page <= 1 || loading} style={btn}>Prev</button>
           <span style={{ fontSize: 13, color: "#6b7280" }}>
-            Page {page} of {pageCount} · {visible.length} video{visible.length === 1 ? "" : "s"} shown of {rollups.length}
+            Page {page} of {pageCount} · {rows.length} row{rows.length === 1 ? "" : "s"} shown of {data?.total ?? 0}
           </span>
           <button onClick={() => setPage((p) => Math.min(pageCount, p + 1))} disabled={page >= pageCount || loading} style={btn}>Next</button>
         </div>

@@ -13,6 +13,7 @@ import {
   formatTranscriptAsText,
   verifyAndCleanSpeakers,
 } from "./utils";
+import { bigQuery } from "@/lib/bigquery";
 const singleExtractSchema = z.object({
   url: z.string().url(),
   speaker: z.string().min(1),
@@ -63,6 +64,28 @@ async function _singleExtract(
       error: error.message || "Error fetching metadata",
     };
   }
+
+  // Append-only log of every /transcribe request. Fire-and-forget: BigQuery
+  // failures must never block the user. Drives the admin Pipeline Log page.
+  bigQuery
+    .dataset("reptranscripts")
+    .table("transcribe_log")
+    .insert([
+      {
+        video_id: metadata.videoId,
+        requested_at: new Date().toISOString(),
+        speaker: speaker || null,
+        video_title: metadata.title ?? null,
+        channel_name: metadata.channelName ?? null,
+        channel_id: metadata.channelId ?? null,
+        published_date: metadata.publishedAt ? metadata.publishedAt.slice(0, 10) : null,
+        duration_seconds: (metadata as any).durationSeconds ?? null,
+        youtube_link: `https://youtu.be/${metadata.videoId}`,
+      },
+    ])
+    .catch((err: unknown) => {
+      console.error("[transcribe_log] insert failed:", err);
+    });
   let transcript;
   try {
     transcript = await fetchYoutubeTranscript(url);
