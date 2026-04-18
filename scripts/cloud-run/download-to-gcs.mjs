@@ -487,46 +487,61 @@ async function processVideo(video) {
   const start = Date.now();
   const videoUrl = `https://www.youtube.com/watch?v=${video.id}`;
 
+  // Resume-from-Vercel: if trigger-bunny pre-inited RapidAPI, skip init on the
+  // matching quality iteration. Env vars consumed once so 720p fallback
+  // re-inits normally if 1080p fails mid-poll.
+  let resumeProgressUrl = process.env.PROGRESS_URL || null;
+  const resumeQuality = process.env.QUALITY || null;
+
   for (const quality of ["1080", "720"]) {
     try {
-      const params = new URLSearchParams({
-        format: quality, add_info: "0", url: videoUrl,
-        allow_extended_duration: "1", no_merge: "false",
-      });
-
       video.status = "rapidapi";
       video.resolution = `${quality}p`;
       video.apiPollCount = 0;
       video.apiPollSamples = [];
       markDirty();
-      console.log(`  [${video.id}] RapidAPI: requesting ${quality}p...`);
-      await logEvent({ videoId: video.id, pipeline: MODE === "bunny-only" ? "transcribe" : "research", step: "rapidapi-init", status: "info", detail: { quality: `${quality}p` } });
 
-      const requestUrl = `https://${RAPIDAPI_HOST}/ajax/download.php?${params}`;
-      video.apiRequestUrl = requestUrl;
-      video.apiRequestHeaders = {
-        "Content-Type": "application/json",
-        "x-rapidapi-host": RAPIDAPI_HOST,
-        "x-rapidapi-key": RAPIDAPI_KEY.slice(0, 8) + "...",
-      };
+      let initRes;
+      if (resumeProgressUrl && resumeQuality === quality) {
+        console.log(`  [${video.id}] RapidAPI: resuming ${quality}p from Vercel-provided PROGRESS_URL`);
+        initRes = { progress_url: resumeProgressUrl, success: 1 };
+        video.apiInitResponse = { resumedFromVercel: true };
+        resumeProgressUrl = null;
+        markDirty();
+      } else {
+        const params = new URLSearchParams({
+          format: quality, add_info: "0", url: videoUrl,
+          allow_extended_duration: "1", no_merge: "false",
+        });
+        console.log(`  [${video.id}] RapidAPI: requesting ${quality}p...`);
+        await logEvent({ videoId: video.id, pipeline: MODE === "bunny-only" ? "transcribe" : "research", step: "rapidapi-init", status: "info", detail: { quality: `${quality}p` } });
 
-      const initHeaders = {
-        "Content-Type": "application/json",
-        "x-rapidapi-host": RAPIDAPI_HOST,
-        "x-rapidapi-key": RAPIDAPI_KEY,
-      };
-      const initRes = await rapidapiInitWithRetry({
-        videoId: video.id,
-        pipelineName: MODE === "bunny-only" ? "transcribe" : "research",
-        requestUrl,
-        headers: initHeaders,
-        quality,
-      });
-      video.apiInitResponse = initRes;
+        const requestUrl = `https://${RAPIDAPI_HOST}/ajax/download.php?${params}`;
+        video.apiRequestUrl = requestUrl;
+        video.apiRequestHeaders = {
+          "Content-Type": "application/json",
+          "x-rapidapi-host": RAPIDAPI_HOST,
+          "x-rapidapi-key": RAPIDAPI_KEY.slice(0, 8) + "...",
+        };
 
-      video.apiCost = (video.apiCost || 0) + (initRes.extended_duration?.final_price || 0);
-      console.log(`  [${video.id}] RapidAPI cost: $${initRes.extended_duration?.final_price || "?"} (${initRes.extended_duration?.multiplier || "?"}x)`);
-      markDirty();
+        const initHeaders = {
+          "Content-Type": "application/json",
+          "x-rapidapi-host": RAPIDAPI_HOST,
+          "x-rapidapi-key": RAPIDAPI_KEY,
+        };
+        initRes = await rapidapiInitWithRetry({
+          videoId: video.id,
+          pipelineName: MODE === "bunny-only" ? "transcribe" : "research",
+          requestUrl,
+          headers: initHeaders,
+          quality,
+        });
+        video.apiInitResponse = initRes;
+
+        video.apiCost = (video.apiCost || 0) + (initRes.extended_duration?.final_price || 0);
+        console.log(`  [${video.id}] RapidAPI cost: $${initRes.extended_duration?.final_price || "?"} (${initRes.extended_duration?.multiplier || "?"}x)`);
+        markDirty();
+      }
 
       const progressUrl = initRes.progress_url;
       let pollCount = 0;
