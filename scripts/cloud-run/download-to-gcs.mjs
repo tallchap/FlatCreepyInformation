@@ -534,7 +534,7 @@ async function processVideo(video) {
   let resumeProgressUrl = process.env.PROGRESS_URL || null;
   const resumeQuality = process.env.QUALITY || null;
 
-  for (const quality of ["1080", "720"]) {
+  qualityLoop: for (const quality of ["1080", "720"]) {
     try {
       video.status = "rapidapi";
       video.resolution = `${quality}p`;
@@ -641,7 +641,7 @@ async function processVideo(video) {
             });
             if (!head.ok) {
               console.log(`  [${video.id}] rapidapi-url-check failed (${head.status || head.error}); falling through to next format`);
-              continue;
+              continue qualityLoop;
             }
 
             video.bunnyStatus = await ingestToBunny(video.id, progress.download_url);
@@ -661,7 +661,7 @@ async function processVideo(video) {
               const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration);
               if (result?.outcome === "empty-source" || result?.outcome === "stuck-fetch") {
                 console.log(`  [${video.id}] bunny ${result.outcome}; falling through to next format for a fresh URL`);
-                continue;
+                continue qualityLoop;
               }
             }
             console.log("");
