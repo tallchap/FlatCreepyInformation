@@ -76,10 +76,19 @@ const BUNNY_STATUS_LABEL = {
   0: "created", 1: "queued", 2: "processing", 3: "encoding",
   4: "ready", 5: "error", 6: "upload-failed",
 };
-async function pollBunnyUntilReady(videoId, pipelineName) {
+async function pollBunnyUntilReady(videoId, pipelineName, durationSec = null) {
   if (!BUNNY_STREAM_API_KEY) return;
   const startPoll = Date.now();
-  const maxMs = 30 * 60 * 1000;
+  // Dynamic timeout: target 3x video duration, floor 30min (or 90min when
+  // duration unknown — single-video mode doesn't have BigQuery metadata),
+  // ceiling 120min. Prevents 30-min ceiling from falsely erroring large
+  // videos whose Bunny encode legitimately takes 45-90 min (see PqVbypvxDto,
+  // DVBJQQCjgXU on 2026-04-13/14 — both finished in Bunny but our code had
+  // already given up and logged bunny-poll-timeout).
+  const floorMs = durationSec ? 30 * 60 * 1000 : 90 * 60 * 1000;
+  const ceilingMs = 120 * 60 * 1000;
+  const targetMs = durationSec ? durationSec * 3 * 1000 : 0;
+  const maxMs = Math.min(ceilingMs, Math.max(floorMs, targetMs));
   const intervalMs = 10_000;
   let lastStatus = -1;
   let lastProgressBucket = -1;
@@ -107,6 +116,38 @@ async function pollBunnyUntilReady(videoId, pipelineName) {
     if (!match) continue;
     const { status, encodeProgress, availableResolutions, width, height, guid } = match;
     const elapsedSec = Math.round((Date.now() - startPoll) / 1000);
+
+    // Stuck-fetch detection: Bunny accepted the fetch job (status=0 "created")
+    // but the fetcher hung before pulling a single byte. Unlike empty-source
+    // (status=5 + 0 bytes), this never self-reports — asset sits at status=0
+    // indefinitely. If >180s at status=0 with 0 bytes, give up, DELETE the
+    // zombie asset so a retry doesn't collide, and let the caller fall through
+    // to the next quality for a fresh RapidAPI URL. (See h5Jv8lJ6WG8 2026-04-18:
+    // sat at status=0 / 0 bytes for 30+ min, old code just timed out.)
+    if (status === 0 && encodeProgress === 0 && elapsedSec > 180) {
+      const storageSize = typeof match.storageSize === "number" ? match.storageSize : null;
+      if (storageSize === 0 || storageSize === null) {
+        await logEvent({
+          videoId, pipeline: pipelineName,
+          step: "bunny-stuck-fetch",
+          status: "error",
+          detail: { bunnyStatus: status, storageSize, elapsedSec, guid },
+        });
+        if (guid) {
+          await new Promise((resolve) => {
+            const req = https.request({
+              hostname: "video.bunnycdn.com",
+              path: `/library/${BUNNY_LIBRARY_ID}/videos/${guid}`,
+              method: "DELETE",
+              headers: { AccessKey: BUNNY_STREAM_API_KEY },
+            }, (res) => { res.resume(); res.on("end", resolve); });
+            req.on("error", () => resolve(null));
+            req.end();
+          });
+        }
+        return { outcome: "stuck-fetch", elapsedSec, guid };
+      }
+    }
 
     // Status transition events
     if (status !== lastStatus) {
@@ -174,7 +215,7 @@ async function pollBunnyUntilReady(videoId, pipelineName) {
     videoId, pipeline: pipelineName,
     step: "bunny-poll-timeout",
     status: "error",
-    detail: { timeoutMinutes: 30, lastStatus },
+    detail: { timeoutMinutes: Math.round(maxMs / 60_000), durationSec, lastStatus },
   });
   return { outcome: "timeout", lastStatus };
 }
@@ -612,13 +653,14 @@ async function processVideo(video) {
             await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus, elapsedSec: Math.round((Date.now() - start) / 1000) } });
 
             // Stay alive and follow Bunny's encode progress. If Bunny reports
-            // empty-source (status=5, storageSize=0 inside 30s) the URL died
-            // between our HEAD check and Bunny's fetch — fall through to the
+            // empty-source (status=5, storageSize=0 inside 30s) OR stuck-fetch
+            // (status=0, 0 bytes for >180s — Bunny accepted the fetch but
+            // hung before first byte), the URL is dead — fall through to the
             // next format for a fresh RapidAPI URL.
             if (video.bunnyStatus === "queued") {
-              const result = await pollBunnyUntilReady(video.id, "transcribe");
-              if (result?.outcome === "empty-source") {
-                console.log(`  [${video.id}] bunny empty-source; falling through to next format for a fresh URL`);
+              const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration);
+              if (result?.outcome === "empty-source" || result?.outcome === "stuck-fetch") {
+                console.log(`  [${video.id}] bunny ${result.outcome}; falling through to next format for a fresh URL`);
                 continue;
               }
             }
