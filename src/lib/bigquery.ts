@@ -450,7 +450,7 @@ export async function fetchTranscribeLog(opts: {
 
   const [countRows] = await bigQuery.query({
     query: `SELECT COUNT(*) AS total FROM \`${TRANSCRIBE_LOG_TABLE}\` ${where}`,
-    params: { videoId },
+    params: videoId ? { videoId } : {},
   });
   const total = Number(countRows[0]?.total ?? 0);
 
@@ -471,7 +471,7 @@ export async function fetchTranscribeLog(opts: {
       ORDER BY requested_at DESC
       LIMIT @pageSize OFFSET @offset
     `,
-    params: { videoId, pageSize, offset },
+    params: videoId ? { videoId, pageSize, offset } : { pageSize, offset },
   });
 
   return {
