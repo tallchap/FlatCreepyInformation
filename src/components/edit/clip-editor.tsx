@@ -66,6 +66,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const playerRef = useRef<any>(null);
   const videoElRef = useRef<HTMLVideoElement | null>(null);
   const playerReadyRef = useRef(false);
+  // Pending start/end from ?start=&end= query params. Consumed once the
+  // player's loadedmetadata/onReady callback fires — the callbacks otherwise
+  // reset startSec/endSec to 0, clobbering the user's deep-link.
+  const pendingStartRef = useRef<number | null>(null);
+  const pendingEndRef = useRef<number | null>(null);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -119,6 +124,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     const startParam = parseFloat(params.get("start") || "");
     const endParam = parseFloat(params.get("end") || "");
     if (Number.isFinite(startParam) && Number.isFinite(endParam) && endParam > startParam) {
+      // Stash in refs so the player-ready callbacks can apply them INSTEAD of
+      // defaulting to 0. Setting state here alone doesn't stick because the
+      // onReady callbacks fire later and call setStartSec(0)/setEndSec(0).
+      pendingStartRef.current = startParam;
+      pendingEndRef.current = endParam;
       setStartSec(startParam);
       setEndSec(endParam);
     }
@@ -249,9 +259,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
               setVideoRes("ABR");
               setHas1080(true);
               setHandlesPlaced(false);
-              setStartSec(0);
-              setEndSec(0);
-              setPlayheadSec(0);
+              const ps = pendingStartRef.current;
+              const pe = pendingEndRef.current;
+              setStartSec(ps != null ? ps : 0);
+              setEndSec(pe != null ? pe : 0);
+              setPlayheadSec(ps != null ? ps : 0);
+              if (ps != null && pe != null) setHandlesPlaced(true);
+              pendingStartRef.current = null;
+              pendingEndRef.current = null;
             }, { once: true });
           });
         } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -263,9 +278,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
             setVideoRes("ABR");
             setHas1080(true);
             setHandlesPlaced(false);
-            setStartSec(0);
-            setEndSec(0);
-            setPlayheadSec(0);
+            const ps = pendingStartRef.current;
+            const pe = pendingEndRef.current;
+            setStartSec(ps != null ? ps : 0);
+            setEndSec(pe != null ? pe : 0);
+            setPlayheadSec(ps != null ? ps : 0);
+            if (ps != null && pe != null) setHandlesPlaced(true);
+            pendingStartRef.current = null;
+            pendingEndRef.current = null;
           }, { once: true });
         }
       };
@@ -304,9 +324,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
         setHas1080(video.videoHeight >= 1080);
         if (video.videoHeight < 1080) setQuality("720p");
         setHandlesPlaced(false);
-        setStartSec(0);
-        setEndSec(0);
-        setPlayheadSec(0);
+        const ps = pendingStartRef.current;
+        const pe = pendingEndRef.current;
+        setStartSec(ps != null ? ps : 0);
+        setEndSec(pe != null ? pe : 0);
+        setPlayheadSec(ps != null ? ps : 0);
+        if (ps != null && pe != null) setHandlesPlaced(true);
+        pendingStartRef.current = null;
+        pendingEndRef.current = null;
       });
       container.appendChild(video);
       videoElRef.current = video;
@@ -343,9 +368,14 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
               setHas1080(supports1080);
               if (!supports1080) setQuality("720p");
               setHandlesPlaced(false);
-              setStartSec(0);
-              setEndSec(0);
-              setPlayheadSec(0);
+              const ps = pendingStartRef.current;
+              const pe = pendingEndRef.current;
+              setStartSec(ps != null ? ps : 0);
+              setEndSec(pe != null ? pe : 0);
+              setPlayheadSec(ps != null ? ps : 0);
+              if (ps != null && pe != null) setHandlesPlaced(true);
+              pendingStartRef.current = null;
+              pendingEndRef.current = null;
             },
           },
         });
