@@ -1101,6 +1101,26 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     logDebug("gcs-clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1), route: useHlsPath ? "bunny-hls" : source.type });
     logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "clip-complete", status: "success", detail: { bytes: size, mb: Number((size / 1024 / 1024).toFixed(1)), totalSec: Number(totalSec.toFixed(1)), route: useHlsPath ? "bunny-hls" : source.type } });
 
+    logClipToBigQuery({
+      job_id: jobId,
+      video_id: videoId,
+      video_url: srcUrl || null,
+      start_sec: startSec,
+      end_sec: endSec,
+      clip_duration_sec: endSec - startSec,
+      quality: `${heightLimit}p`,
+      status: "complete",
+      error: null,
+      total_sec: totalSec,
+      rapidapi_sec: null,
+      download_sec: timings.downloadDone ? (timings.downloadDone - timings.start) / 1000 : null,
+      trim_sec: timings.trimDone ? (timings.trimDone - (timings.downloadDone || timings.start)) / 1000 : null,
+      file_size_bytes: size,
+      video_duration_sec: videoMeta?.duration_sec || null,
+      video_resolution: videoMeta?.width ? `${videoMeta.width}x${videoMeta.height}` : null,
+      created_at: new Date(timings.start).toISOString(),
+    });
+
   } catch (error) {
     await unlink(clipFile).catch(() => {});
     await unlink(srcFile).catch(() => {});
@@ -1110,6 +1130,26 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
     job.error = detail;
     logDebug("gcs-clip.error", { jobId, videoId, error: detail });
     logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "clip-failed", status: "error", detail: { error: String(detail).slice(0, 500) } });
+
+    logClipToBigQuery({
+      job_id: jobId,
+      video_id: videoId,
+      video_url: srcUrl || null,
+      start_sec: startSec,
+      end_sec: endSec,
+      clip_duration_sec: endSec - startSec,
+      quality: `${heightLimit}p`,
+      status: "failed",
+      error: String(detail).slice(0, 2000),
+      total_sec: (Date.now() - timings.start) / 1000,
+      rapidapi_sec: null,
+      download_sec: timings.downloadDone ? (timings.downloadDone - timings.start) / 1000 : null,
+      trim_sec: null,
+      file_size_bytes: null,
+      video_duration_sec: null,
+      video_resolution: null,
+      created_at: new Date(timings.start).toISOString(),
+    });
   }
 }
 
