@@ -205,11 +205,18 @@ function AdminLog() {
                       <span><b>Uploaded:</b> {r.published_date || DASH}</span>
                       <span><b>Requested:</b> {fmt(new Date(r.requested_at).getTime())}</span>
                       {r.speaker && <span><b>Speaker:</b> {r.speaker}</span>}
-                      <a href={r.youtube_link}
+                      <a href={`/edit?v=${r.video_id}`}
                          target="_blank"
                          rel="noopener noreferrer"
                          onClick={(e) => e.stopPropagation()}
                          style={{ color: "#2563eb", textDecoration: "none", marginLeft: "auto" }}>
+                        Snippy ↗
+                      </a>
+                      <a href={r.youtube_link}
+                         target="_blank"
+                         rel="noopener noreferrer"
+                         onClick={(e) => e.stopPropagation()}
+                         style={{ color: "#2563eb", textDecoration: "none" }}>
                         YouTube ↗
                       </a>
                     </div>
