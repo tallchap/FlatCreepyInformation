@@ -101,6 +101,8 @@ interface ClipRow {
   video_title: string | null;
   channel_name: string | null;
   speaker: string | null;
+  published_date: string | null;
+  youtube_link: string | null;
   live?: boolean;
   latest_step?: string;
 }
@@ -456,14 +458,17 @@ function ClipsTable({
 
           if (isOpen) {
             const snippyHref = `/edit?v=${r.video_id}&start=${start}&end=${end}`;
-            const ytHref = r.video_url || `https://youtu.be/${r.video_id}`;
+            // Prefer the authoritative youtube_link from transcribe_log (via LEFT JOIN).
+            // Fall back to the clip-exports video_url (source MP4), then to a constructed youtu.be URL.
+            const ytHref = r.youtube_link || r.video_url || `https://youtu.be/${r.video_id}`;
             out.push(
               <tr key={`clip-exp-${idx}`} style={{ background: "#fafafa" }}>
                 <td colSpan={9} style={{ padding: 0 }}>
                   <div style={{ padding: "12px 16px", borderBottom: "1px solid #e5e7eb", display: "flex", gap: 24, fontSize: 13, flexWrap: "wrap", alignItems: "baseline" }}>
-                    {r.channel_name && <span><b>Channel:</b> {r.channel_name}</span>}
-                    {r.speaker && <span><b>Speaker:</b> {r.speaker}</span>}
+                    <span><b>Channel:</b> {r.channel_name || DASH}</span>
+                    <span><b>Uploaded:</b> {r.published_date || DASH}</span>
                     <span><b>Requested:</b> {created}</span>
+                    {r.speaker && <span><b>Speaker:</b> {r.speaker}</span>}
                     {r.video_duration_sec != null && <span><b>Video dur:</b> {fmtDur(r.video_duration_sec)}</span>}
                     {r.video_resolution && <span><b>Res:</b> {r.video_resolution}</span>}
                     <a href={snippyHref}

@@ -516,6 +516,8 @@ export interface ClipExportRow {
   video_title: string | null;
   channel_name: string | null;
   speaker: string | null;
+  published_date: string | null;
+  youtube_link: string | null;
 }
 
 export async function fetchClipExports(opts: {
@@ -544,7 +546,9 @@ export async function fetchClipExports(opts: {
         c.total_sec, c.rapidapi_sec, c.download_sec, c.trim_sec,
         c.file_size_bytes, c.video_duration_sec, c.video_resolution,
         FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', c.created_at, 'UTC') AS created_at,
-        t.video_title, t.channel_name, t.speaker
+        t.video_title, t.channel_name, t.speaker,
+        CAST(t.published_date AS STRING) AS published_date,
+        t.youtube_link
       FROM \`${CLIP_EXPORTS_TABLE}\` c
       LEFT JOIN \`${TRANSCRIBE_LOG_TABLE}\` t
         ON t.video_id = c.video_id
@@ -579,6 +583,8 @@ export async function fetchClipExports(opts: {
       video_title: r.video_title ?? null,
       channel_name: r.channel_name ?? null,
       speaker: r.speaker ?? null,
+      published_date: r.published_date ?? null,
+      youtube_link: r.youtube_link ?? null,
     })),
     total,
   };
