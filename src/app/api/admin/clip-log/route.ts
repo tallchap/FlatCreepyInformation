@@ -63,6 +63,8 @@ export async function GET(req: NextRequest) {
         video_title: null,
         channel_name: null,
         speaker: null,
+        published_date: null,
+        youtube_link: null,
         live: true,
         latest_step: a.step,
       };
