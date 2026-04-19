@@ -5,6 +5,7 @@
   "dependencies": {
     "@google-cloud/bigquery": "^7.9.0",
     "cors": "^2.8.5",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "ioredis": "^5.10.1"
   }
 }

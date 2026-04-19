@@ -489,3 +489,97 @@ export async function fetchTranscribeLog(opts: {
     total,
   };
 }
+
+/* ── Clip exports (admin /log Clips tab data source) ── */
+
+const CLIP_EXPORTS_TABLE = "youtubetranscripts-429803.reptranscripts.clip_exports";
+
+export interface ClipExportRow {
+  job_id: string;
+  video_id: string;
+  video_url: string | null;
+  start_sec: number;
+  end_sec: number;
+  clip_duration_sec: number;
+  quality: string | null;
+  status: string;              // "complete" | "failed" | "rejected"
+  error: string | null;
+  total_sec: number | null;
+  rapidapi_sec: number | null;
+  download_sec: number | null;
+  trim_sec: number | null;
+  file_size_bytes: number | null;
+  video_duration_sec: number | null;
+  video_resolution: string | null;
+  created_at: string;
+  // Joined from transcribe_log (nullable — not every source video was transcribed)
+  video_title: string | null;
+  channel_name: string | null;
+  speaker: string | null;
+}
+
+export async function fetchClipExports(opts: {
+  page?: number;
+  pageSize?: number;
+  videoId?: string | null;
+}): Promise<{ rows: ClipExportRow[]; total: number }> {
+  const page = Math.max(1, opts.page ?? 1);
+  const pageSize = Math.min(200, Math.max(1, opts.pageSize ?? 20));
+  const offset = (page - 1) * pageSize;
+  const videoId = opts.videoId ?? null;
+  const where = videoId ? "WHERE c.video_id = @videoId" : "";
+
+  const [countRows] = await bigQuery.query({
+    query: `SELECT COUNT(*) AS total FROM \`${CLIP_EXPORTS_TABLE}\` c ${where}`,
+    params: videoId ? { videoId } : {},
+  });
+  const total = Number(countRows[0]?.total ?? 0);
+
+  const [rows] = await bigQuery.query({
+    query: `
+      SELECT
+        c.job_id, c.video_id, c.video_url,
+        c.start_sec, c.end_sec, c.clip_duration_sec,
+        c.quality, c.status, c.error,
+        c.total_sec, c.rapidapi_sec, c.download_sec, c.trim_sec,
+        c.file_size_bytes, c.video_duration_sec, c.video_resolution,
+        FORMAT_TIMESTAMP('%Y-%m-%dT%H:%M:%E3SZ', c.created_at, 'UTC') AS created_at,
+        t.video_title, t.channel_name, t.speaker
+      FROM \`${CLIP_EXPORTS_TABLE}\` c
+      LEFT JOIN \`${TRANSCRIBE_LOG_TABLE}\` t
+        ON t.video_id = c.video_id
+      ${where}
+      ORDER BY c.created_at DESC
+      LIMIT @pageSize OFFSET @offset
+    `,
+    params: videoId ? { videoId, pageSize, offset } : { pageSize, offset },
+  });
+
+  const numOrNull = (v: any) => (v === null || v === undefined ? null : Number(v));
+
+  return {
+    rows: rows.map((r: any) => ({
+      job_id: String(r.job_id || ""),
+      video_id: String(r.video_id || ""),
+      video_url: r.video_url ?? null,
+      start_sec: Number(r.start_sec ?? 0),
+      end_sec: Number(r.end_sec ?? 0),
+      clip_duration_sec: Number(r.clip_duration_sec ?? 0),
+      quality: r.quality ?? null,
+      status: String(r.status || ""),
+      error: r.error ?? null,
+      total_sec: numOrNull(r.total_sec),
+      rapidapi_sec: numOrNull(r.rapidapi_sec),
+      download_sec: numOrNull(r.download_sec),
+      trim_sec: numOrNull(r.trim_sec),
+      file_size_bytes: numOrNull(r.file_size_bytes),
+      video_duration_sec: numOrNull(r.video_duration_sec),
+      video_resolution: r.video_resolution ?? null,
+      created_at: String(r.created_at || ""),
+      video_title: r.video_title ?? null,
+      channel_name: r.channel_name ?? null,
+      speaker: r.speaker ?? null,
+    })),
+    total,
+  };
+}

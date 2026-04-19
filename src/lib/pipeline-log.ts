@@ -70,3 +70,69 @@ export async function readEvents(opts: {
     .filter(Boolean) as PipelineEvent[];
   return { events, page, pageSize, hasMore: start + events.length < total, total };
 }
+
+/* ── Clip events (admin /log Clips tab — in-flight source) ────────────
+ * Written by services/download/server.js logClipEvent(). Key structure:
+ *   pipeline:clip:<jobId>          → list of event JSON blobs (lpush, 24h TTL)
+ *   pipeline:clip-latest:<jobId>   → hash with {step, status, pipeline, videoId, ts}
+ *   pipeline:clip-active           → set of jobIds currently in-flight
+ */
+
+export interface ClipEvent {
+  ts: number;
+  jobId: string;
+  videoId: string;
+  pipeline: string;
+  step: string;
+  status: "info" | "success" | "error";
+  detail?: any;
+}
+
+export interface ActiveClip {
+  jobId: string;
+  videoId: string;
+  pipeline: string;
+  step: string;
+  status: string;
+  ts: number;              // last update ms epoch
+  firstTs: number;         // first event ms epoch
+  events: ClipEvent[];
+}
+
+export async function readActiveClips(): Promise<ActiveClip[]> {
+  const r = client();
+  if (!r) return [];
+  const jobIds = await r.smembers("pipeline:clip-active");
+  if (!jobIds.length) return [];
+  const rows = await Promise.all(jobIds.map(async (jobId) => {
+    const [latest, rawEvents] = await Promise.all([
+      r.hgetall(`pipeline:clip-latest:${jobId}`),
+      r.lrange(`pipeline:clip:${jobId}`, 0, -1),
+    ]);
+    const events: ClipEvent[] = rawEvents
+      .map((s) => { try { return JSON.parse(s) as ClipEvent; } catch { return null; } })
+      .filter(Boolean) as ClipEvent[];
+    const sorted = events.slice().sort((a, b) => a.ts - b.ts);
+    return {
+      jobId,
+      videoId: latest?.videoId || sorted[0]?.videoId || "",
+      pipeline: latest?.pipeline || sorted[0]?.pipeline || "",
+      step: latest?.step || sorted[sorted.length - 1]?.step || "",
+      status: latest?.status || "",
+      ts: Number(latest?.ts || sorted[sorted.length - 1]?.ts || Date.now()),
+      firstTs: sorted[0]?.ts || 0,
+      events: sorted,
+    };
+  }));
+  return rows;
+}
+
+export async function readClipEvents(jobId: string): Promise<ClipEvent[]> {
+  const r = client();
+  if (!r) return [];
+  const raw = await r.lrange(`pipeline:clip:${jobId}`, 0, -1);
+  return (raw
+    .map((s) => { try { return JSON.parse(s) as ClipEvent; } catch { return null; } })
+    .filter(Boolean) as ClipEvent[])
+    .sort((a, b) => a.ts - b.ts);
+}

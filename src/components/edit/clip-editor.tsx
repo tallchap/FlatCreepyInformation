@@ -105,7 +105,9 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     return () => ro.disconnect();
   }, [videoId, metaDescExpanded]);
 
-  // Auto-load from ?v= query param
+  // Auto-load from ?v= query param; also accept ?start= & ?end= to pre-populate
+  // the trim handles (used by the admin log's "Snippy ↗" deep-link to jump
+  // straight into re-editing a failed clip).
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const v = params.get("v");
@@ -113,6 +115,12 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
       setUrl(v);
       const id = extractVideoId(v);
       if (id) setVideoId(id);
+    }
+    const startParam = parseFloat(params.get("start") || "");
+    const endParam = parseFloat(params.get("end") || "");
+    if (Number.isFinite(startParam) && Number.isFinite(endParam) && endParam > startParam) {
+      setStartSec(startParam);
+      setEndSec(endParam);
     }
   }, []);
 
