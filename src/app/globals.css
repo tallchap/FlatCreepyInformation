@@ -135,3 +135,149 @@ video::-webkit-media-controls-fullscreen-button {
 video::-webkit-media-controls-picture-in-picture-button {
   display: none !important;
 }
+
+/* Snippy theme — Anthropic-adjacent (Claude Design influence)
+   Scoped so non-snippy pages are unaffected.
+   Apply .snippy-theme at the /snippy page root. */
+.snippy-theme {
+  --snippy-canvas: #f7f4ee;
+  --snippy-card: #ffffff;
+  --snippy-border: #e8e3d9;
+  --snippy-text: #1d1917;
+  --snippy-text-secondary: #6f6a60;
+  --snippy-accent: #d97757;
+  --snippy-accent-hover: #be5f42;
+  --snippy-selection: rgba(217, 119, 87, 0.18);
+  --snippy-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+  background-color: var(--snippy-canvas);
+  color: var(--snippy-text);
+}
+.snippy-theme .snippy-card {
+  background: var(--snippy-card);
+  border: 1px solid var(--snippy-border);
+  border-radius: 12px;
+  padding: 14px;
+  box-shadow: var(--snippy-shadow);
+}
+.snippy-theme .snippy-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 3px;
+  background: var(--snippy-border);
+  border-radius: 3px;
+  outline: none;
+}
+.snippy-theme .snippy-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--snippy-accent);
+  cursor: pointer;
+  border: 0;
+}
+.snippy-theme .snippy-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--snippy-accent);
+  cursor: pointer;
+  border: 0;
+}
+.snippy-theme .snippy-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1px solid var(--snippy-border);
+  cursor: pointer;
+  padding: 0;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.snippy-theme .snippy-swatch input[type="color"] {
+  width: 200%;
+  height: 200%;
+  transform: translate(-25%, -25%);
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.snippy-theme .snippy-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--snippy-text-secondary);
+}
+.snippy-theme .snippy-field-label {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--snippy-text-secondary);
+  white-space: nowrap;
+}
+.snippy-theme .snippy-value {
+  font-family: var(--font-geist-mono, ui-monospace);
+  font-size: 10px;
+  color: var(--snippy-text);
+  font-variant-numeric: tabular-nums;
+  min-width: 28px;
+  text-align: right;
+}
+.snippy-theme .snippy-label {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--snippy-text-secondary);
+}
+.snippy-theme .snippy-btn-primary {
+  background: var(--snippy-accent);
+  color: #ffffff;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-weight: 500;
+  transition: background-color 150ms ease-out;
+}
+.snippy-theme .snippy-btn-primary:hover:not(:disabled) {
+  background: var(--snippy-accent-hover);
+}
+.snippy-theme .snippy-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.snippy-theme .snippy-btn-ghost {
+  background: transparent;
+  color: var(--snippy-text);
+  border: 1px solid var(--snippy-border);
+  padding: 8px 14px;
+  border-radius: 10px;
+  transition: background-color 150ms ease-out;
+}
+.snippy-theme .snippy-btn-ghost:hover:not(:disabled) {
+  background: var(--snippy-canvas);
+}
+.snippy-theme .snippy-btn-ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.snippy-scrubber-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--snippy-border) transparent;
+}
+.snippy-scrubber-scroll::-webkit-scrollbar {
+  height: 8px;
+  -webkit-appearance: none;
+}
+.snippy-scrubber-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.snippy-scrubber-scroll::-webkit-scrollbar-thumb {
+  background: var(--snippy-border);
+  border-radius: 4px;
+}
+.snippy-scrubber-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--snippy-text-secondary);
+}
