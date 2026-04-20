@@ -24,7 +24,6 @@ const nextConfig: NextConfig = {
       "./node_modules/@rspack/binding-win32-*/**",
       "./node_modules/@rspack/binding-linux-arm*/**",
       "./node_modules/typescript/**",
-      "./node_modules/@remotion/studio/**",
       "./node_modules/@remotion/compositor-darwin-*/**",
       "./node_modules/@remotion/compositor-linux-x64-musl/**",
       "./node_modules/@remotion/compositor-linux-arm*/**",
