@@ -14,9 +14,11 @@ async function getBundle(): Promise<string> {
   if (cachedBundle) return cachedBundle;
   const { bundle } = await import("@remotion/bundler");
   const entryPoint = path.resolve(process.cwd(), "src/remotion/root.tsx");
-  console.log(`[snippy-render] Bundling from: ${entryPoint}`);
+  const outDir = path.join(os.tmpdir(), "snippy-remotion-bundle");
+  console.log(`[snippy-render] Bundling from: ${entryPoint} -> ${outDir}`);
   const bundled = await bundle({
     entryPoint,
+    outDir,
     webpackOverride: (config) => config,
   });
   cachedBundle = bundled;
