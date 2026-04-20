@@ -8,7 +8,11 @@ const nextConfig: NextConfig = {
     "ffmpeg-static",
   ],
   outputFileTracingIncludes: {
-    "/api/snippy-render/**": ["./node_modules/ffmpeg-static/**"],
+    "/api/snippy-render/**": [
+      "./node_modules/ffmpeg-static/**",
+      "./src/remotion/**",
+      "./src/components/snippy/**",
+    ],
     "/api/snippy-transcribe/**": ["./node_modules/ffmpeg-static/**"],
     "/api/snippy-clip/**": ["./node_modules/ffmpeg-static/**"],
   },
