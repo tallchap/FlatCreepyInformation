@@ -17,6 +17,17 @@ const nextConfig: NextConfig = {
     "/api/snippy-transcribe/**": ["./node_modules/ffmpeg-static/**"],
     "/api/snippy-clip/**": ["./node_modules/ffmpeg-static/**"],
   },
+  outputFileTracingExcludes: {
+    "/api/snippy-render/**": [
+      "./node_modules/@rspack/**",
+      "./node_modules/typescript/**",
+      "./node_modules/@remotion/studio/**",
+      "./node_modules/@remotion/compositor-darwin-*/**",
+      "./node_modules/@remotion/compositor-linux-x64-musl/**",
+      "./node_modules/@remotion/compositor-linux-arm*/**",
+      "./node_modules/@remotion/compositor-win32-*/**",
+    ],
+  },
   env: {
     BUILD_VERSION: process.env.VERCEL_GIT_COMMIT_SHA?.slice(0, 7) || "dev",
     BUILD_TIME: new Date().toISOString(),
