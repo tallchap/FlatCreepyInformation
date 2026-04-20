@@ -19,7 +19,10 @@ const nextConfig: NextConfig = {
   },
   outputFileTracingExcludes: {
     "/api/snippy-render/**": [
-      "./node_modules/@rspack/**",
+      "./node_modules/@rspack/binding-linux-x64-musl/**",
+      "./node_modules/@rspack/binding-darwin-*/**",
+      "./node_modules/@rspack/binding-win32-*/**",
+      "./node_modules/@rspack/binding-linux-arm*/**",
       "./node_modules/typescript/**",
       "./node_modules/@remotion/studio/**",
       "./node_modules/@remotion/compositor-darwin-*/**",
