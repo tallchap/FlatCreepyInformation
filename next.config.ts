@@ -10,6 +10,7 @@ const nextConfig: NextConfig = {
   outputFileTracingIncludes: {
     "/api/snippy-render/**": [
       "./node_modules/ffmpeg-static/**",
+      "./node_modules/@remotion/compositor-linux-x64-gnu/**",
       "./src/remotion/**",
       "./src/components/snippy/**",
     ],
