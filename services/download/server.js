@@ -568,7 +568,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
           const args = [
             "-err_detect", "ignore_err", "-fflags", "+genpts",
             "-ss", String(startSec), "-to", String(startSec + duration + 0.05), "-i", rapidRaw,
-            "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn",
+            "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
             ...(overlayFilter ? ["-vf", overlayFilter] : []),
             "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
             "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
@@ -657,7 +657,7 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
       await execCapture("ffmpeg", [
         "-err_detect", "ignore_err", "-fflags", "+genpts",
         "-ss", String(startSec), "-to", String(endSec + 0.05), "-i", rawFile,
-        "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn",
+        "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
         "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
         "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
         "-af", `afade=t=out:st=${duration}:d=0.05`,
@@ -1046,7 +1046,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       const args = [
         ...ffmpegInputArgs,
         ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
-        "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn",
+        "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
         ...(overlayFilter ? ["-vf", overlayFilter] : []),
         "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
         "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
