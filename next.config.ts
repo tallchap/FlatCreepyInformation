@@ -11,6 +11,7 @@ const nextConfig: NextConfig = {
     "/api/snippy-render/**": [
       "./node_modules/ffmpeg-static/**",
       "./node_modules/@remotion/compositor-linux-x64-gnu/**",
+      "./node_modules/@remotion/google-fonts/**",
       "./src/remotion/**",
       "./src/components/snippy/**",
     ],
