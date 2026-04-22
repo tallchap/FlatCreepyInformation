@@ -76,16 +76,16 @@ export default function ParityTestPage() {
   };
 
   return (
-    <div style={{ maxWidth: 1200, margin: "2rem auto", fontFamily: "system-ui" }}>
-      <h1 style={{ marginBottom: 8 }}>Snippy Parity Test</h1>
-      <p style={{ color: "#555", fontSize: 14, marginBottom: 16 }}>
-        Preview iframe (below) renders the same composition + inputProps as{" "}
-        <code>scripts/render-parity-frame.mjs</code>. Pause at frame{" "}
-        {SNAPSHOT_FRAME} ({(SNAPSHOT_FRAME / FPS).toFixed(2)}s) and compare
-        against <code>render-frame.png</code>.
-      </p>
-      <div style={{ border: "1px solid #ccc", borderRadius: 8, overflow: "hidden" }}>
-        <SnippyPlayerIframe>
+    <div style={{ margin: 0, padding: 0, fontFamily: "system-ui" }}>
+      {/* Iframe pinned at native 1920x1080 so the in-iframe composition renders
+          at 1:1 and a screenshot can be pixel-diffed against render-frame.png. */}
+      <div
+        id="parity-iframe-wrapper"
+        style={{ width: 1920, height: 1080, margin: 0, padding: 0 }}
+      >
+        <SnippyPlayerIframe
+          style={{ width: 1920, height: 1080, aspectRatio: "auto", borderRadius: 0 }}
+        >
           <Player
             ref={playerRef}
             component={SnippyParityComposition}
@@ -95,11 +95,10 @@ export default function ParityTestPage() {
             durationInFrames={DURATION_SEC * FPS}
             inputProps={INPUT_PROPS}
             style={{ width: "100%", height: "100%" }}
-            controls
           />
         </SnippyPlayerIframe>
       </div>
-      <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+      <div style={{ padding: 12, display: "flex", gap: 8 }}>
         <button
           onClick={seekToSnapshot}
           style={{
@@ -112,7 +111,7 @@ export default function ParityTestPage() {
             fontWeight: 500,
           }}
         >
-          Seek to snapshot frame
+          Seek to frame {SNAPSHOT_FRAME}
         </button>
       </div>
     </div>
