@@ -19,7 +19,12 @@ async function getBundle(): Promise<string> {
   const bundled = await bundle({
     entryPoint,
     outDir,
-    webpackOverride: (config) => config,
+    webpackOverride: (config) => {
+      // Lambda /var/task is read-only; webpack's default filesystem cache
+      // tries to write to node_modules/.cache. Disable it.
+      config.cache = false;
+      return config;
+    },
   });
   cachedBundle = bundled;
   console.log(`[snippy-render] Bundle cached: ${bundled}`);
