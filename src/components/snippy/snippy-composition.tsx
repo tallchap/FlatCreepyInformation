@@ -4,8 +4,12 @@ import React from "react";
 import { AbsoluteFill, OffthreadVideo, Sequence, useVideoConfig } from "remotion";
 import type { SnippyCompositionProps, OverlaySettings } from "./types";
 import { SnippyCaptions } from "./snippy-captions";
-import "./snippy-composition.css";
 import "./snippy-fonts";
+
+const RESET_CSS = `
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; padding: 0; line-height: 1.5; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+`;
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -61,6 +65,7 @@ const SnippyComposition: React.FC<SnippyCompositionProps> = ({
 
   return (
     <AbsoluteFill>
+      <style>{RESET_CSS}</style>
       <OffthreadVideo
         src={videoUrl}
         startFrom={Math.round(trimStartSec * fps)}
