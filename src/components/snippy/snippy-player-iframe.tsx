@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { SNIPPY_GOOGLE_FONTS_CSS_URL } from "./snippy-fonts";
 
@@ -42,6 +42,28 @@ export const SnippyPlayerIframe: React.FC<Props> = ({ children, style }) => {
     const root = doc.getElementById("snippy-portal-root");
     if (root) setMountNode(root);
   };
+
+  // srcDoc iframes can fire onLoad before React has a chance to bind it,
+  // depending on browser timing. Poll once on mount as a fallback so the
+  // portal still attaches even if the native load event was missed.
+  useEffect(() => {
+    if (mountNode) return;
+    let cancelled = false;
+    const poll = () => {
+      if (cancelled) return;
+      const doc = iframeRef.current?.contentDocument;
+      const root = doc?.getElementById("snippy-portal-root");
+      if (root) {
+        setMountNode(root);
+        return;
+      }
+      setTimeout(poll, 50);
+    };
+    poll();
+    return () => {
+      cancelled = true;
+    };
+  }, [mountNode]);
 
   return (
     <>
