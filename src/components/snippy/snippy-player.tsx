@@ -9,6 +9,7 @@ import React, {
 } from "react";
 import { Player, type PlayerRef } from "@remotion/player";
 import SnippyCompositionMemo from "./snippy-composition";
+import { SnippyPlayerIframe } from "./snippy-player-iframe";
 import type {
   OverlaySettings,
   WordTimestamp,
@@ -168,18 +169,20 @@ const SnippyPlayer = forwardRef<SnippyPlayerHandle, SnippyPlayerProps>(
     }, [videoUrl, onDurationDetected]);
 
     return (
-      <Player
-        ref={playerRef}
-        component={SnippyCompositionMemo}
-        compositionWidth={1920}
-        compositionHeight={1080}
-        fps={FPS}
-        durationInFrames={durationInFrames}
-        inputProps={inputProps}
-        style={{ width: "100%", borderRadius: 16, overflow: "hidden" }}
-        controls
-        allowFullscreen
-      />
+      <SnippyPlayerIframe>
+        <Player
+          ref={playerRef}
+          component={SnippyCompositionMemo}
+          compositionWidth={1920}
+          compositionHeight={1080}
+          fps={FPS}
+          durationInFrames={durationInFrames}
+          inputProps={inputProps}
+          style={{ width: "100%", height: "100%" }}
+          controls
+          allowFullscreen
+        />
+      </SnippyPlayerIframe>
     );
   }
 );

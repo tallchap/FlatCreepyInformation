@@ -9,7 +9,6 @@ import { SnippyBunnyPicker, type BunnyItem } from "./snippy-bunny-picker";
 import { SnippyOverlayList } from "./snippy-overlay-list";
 import {
   DEFAULT_CAPTION_STYLE,
-  type Quality,
   type OverlaySettings,
   type WordTimestamp,
   type CaptionStyle,
@@ -45,7 +44,6 @@ export function SnippyEditor() {
   const [endSec, setEndSec] = useState<number | null>(null);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [quality, setQuality] = useState<Quality>("1080p");
   const [overlays, setOverlays] = useState<OverlaySettings[]>([]);
   const [positioningId, setPositioningId] = useState<string | null>(null);
   const [positioningCaptions, setPositioningCaptions] = useState(false);
@@ -70,16 +68,6 @@ export function SnippyEditor() {
   const clipDurationSec = selectionValid ? endSec! - startSec! : 0;
   const clipTooLong = clipDurationSec > MAX_CLIP_SEC;
   const positioningOverlay = overlays.find((o) => o.id === positioningId) || null;
-
-  useEffect(() => {
-    if (document.getElementById("gfonts-snippy-captions")) return;
-    const link = document.createElement("link");
-    link.id = "gfonts-snippy-captions";
-    link.rel = "stylesheet";
-    link.href =
-      "https://fonts.googleapis.com/css2?family=Anton&family=Bebas+Neue&family=Montserrat:wght@800;900&family=Oswald:wght@700&display=swap";
-    document.head.appendChild(link);
-  }, []);
 
   const inputFocused = () => {
     const tag = (document.activeElement?.tagName || "").toLowerCase();
@@ -295,7 +283,6 @@ export function SnippyEditor() {
       videoUrl: bunnyVideo.mp4Url,
       startSec: startSec!,
       endSec: endSec!,
-      quality,
       overlays,
       captions: captionsEnabled ? clipCaptions : [],
       captionStyle,
@@ -514,8 +501,6 @@ export function SnippyEditor() {
             />
 
             <SnippyExportBar
-              quality={quality}
-              onQualityChange={setQuality}
               selectionValid={selectionValid && !clipTooLong}
               clipDurationSec={clipDurationSec}
               exporting={exporting}

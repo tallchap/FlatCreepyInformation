@@ -4,6 +4,8 @@ import React from "react";
 import { AbsoluteFill, OffthreadVideo, Sequence, useVideoConfig } from "remotion";
 import type { SnippyCompositionProps, OverlaySettings } from "./types";
 import { SnippyCaptions } from "./snippy-captions";
+import "./snippy-composition.css";
+import "./snippy-fonts";
 
 function hexToRgba(hex: string, alpha: number): string {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -21,9 +23,11 @@ function OverlayLayer({ overlay }: { overlay: OverlaySettings }) {
           left: `${overlay.xPct * 100}%`,
           top: `${overlay.yPct * 100}%`,
           transform: "translate(0, -100%)",
+          maxWidth: `${(1 - overlay.xPct) * 100}%`,
           fontSize: overlay.fontSize,
           fontWeight: 700,
           fontFamily: `'${overlay.fontFamily}', sans-serif`,
+          lineHeight: 1.2,
           color: overlay.color,
           opacity: overlay.opacity / 100,
           backgroundColor: overlay.bgBox

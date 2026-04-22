@@ -30,7 +30,6 @@ interface RenderBody {
   videoUrl: string;
   startSec: number;
   endSec: number;
-  quality: "720p" | "1080p";
   overlays?: OverlaySettings[];
   captions?: WordTimestamp[];
   captionStyle?: CaptionStyle;
@@ -43,7 +42,6 @@ export async function POST(request: Request) {
     videoUrl: sourceUrl,
     startSec,
     endSec,
-    quality,
     overlays,
     captions,
     captionStyle,
@@ -70,7 +68,7 @@ export async function POST(request: Request) {
 
   let clipPath: string | null = null;
   console.log(
-    `[snippy-render] Start: ${sourceUrl} ${startSec}-${endSec} ${quality} (${durationInFrames} frames)`
+    `[snippy-render] Start: ${sourceUrl} ${startSec}-${endSec} (${durationInFrames} frames)`
   );
 
   try {
@@ -101,10 +99,6 @@ export async function POST(request: Request) {
     });
 
     composition.durationInFrames = durationInFrames;
-    if (quality === "720p") {
-      composition.width = 1280;
-      composition.height = 720;
-    }
 
     console.log(
       `[snippy-render] Rendering ${composition.durationInFrames} frames at ${composition.width}x${composition.height}`

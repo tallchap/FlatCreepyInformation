@@ -1,10 +1,6 @@
 "use client";
 
-import type { Quality } from "./types";
-
 interface Props {
-  quality: Quality;
-  onQualityChange: (q: Quality) => void;
   selectionValid: boolean;
   clipDurationSec: number;
   exporting: boolean;
@@ -20,8 +16,6 @@ function fmt(sec: number): string {
 }
 
 export function SnippyExportBar({
-  quality,
-  onQualityChange,
   selectionValid,
   clipDurationSec,
   exporting,
@@ -36,25 +30,6 @@ export function SnippyExportBar({
       style={{ padding: "10px 12px" }}
     >
       <div className="flex items-center gap-2">
-        <div
-          className="flex rounded overflow-hidden"
-          style={{ border: "1px solid var(--snippy-border)" }}
-        >
-          {(["720p", "1080p"] as Quality[]).map((q) => (
-            <button
-              key={q}
-              onClick={() => onQualityChange(q)}
-              className="px-2 py-1 text-[10px] font-medium transition-colors"
-              style={
-                quality === q
-                  ? { background: "var(--snippy-accent)", color: "#ffffff" }
-                  : { background: "var(--snippy-card)", color: "var(--snippy-text-secondary)" }
-              }
-            >
-              {q}
-            </button>
-          ))}
-        </div>
         <span
           className="font-mono"
           style={{
@@ -63,7 +38,7 @@ export function SnippyExportBar({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          {fmt(clipDurationSec)}
+          1080p · {fmt(clipDurationSec)}
         </span>
       </div>
 

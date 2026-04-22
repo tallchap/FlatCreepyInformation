@@ -1,5 +1,3 @@
-export type Quality = "720p" | "1080p";
-
 export interface OverlaySettings {
   id: string;
   text: string;

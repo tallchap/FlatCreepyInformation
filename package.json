@@ -21,6 +21,7 @@
     "@radix-ui/react-tabs": "^1.1.8",
     "@remotion/bundler": "^4.0.436",
     "@remotion/compositor-linux-x64-gnu": "^4.0.436",
+    "@remotion/google-fonts": "4.0.436",
     "@remotion/media-utils": "^4.0.436",
     "@remotion/player": "^4.0.436",
     "@remotion/renderer": "^4.0.436",

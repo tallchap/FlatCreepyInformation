@@ -1,37 +1,10 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { OverlaySettings } from "./types";
+import { SNIPPY_FONT_FAMILIES } from "./snippy-fonts";
 
-const GOOGLE_FONTS = [
-  "Montserrat",
-  "Anton",
-  "Bebas Neue",
-  "Oswald",
-  "Poppins",
-  "Roboto",
-  "Inter",
-  "Playfair Display",
-  "Lobster",
-  "Pacifico",
-  "Bangers",
-  "Permanent Marker",
-  "Archivo Black",
-  "Alfa Slab One",
-];
-const FONTS_CSS_ID = "gfonts-snippy-overlay";
-
-function ensureFontsLoaded() {
-  if (typeof document === "undefined") return;
-  if (document.getElementById(FONTS_CSS_ID)) return;
-  const link = document.createElement("link");
-  link.id = FONTS_CSS_ID;
-  link.rel = "stylesheet";
-  link.href = `https://fonts.googleapis.com/css2?${GOOGLE_FONTS.map(
-    (f) => `family=${f.replace(/ /g, "+")}`
-  ).join("&")}&display=swap`;
-  document.head.appendChild(link);
-}
+const GOOGLE_FONTS = SNIPPY_FONT_FAMILIES;
 
 interface Props {
   overlays: OverlaySettings[];
@@ -59,10 +32,6 @@ export function SnippyOverlayList({
   onChange,
   onStartPositioning,
 }: Props) {
-  useEffect(() => {
-    ensureFontsLoaded();
-  }, []);
-
   return (
     <div className="snippy-card">
       <div className="flex items-center justify-between mb-2">
