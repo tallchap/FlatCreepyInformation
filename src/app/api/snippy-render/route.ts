@@ -49,7 +49,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "endSec must be greater than startSec" }, { status: 400 });
   }
 
-  const region = (process.env.REMOTION_AWS_REGION || "us-west-2") as "us-west-2";
+  const region = (process.env.REMOTION_AWS_REGION || "us-west-2").trim() as "us-west-2";
   const functionName = process.env.REMOTION_LAMBDA_FUNCTION_NAME;
   const serveUrl = process.env.REMOTION_SERVE_URL;
 
