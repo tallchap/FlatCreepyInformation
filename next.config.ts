@@ -6,6 +6,7 @@ const nextConfig: NextConfig = {
     "@remotion/renderer",
     "esbuild",
     "ffmpeg-static",
+    "@sparticuz/chromium-min",
   ],
   outputFileTracingIncludes: {
     "/api/snippy-render/**": [

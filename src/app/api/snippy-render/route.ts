@@ -89,6 +89,19 @@ export async function POST(request: Request) {
     const { renderMedia, selectComposition } = await import("@remotion/renderer");
     const bundled = await getBundle();
 
+    let browserExecutable: string | undefined;
+    if (process.env.VERCEL) {
+      try {
+        const chromium = (await import("@sparticuz/chromium-min")).default;
+        browserExecutable = await chromium.executablePath(
+          "https://github.com/nichochar/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar"
+        );
+        console.log(`[snippy-render] Using serverless Chromium: ${browserExecutable}`);
+      } catch (e) {
+        console.warn("[snippy-render] @sparticuz/chromium-min not available, using default browser");
+      }
+    }
+
     const inputProps = {
       videoUrl: localVideoUrl,
       trimStartSec: pretrim.preRollSec,
@@ -120,6 +133,7 @@ export async function POST(request: Request) {
       pixelFormat: "yuv420p",
       outputLocation: outputPath,
       inputProps,
+      browserExecutable,
       timeoutInMilliseconds: 60_000,
       onProgress: ({ progress }) => {
         const pct = Math.round(progress * 100);
