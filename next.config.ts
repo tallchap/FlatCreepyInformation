@@ -27,8 +27,6 @@ const nextConfig: NextConfig = {
       "./node_modules/typescript/**",
       "./node_modules/@remotion/compositor-*/**",
       "./node_modules/@remotion/google-fonts/**",
-      "./node_modules/webpack/**",
-      "./node_modules/esbuild/**",
       "./node_modules/prettier/**",
     ],
   },
