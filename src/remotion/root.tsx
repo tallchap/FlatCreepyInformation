@@ -8,7 +8,7 @@ const RemotionRoot: React.FC = () => (
   <>
     <Composition
       id="SnippyComposition"
-      component={SnippyComposition}
+      component={SnippyComposition as never}
       width={1920}
       height={1080}
       fps={30}
@@ -24,7 +24,7 @@ const RemotionRoot: React.FC = () => (
     />
     <Composition
       id="SnippyComposition720"
-      component={SnippyComposition}
+      component={SnippyComposition as never}
       width={1280}
       height={720}
       fps={30}
@@ -40,7 +40,7 @@ const RemotionRoot: React.FC = () => (
     />
     <Composition
       id="SnippyParityComposition"
-      component={SnippyParityComposition}
+      component={SnippyParityComposition as never}
       width={1920}
       height={1080}
       fps={30}

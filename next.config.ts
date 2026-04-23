@@ -4,9 +4,9 @@ const nextConfig: NextConfig = {
   serverExternalPackages: [
     "@remotion/bundler",
     "@remotion/renderer",
+    "@remotion/lambda",
     "esbuild",
     "ffmpeg-static",
-    "@sparticuz/chromium-min",
   ],
   outputFileTracingIncludes: {
     "/api/snippy-render/**": [

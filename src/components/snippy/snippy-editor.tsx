@@ -278,7 +278,7 @@ export function SnippyEditor() {
   const handleExport = async () => {
     if (!bunnyVideo?.mp4Url || !selectionValid || clipTooLong || exporting) return;
     setExporting(true);
-    setExportStatus("Rendering…");
+    setExportStatus("Rendering… 0%");
 
     const body = {
       videoUrl: bunnyVideo.mp4Url,
@@ -308,17 +308,48 @@ export function SnippyEditor() {
         } catch {}
         throw new Error(msg);
       }
+
+      const reader = resp.body?.getReader();
+      const decoder = new TextDecoder();
+      let downloadUrl = "";
+
+      if (reader) {
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n\n");
+          buffer = lines.pop() || "";
+          for (const line of lines) {
+            const dataMatch = line.match(/^data:\s*(.+)/);
+            if (!dataMatch) continue;
+            try {
+              const event = JSON.parse(dataMatch[1]);
+              if (event.error) throw new Error(event.error);
+              if (event.progress != null) {
+                setExportStatus(`Rendering… ${event.progress}%`);
+              }
+              if (event.done && event.url) {
+                downloadUrl = event.url;
+              }
+            } catch (e) {
+              if (e instanceof Error && e.message !== "Unexpected end of JSON input") throw e;
+            }
+          }
+        }
+      }
+
+      if (!downloadUrl) throw new Error("Render completed but no download URL received");
+
       setExportStatus("Downloading…");
-      const blob = await resp.blob();
-      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = url;
+      a.href = downloadUrl;
       a.download = `${body.filenameHint}.mp4`;
       a.click();
-      URL.revokeObjectURL(url);
+
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
-      const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
-      setExportStatus(`Done · ${sizeMB} MB · ${elapsed}s`);
+      setExportStatus(`Done · ${elapsed}s`);
       setTimeout(() => setExportStatus(""), 8000);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Render failed";

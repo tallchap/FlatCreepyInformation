@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "next build",
+    "build": "npx remotion lambda sites create src/remotion/root.tsx --site-name=snippy --region=us-west-2 && next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -19,12 +19,13 @@
     "@radix-ui/react-slot": "^1.2.0",
     "@radix-ui/react-switch": "^1.2.2",
     "@radix-ui/react-tabs": "^1.1.8",
-    "@remotion/bundler": "^4.0.436",
-    "@remotion/compositor-linux-x64-gnu": "^4.0.436",
-    "@remotion/google-fonts": "4.0.436",
-    "@remotion/media-utils": "^4.0.436",
-    "@remotion/player": "^4.0.436",
-    "@remotion/renderer": "^4.0.436",
+    "@remotion/bundler": "^4.0.451",
+    "@remotion/compositor-linux-x64-gnu": "^4.0.451",
+    "@remotion/google-fonts": "^4.0.451",
+    "@remotion/lambda": "^4.0.451",
+    "@remotion/media-utils": "^4.0.451",
+    "@remotion/player": "^4.0.451",
+    "@remotion/renderer": "^4.0.451",
     "axios": "^1.8.4",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -39,14 +40,11 @@
     "papaparse": "^5.5.2",
     "react": "^19.0.3",
     "react-dom": "^19.0.3",
-    "remotion": "^4.0.436",
+    "remotion": "^4.0.451",
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.2.0",
     "usehooks-ts": "^3.1.1",
-    "zod": "^3.24.3"
-  },
-  "optionalDependencies": {
-    "@sparticuz/chromium-min": "^131.0.1"
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
