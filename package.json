@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev --turbopack",
-    "build": "npx remotion lambda sites create src/remotion/root.tsx --site-name=snippy --region=us-west-2 && next build",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
@@ -44,7 +44,7 @@
     "sonner": "^2.0.3",
     "tailwind-merge": "^3.2.0",
     "usehooks-ts": "^3.1.1",
-    "zod": "^4.3.6"
+    "zod": "^3.24.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
