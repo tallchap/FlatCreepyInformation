@@ -73,12 +73,10 @@ export async function POST(request: Request) {
 
   try {
     const { renderMediaOnLambda, getRenderProgress } = await import("@remotion/lambda/client");
-    const { getOrCreateBucket } = await import("@remotion/lambda");
 
-    // Pretrim the video locally (handles Bunny CDN auth), then upload the small clip to S3
     const pretrim = await pretrimToLocal(sourceUrl, startSec, endSec);
     clipPath = pretrim.filePath;
-    const { bucketName } = await getOrCreateBucket({ region });
+    const bucketName = process.env.REMOTION_S3_BUCKET || "remotionlambda-uswest2-4dxol9yt1q";
     const s3VideoUrl = await uploadClipToS3(pretrim.filePath, bucketName, region);
 
     const inputProps = {
