@@ -50,8 +50,8 @@ export async function POST(request: Request) {
   }
 
   const region = (process.env.REMOTION_AWS_REGION || "us-west-2").trim() as "us-west-2";
-  const functionName = process.env.REMOTION_LAMBDA_FUNCTION_NAME;
-  const serveUrl = process.env.REMOTION_SERVE_URL;
+  const functionName = process.env.REMOTION_LAMBDA_FUNCTION_NAME?.trim();
+  const serveUrl = process.env.REMOTION_SERVE_URL?.trim();
 
   if (!functionName || !serveUrl) {
     return NextResponse.json(
@@ -76,7 +76,7 @@ export async function POST(request: Request) {
 
     const pretrim = await pretrimToLocal(sourceUrl, startSec, endSec);
     clipPath = pretrim.filePath;
-    const bucketName = process.env.REMOTION_S3_BUCKET || "remotionlambda-uswest2-4dxol9yt1q";
+    const bucketName = (process.env.REMOTION_S3_BUCKET || "remotionlambda-uswest2-4dxol9yt1q").trim();
     const s3VideoUrl = await uploadClipToS3(pretrim.filePath, bucketName, region);
 
     const inputProps = {
