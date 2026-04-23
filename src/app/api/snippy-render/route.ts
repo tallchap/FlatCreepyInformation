@@ -1,8 +1,22 @@
+import fs from "fs";
 import { NextResponse } from "next/server";
 import type { OverlaySettings, WordTimestamp, CaptionStyle } from "@/components/snippy/types";
+import { pretrimToLocal, safeUnlink } from "./pretrim";
 
 export const maxDuration = 300;
 export const runtime = "nodejs";
+
+async function uploadClipToS3(filePath: string, bucketName: string, region: string): Promise<string> {
+  const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
+  const s3 = new S3Client({ region });
+  const key = `video-sources/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
+  const body = fs.readFileSync(filePath);
+  console.log(`[snippy-render] Uploading ${(body.length / 1024 / 1024).toFixed(1)} MB clip to S3...`);
+  await s3.send(new PutObjectCommand({ Bucket: bucketName, Key: key, Body: body, ContentType: "video/mp4" }));
+  const s3Url = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
+  console.log(`[snippy-render] Clip uploaded: ${s3Url}`);
+  return s3Url;
+}
 
 interface RenderBody {
   videoUrl: string;
@@ -29,16 +43,10 @@ export async function POST(request: Request) {
   } = body;
 
   if (!sourceUrl || startSec == null || endSec == null) {
-    return NextResponse.json(
-      { error: "Missing videoUrl, startSec, or endSec" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "Missing videoUrl, startSec, or endSec" }, { status: 400 });
   }
   if (endSec <= startSec) {
-    return NextResponse.json(
-      { error: "endSec must be greater than startSec" },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: "endSec must be greater than startSec" }, { status: 400 });
   }
 
   const region = (process.env.REMOTION_AWS_REGION || "us-west-2") as "us-west-2";
@@ -47,7 +55,7 @@ export async function POST(request: Request) {
 
   if (!functionName || !serveUrl) {
     return NextResponse.json(
-      { error: "Remotion Lambda not configured (missing REMOTION_LAMBDA_FUNCTION_NAME or REMOTION_SERVE_URL)" },
+      { error: "Remotion Lambda not configured (missing env vars)" },
       { status: 500 }
     );
   }
@@ -61,12 +69,21 @@ export async function POST(request: Request) {
     `[snippy-render] Lambda render: ${sourceUrl} ${startSec}-${endSec} (${durationInFrames} frames) @ ${resolution}p`
   );
 
+  let clipPath: string | null = null;
+
   try {
     const { renderMediaOnLambda, getRenderProgress } = await import("@remotion/lambda/client");
+    const { getOrCreateBucket } = await import("@remotion/lambda");
+
+    // Pretrim the video locally (handles Bunny CDN auth), then upload the small clip to S3
+    const pretrim = await pretrimToLocal(sourceUrl, startSec, endSec);
+    clipPath = pretrim.filePath;
+    const { bucketName } = await getOrCreateBucket({ region });
+    const s3VideoUrl = await uploadClipToS3(pretrim.filePath, bucketName, region);
 
     const inputProps = {
-      videoUrl: sourceUrl,
-      trimStartSec: startSec,
+      videoUrl: s3VideoUrl,
+      trimStartSec: pretrim.preRollSec,
       inSec: 0,
       outSec: clipDurationSec,
       overlays: overlays || [],
@@ -83,7 +100,10 @@ export async function POST(request: Request) {
       codec: "h264",
       crf: 18,
       framesPerLambda: 20,
-      downloadBehavior: { type: "download", fileName: filenameHint ? `${filenameHint}.mp4` : `snippy-${Math.round(startSec)}-${Math.round(endSec)}.mp4` },
+      downloadBehavior: {
+        type: "download",
+        fileName: filenameHint ? `${filenameHint}.mp4` : `snippy-${Math.round(startSec)}-${Math.round(endSec)}.mp4`,
+      },
     });
 
     console.log(`[snippy-render] Render dispatched: ${render.renderId} bucket=${render.bucketName}`);
@@ -125,6 +145,7 @@ export async function POST(request: Request) {
           const msg = err instanceof Error ? err.message : "Progress polling failed";
           controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
         } finally {
+          if (clipPath) safeUnlink(clipPath);
           controller.close();
         }
       },
@@ -138,6 +159,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (err) {
+    if (clipPath) safeUnlink(clipPath);
     const msg = err instanceof Error ? err.message : "Render failed";
     console.error(`[snippy-render] Error:`, msg);
     return NextResponse.json({ error: msg }, { status: 500 });
