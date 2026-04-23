@@ -5,6 +5,7 @@ const nextConfig: NextConfig = {
     "@remotion/bundler",
     "@remotion/renderer",
     "@remotion/lambda",
+    "@aws-sdk/client-s3",
     "esbuild",
     "ffmpeg-static",
   ],
