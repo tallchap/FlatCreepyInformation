@@ -28,7 +28,6 @@ const nextConfig: NextConfig = {
       "./node_modules/@remotion/compositor-*/**",
       "./node_modules/@remotion/google-fonts/**",
       "./node_modules/@remotion/bundler/**",
-      "./node_modules/@remotion/renderer/**",
       "./node_modules/@remotion/studio/**",
       "./node_modules/@remotion/studio-server/**",
       "./node_modules/webpack/**",
