@@ -1,8 +1,17 @@
+export type OverlayAnchor =
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+
 export interface OverlaySettings {
   id: string;
   text: string;
   xPct: number;
   yPct: number;
+  // Which corner of the overlay (xPct, yPct) refers to. Default "bottom-left"
+  // preserves legacy behavior where yPct pins the overlay's baseline-ish bottom.
+  anchor?: OverlayAnchor;
   fontSize: number;
   fontFamily: string;
   color: string;

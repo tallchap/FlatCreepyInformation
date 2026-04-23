@@ -54,6 +54,7 @@ export function SnippyEditor() {
   const [transcribeStatus, setTranscribeStatus] = useState("");
   const [exporting, setExporting] = useState(false);
   const [exportStatus, setExportStatus] = useState("");
+  const [resolution, setResolution] = useState<720 | 1080>(1080);
   const [debugOpen, setDebugOpen] = useState(false);
 
   const playerRef = useRef<SnippyPlayerHandle>(null);
@@ -289,6 +290,7 @@ export function SnippyEditor() {
       filenameHint: `snippy-${bunnyVideo.guid.slice(0, 8)}-${Math.round(
         startSec!
       )}-${Math.round(endSec!)}`,
+      resolution,
     };
 
     try {
@@ -509,6 +511,8 @@ export function SnippyEditor() {
                   ? `Clip exceeds ${MAX_CLIP_SEC / 60}-min limit`
                   : exportStatus
               }
+              resolution={resolution}
+              onResolutionChange={setResolution}
               onExport={handleExport}
             />
           </div>

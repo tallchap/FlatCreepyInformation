@@ -39,6 +39,7 @@ interface RenderBody {
   captions?: WordTimestamp[];
   captionStyle?: CaptionStyle;
   filenameHint?: string;
+  resolution?: 720 | 1080;
 }
 
 export async function POST(request: Request) {
@@ -51,6 +52,7 @@ export async function POST(request: Request) {
     captions,
     captionStyle,
     filenameHint,
+    resolution = 1080,
   } = body;
 
   if (!sourceUrl || startSec == null || endSec == null) {
@@ -97,9 +99,10 @@ export async function POST(request: Request) {
       captionStyle,
     };
 
+    const compositionId = resolution === 720 ? "SnippyComposition720" : "SnippyComposition";
     const composition = await selectComposition({
       serveUrl: bundled,
-      id: "SnippyComposition",
+      id: compositionId,
       inputProps,
     });
 

@@ -19,26 +19,47 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function OverlayLayer({ overlay }: { overlay: OverlaySettings }) {
+  const { height } = useVideoConfig();
+  const scale = height / 1080;
+
+  const anchor = overlay.anchor ?? "bottom-left";
+  const anchorsRight = anchor === "top-right" || anchor === "bottom-right";
+  const anchorsBottom = anchor === "bottom-left" || anchor === "bottom-right";
+
+  const horizontal = anchorsRight
+    ? { right: `${(1 - overlay.xPct) * 100}%` }
+    : { left: `${overlay.xPct * 100}%` };
+
+  const vertical = { top: `${overlay.yPct * 100}%` };
+  const transform = anchorsBottom ? "translate(0, -100%)" : "translate(0, 0)";
+
+  const maxWidth = anchorsRight
+    ? `${overlay.xPct * 100}%`
+    : `${(1 - overlay.xPct) * 100}%`;
+
   return (
     <AbsoluteFill style={{ pointerEvents: "none" }}>
       <div
         style={{
           position: "absolute",
-          left: `${overlay.xPct * 100}%`,
-          top: `${overlay.yPct * 100}%`,
-          transform: "translate(0, -100%)",
-          maxWidth: `${(1 - overlay.xPct) * 100}%`,
-          fontSize: overlay.fontSize,
+          ...horizontal,
+          ...vertical,
+          transform,
+          maxWidth,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          fontSize: overlay.fontSize * scale,
           fontWeight: 700,
           fontFamily: `'${overlay.fontFamily}', sans-serif`,
-          lineHeight: 1.2,
+          lineHeight: 1,
           color: overlay.color,
           opacity: overlay.opacity / 100,
           backgroundColor: overlay.bgBox
             ? hexToRgba(overlay.bgColor, overlay.bgOpacity / 100)
             : undefined,
-          padding: overlay.bgBox ? "4px 8px" : undefined,
-          borderRadius: overlay.bgBox ? 4 : undefined,
+          padding: overlay.bgBox ? "0.15em 0.2em" : undefined,
+          borderRadius: overlay.bgBox ? 4 * scale : undefined,
           textShadow: !overlay.bgBox ? "1px 1px 4px rgba(0,0,0,0.9)" : undefined,
           whiteSpace: "pre-wrap",
         }}

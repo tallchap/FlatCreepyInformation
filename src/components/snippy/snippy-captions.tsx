@@ -18,7 +18,8 @@ function hexToRgba(hex: string, alpha: number): string {
 
 export const SnippyCaptions: React.FC<Props> = ({ words, style }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
+  const scale = height / 1080;
   const nowSec = frame / fps;
 
   if (!words || words.length === 0) return null;
@@ -40,8 +41,8 @@ export const SnippyCaptions: React.FC<Props> = ({ words, style }) => {
   const bgStyle = style.bgEnabled
     ? {
         backgroundColor: hexToRgba(style.bgColor, style.bgOpacity / 100),
-        padding: "8px 18px",
-        borderRadius: 12,
+        padding: `${8 * scale}px ${18 * scale}px`,
+        borderRadius: 12 * scale,
       }
     : {};
 
@@ -55,18 +56,18 @@ export const SnippyCaptions: React.FC<Props> = ({ words, style }) => {
           width: `${widthPct * 100}%`,
           textAlign: "center",
           fontFamily: `'${style.fontFamily}', sans-serif`,
-          fontSize: style.fontSize,
+          fontSize: style.fontSize * scale,
           fontWeight: 900,
           letterSpacing: "0.02em",
           textTransform: "uppercase",
           WebkitTextStroke:
             style.strokeWidth > 0
-              ? `${style.strokeWidth}px ${style.strokeColor}`
+              ? `${style.strokeWidth * scale}px ${style.strokeColor}`
               : "0",
           paintOrder: "stroke fill",
           textShadow: style.strokeWidth > 0
-            ? "0 6px 18px rgba(0,0,0,0.85)"
-            : "0 4px 12px rgba(0,0,0,0.9)",
+            ? `0 ${6 * scale}px ${18 * scale}px rgba(0,0,0,0.85)`
+            : `0 ${4 * scale}px ${12 * scale}px rgba(0,0,0,0.9)`,
           transform: "translateY(-50%)",
         }}
       >

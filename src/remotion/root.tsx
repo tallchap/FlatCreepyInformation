@@ -23,6 +23,22 @@ const RemotionRoot: React.FC = () => (
       } satisfies SnippyCompositionProps}
     />
     <Composition
+      id="SnippyComposition720"
+      component={SnippyComposition}
+      width={1280}
+      height={720}
+      fps={30}
+      durationInFrames={300}
+      defaultProps={{
+        videoUrl: "",
+        trimStartSec: 0,
+        inSec: 0,
+        outSec: 10,
+        overlays: [],
+        captions: [],
+      } satisfies SnippyCompositionProps}
+    />
+    <Composition
       id="SnippyParityComposition"
       component={SnippyParityComposition}
       width={1920}

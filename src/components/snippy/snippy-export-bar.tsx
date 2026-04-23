@@ -5,6 +5,8 @@ interface Props {
   clipDurationSec: number;
   exporting: boolean;
   exportStatus: string;
+  resolution: 720 | 1080;
+  onResolutionChange: (res: 720 | 1080) => void;
   onExport: () => void;
 }
 
@@ -20,6 +22,8 @@ export function SnippyExportBar({
   clipDurationSec,
   exporting,
   exportStatus,
+  resolution,
+  onResolutionChange,
   onExport,
 }: Props) {
   const isError = exportStatus.startsWith("Error");
@@ -30,6 +34,25 @@ export function SnippyExportBar({
       style={{ padding: "10px 12px" }}
     >
       <div className="flex items-center gap-2">
+        <select
+          value={resolution}
+          onChange={(e) => onResolutionChange(Number(e.target.value) as 720 | 1080)}
+          disabled={exporting}
+          className="font-mono"
+          style={{
+            fontSize: 11,
+            color: "var(--snippy-text-secondary)",
+            background: "transparent",
+            border: "1px solid var(--snippy-border, #ccc)",
+            borderRadius: 3,
+            padding: "2px 4px",
+            cursor: exporting ? "not-allowed" : "pointer",
+            fontVariantNumeric: "tabular-nums",
+          }}
+        >
+          <option value={1080}>1080p</option>
+          <option value={720}>720p</option>
+        </select>
         <span
           className="font-mono"
           style={{
@@ -38,7 +61,7 @@ export function SnippyExportBar({
             fontVariantNumeric: "tabular-nums",
           }}
         >
-          1080p · {fmt(clipDurationSec)}
+          · {fmt(clipDurationSec)}
         </span>
       </div>
 
