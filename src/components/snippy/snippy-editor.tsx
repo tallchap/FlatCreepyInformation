@@ -56,6 +56,8 @@ export function SnippyEditor() {
   const [exportStatus, setExportStatus] = useState("");
   const [resolution, setResolution] = useState<720 | 1080>(1080);
   const [debugOpen, setDebugOpen] = useState(false);
+  const [debugLogs, setDebugLogs] = useState<string[]>([]);
+  const debugLogsRef = useRef<HTMLPreElement>(null);
 
   const playerRef = useRef<SnippyPlayerHandle>(null);
   const playerWrapRef = useRef<HTMLDivElement>(null);
@@ -275,10 +277,16 @@ export function SnippyEditor() {
   const handleOverlayChange = (id: string, patch: Partial<OverlaySettings>) =>
     setOverlays((prev) => prev.map((o) => (o.id === id ? { ...o, ...patch } : o)));
 
+  const appendLog = (msg: string) => {
+    setDebugLogs((prev) => [...prev, `[${new Date().toLocaleTimeString("en-US", { hour12: false })}] ${msg}`]);
+    setTimeout(() => debugLogsRef.current?.scrollTo(0, debugLogsRef.current.scrollHeight), 50);
+  };
+
   const handleExport = async () => {
     if (!bunnyVideo?.mp4Url || !selectionValid || clipTooLong || exporting) return;
     setExporting(true);
     setExportStatus("Rendering… 0%");
+    setDebugLogs([]);
 
     const body = {
       videoUrl: bunnyVideo.mp4Url,
@@ -292,6 +300,8 @@ export function SnippyEditor() {
       )}-${Math.round(endSec!)}`,
       resolution,
     };
+
+    appendLog(`Export started: ${clipDurationSec.toFixed(1)}s @ ${resolution}p`);
 
     try {
       const t0 = Date.now();
@@ -326,6 +336,7 @@ export function SnippyEditor() {
             if (!dataMatch) continue;
             try {
               const event = JSON.parse(dataMatch[1]);
+              if (event.log) appendLog(event.log);
               if (event.error) throw new Error(event.error);
               if (event.progress != null) {
                 setExportStatus(`Rendering… ${event.progress}%`);
@@ -563,35 +574,69 @@ export function SnippyEditor() {
           </div>
 
           {debugOpen && (
-            <pre
-              className="text-[11px] p-3 rounded-xl overflow-auto max-h-64"
-              style={{
-                background: "#0d0d0d",
-                color: "#a1e8a1",
-                fontFamily: "var(--font-geist-mono, ui-monospace)",
-              }}
-            >
-              {JSON.stringify(
-                {
-                  bunnyVideo: bunnyVideo
-                    ? { guid: bunnyVideo.guid, title: bunnyVideo.title }
-                    : null,
-                  totalDuration,
-                  startSec,
-                  endSec,
-                  playheadSec,
-                  clipDurationSec,
-                  isPlaying,
-                  overlays: overlays.length,
-                  sourceWordCount,
-                  clipWordCount,
-                  exporting,
-                  exportStatus,
-                },
-                null,
-                2
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <pre
+                className="text-[11px] p-3 rounded-xl overflow-auto max-h-64"
+                style={{
+                  background: "#0d0d0d",
+                  color: "#a1e8a1",
+                  fontFamily: "var(--font-geist-mono, ui-monospace)",
+                }}
+              >
+                {JSON.stringify(
+                  {
+                    bunnyVideo: bunnyVideo
+                      ? { guid: bunnyVideo.guid, title: bunnyVideo.title }
+                      : null,
+                    totalDuration,
+                    startSec,
+                    endSec,
+                    playheadSec,
+                    clipDurationSec,
+                    isPlaying,
+                    overlays: overlays.length,
+                    sourceWordCount,
+                    clipWordCount,
+                    exporting,
+                    exportStatus,
+                  },
+                  null,
+                  2
+                )}
+              </pre>
+              {debugLogs.length > 0 && (
+                <div style={{ position: "relative" }}>
+                  <button
+                    onClick={() => navigator.clipboard.writeText(debugLogs.join("\n"))}
+                    className="text-[10px] px-2 py-1 rounded"
+                    style={{
+                      position: "absolute",
+                      top: 8,
+                      right: 8,
+                      background: "rgba(255,255,255,0.15)",
+                      color: "#a1e8a1",
+                      border: "none",
+                      cursor: "pointer",
+                      zIndex: 1,
+                    }}
+                  >
+                    Copy logs
+                  </button>
+                  <pre
+                    ref={debugLogsRef}
+                    className="text-[11px] p-3 rounded-xl overflow-auto max-h-64"
+                    style={{
+                      background: "#0d0d0d",
+                      color: "#d4d4d4",
+                      fontFamily: "var(--font-geist-mono, ui-monospace)",
+                      margin: 0,
+                    }}
+                  >
+                    {debugLogs.join("\n")}
+                  </pre>
+                </div>
               )}
-            </pre>
+            </div>
           )}
 
         </>

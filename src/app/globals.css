@@ -265,19 +265,21 @@ video::-webkit-media-controls-picture-in-picture-button {
 
 .snippy-scrubber-scroll {
   scrollbar-width: thin;
-  scrollbar-color: var(--snippy-border) transparent;
+  scrollbar-color: rgba(150,150,150,0.5) transparent;
+  overflow-x: scroll !important;
 }
 .snippy-scrubber-scroll::-webkit-scrollbar {
-  height: 8px;
+  height: 6px;
   -webkit-appearance: none;
+  display: block !important;
 }
 .snippy-scrubber-scroll::-webkit-scrollbar-track {
   background: transparent;
 }
 .snippy-scrubber-scroll::-webkit-scrollbar-thumb {
-  background: var(--snippy-border);
-  border-radius: 4px;
+  background: rgba(150,150,150,0.5);
+  border-radius: 3px;
 }
 .snippy-scrubber-scroll::-webkit-scrollbar-thumb:hover {
-  background: var(--snippy-text-secondary);
+  background: rgba(150,150,150,0.7);
 }

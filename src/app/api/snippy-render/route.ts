@@ -6,16 +6,15 @@ import { pretrimToLocal, safeUnlink } from "./pretrim";
 export const maxDuration = 300;
 export const runtime = "nodejs";
 
-async function uploadClipToS3(filePath: string, bucketName: string, region: string): Promise<string> {
+async function uploadClipToS3(filePath: string, bucketName: string, region: string): Promise<{ url: string; sizeMB: string }> {
   const { S3Client, PutObjectCommand } = await import("@aws-sdk/client-s3");
   const s3 = new S3Client({ region });
   const key = `video-sources/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`;
   const body = fs.readFileSync(filePath);
-  console.log(`[snippy-render] Uploading ${(body.length / 1024 / 1024).toFixed(1)} MB clip to S3...`);
+  const sizeMB = (body.length / 1024 / 1024).toFixed(1);
   await s3.send(new PutObjectCommand({ Bucket: bucketName, Key: key, Body: body, ContentType: "video/mp4" }));
-  const s3Url = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
-  console.log(`[snippy-render] Clip uploaded: ${s3Url}`);
-  return s3Url;
+  const url = `https://${bucketName}.s3.${region}.amazonaws.com/${key}`;
+  return { url, sizeMB };
 }
 
 interface RenderBody {
@@ -65,101 +64,100 @@ export async function POST(request: Request) {
   const durationInFrames = Math.max(1, Math.round(clipDurationSec * fps));
   const compositionId = resolution === 720 ? "SnippyComposition720" : "SnippyComposition";
 
-  console.log(
-    `[snippy-render] Lambda render: ${sourceUrl} ${startSec}-${endSec} (${durationInFrames} frames) @ ${resolution}p`
-  );
+  const encoder = new TextEncoder();
+  const emit = (controller: ReadableStreamDefaultController, data: Record<string, unknown>) => {
+    controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+  };
 
-  let clipPath: string | null = null;
+  const stream = new ReadableStream({
+    async start(controller) {
+      let clipPath: string | null = null;
+      try {
+        const { renderMediaOnLambda, getRenderProgress } = await import("@remotion/lambda/client");
 
-  try {
-    const { renderMediaOnLambda, getRenderProgress } = await import("@remotion/lambda/client");
+        emit(controller, { log: `Pretrimming ${clipDurationSec.toFixed(1)}s clip @ ${resolution}p...` });
+        const pretrim = await pretrimToLocal(sourceUrl, startSec, endSec);
+        clipPath = pretrim.filePath;
+        const clipSize = (fs.statSync(pretrim.filePath).size / 1024 / 1024).toFixed(1);
+        emit(controller, { log: `Pretrim complete: ${clipSize} MB` });
 
-    const pretrim = await pretrimToLocal(sourceUrl, startSec, endSec);
-    clipPath = pretrim.filePath;
-    const bucketName = (process.env.REMOTION_S3_BUCKET || "remotionlambda-uswest2-4dxol9yt1q").trim();
-    const s3VideoUrl = await uploadClipToS3(pretrim.filePath, bucketName, region);
+        emit(controller, { log: "Uploading clip to S3..." });
+        const bucketName = (process.env.REMOTION_S3_BUCKET || "remotionlambda-uswest2-4dxol9yt1q").trim();
+        const { url: s3VideoUrl, sizeMB } = await uploadClipToS3(pretrim.filePath, bucketName, region);
+        emit(controller, { log: `S3 upload complete: ${sizeMB} MB → ${s3VideoUrl.split("/").pop()}` });
 
-    const inputProps = {
-      videoUrl: s3VideoUrl,
-      trimStartSec: pretrim.preRollSec,
-      inSec: 0,
-      outSec: clipDurationSec,
-      overlays: overlays || [],
-      captions: captions || [],
-      captionStyle,
-    };
+        const inputProps = {
+          videoUrl: s3VideoUrl,
+          trimStartSec: pretrim.preRollSec,
+          inSec: 0,
+          outSec: clipDurationSec,
+          overlays: overlays || [],
+          captions: captions || [],
+          captionStyle,
+        };
 
-    const render = await renderMediaOnLambda({
-      region,
-      functionName,
-      serveUrl,
-      composition: compositionId,
-      inputProps,
-      codec: "h264",
-      crf: 18,
-      framesPerLambda: 20,
-      downloadBehavior: {
-        type: "download",
-        fileName: filenameHint ? `${filenameHint}.mp4` : `snippy-${Math.round(startSec)}-${Math.round(endSec)}.mp4`,
-      },
-    });
+        emit(controller, { log: `Dispatching Lambda render: ${durationInFrames} frames, ${compositionId}...` });
+        const render = await renderMediaOnLambda({
+          region,
+          functionName,
+          serveUrl,
+          composition: compositionId,
+          inputProps,
+          forceDurationInFrames: durationInFrames,
+          codec: "h264",
+          crf: 18,
+          framesPerLambda: 20,
+          downloadBehavior: {
+            type: "download",
+            fileName: filenameHint ? `${filenameHint}.mp4` : `snippy-${Math.round(startSec)}-${Math.round(endSec)}.mp4`,
+          },
+        });
+        emit(controller, { log: `Render dispatched: ${render.renderId}` });
 
-    console.log(`[snippy-render] Render dispatched: ${render.renderId} bucket=${render.bucketName}`);
+        let done = false;
+        let lastPct = -1;
+        while (!done) {
+          const progress = await getRenderProgress({
+            renderId: render.renderId,
+            bucketName: render.bucketName,
+            functionName,
+            region,
+          });
 
-    const encoder = new TextEncoder();
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          let done = false;
-          while (!done) {
-            const progress = await getRenderProgress({
-              renderId: render.renderId,
-              bucketName: render.bucketName,
-              functionName,
-              region,
-            });
-
-            if (progress.fatalErrorEncountered) {
-              const errMsg = progress.errors?.[0]?.message || "Lambda render failed";
-              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: errMsg })}\n\n`));
-              controller.close();
-              return;
-            }
-
-            const pct = Math.round((progress.overallProgress ?? 0) * 100);
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify({ progress: pct })}\n\n`));
-
-            if (progress.done && progress.outputFile) {
-              console.log(`[snippy-render] Render complete: ${progress.outputFile}`);
-              controller.enqueue(
-                encoder.encode(`data: ${JSON.stringify({ done: true, url: progress.outputFile, progress: 100 })}\n\n`)
-              );
-              done = true;
-            } else {
-              await new Promise((r) => setTimeout(r, 1000));
-            }
+          if (progress.fatalErrorEncountered) {
+            const errMsg = progress.errors?.[0]?.message || "Lambda render failed";
+            emit(controller, { log: `ERROR: ${errMsg}`, error: errMsg });
+            break;
           }
-        } catch (err) {
-          const msg = err instanceof Error ? err.message : "Progress polling failed";
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ error: msg })}\n\n`));
-        } finally {
-          if (clipPath) safeUnlink(clipPath);
-          controller.close();
-        }
-      },
-    });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
-        Connection: "keep-alive",
-      },
-    });
-  } catch (err) {
-    if (clipPath) safeUnlink(clipPath);
-    const msg = err instanceof Error ? err.message : "Render failed";
-    console.error(`[snippy-render] Error:`, msg);
-    return NextResponse.json({ error: msg }, { status: 500 });
-  }
+          const pct = Math.round((progress.overallProgress ?? 0) * 100);
+          if (pct !== lastPct) {
+            emit(controller, { progress: pct, log: `Lambda progress: ${pct}%` });
+            lastPct = pct;
+          }
+
+          if (progress.done && progress.outputFile) {
+            emit(controller, { done: true, url: progress.outputFile, progress: 100, log: `Render complete: ${progress.outputFile}` });
+            done = true;
+          } else {
+            await new Promise((r) => setTimeout(r, 1000));
+          }
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Render failed";
+        emit(controller, { log: `ERROR: ${msg}`, error: msg });
+      } finally {
+        if (clipPath) safeUnlink(clipPath);
+        controller.close();
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    },
+  });
 }
