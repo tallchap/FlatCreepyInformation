@@ -106,7 +106,7 @@ export async function POST(request: Request) {
           forceDurationInFrames: durationInFrames,
           codec: "h264",
           crf: 18,
-          framesPerLambda: 20,
+          framesPerLambda: Math.max(20, Math.ceil(durationInFrames / 180)),
           downloadBehavior: {
             type: "download",
             fileName: filenameHint ? `${filenameHint}.mp4` : `snippy-${Math.round(startSec)}-${Math.round(endSec)}.mp4`,
