@@ -140,19 +140,20 @@ async function getClaude(): Promise<ProviderData> {
     const dailyBreakdown: { label: string; value: string; type: string }[] = [];
 
     for (const bucket of d.data || []) {
-      let dayTotal = 0;
-      for (const r of bucket.results || []) dayTotal += parseFloat(r.amount || "0");
-      total30d += dayTotal;
+      let dayCents = 0;
+      for (const r of bucket.results || []) dayCents += parseFloat(r.amount || "0");
+      const dayDollars = dayCents / 100;
+      total30d += dayDollars;
       const bucketDate = (bucket.starting_at || "").split("T")[0];
-      if (bucketDate >= start7d.split("T")[0]) total7d += dayTotal;
-      if (bucketDate === todayStr) todayCost += dayTotal;
-      if (bucketDate >= start7d.split("T")[0] && dayTotal > 0) {
-        dailyBreakdown.push({ label: bucketDate, value: `$${dayTotal.toFixed(2)}`, type: "cost" });
+      if (bucketDate >= start7d.split("T")[0]) total7d += dayDollars;
+      if (bucketDate === todayStr) todayCost += dayDollars;
+      if (bucketDate >= start7d.split("T")[0] && dayDollars > 0.01) {
+        dailyBreakdown.push({ label: bucketDate, value: `$${dayDollars.toFixed(2)}`, type: "cost" });
       }
     }
 
     return {
-      name: "Claude (Anthropic)", status: total30d > 500 ? "warn" : "ok", monthlyCost: total30d,
+      name: "Claude (Anthropic)", status: total30d > 100 ? "warn" : "ok", monthlyCost: total30d,
       metrics: [
         { label: "Today", value: `$${todayCost.toFixed(2)}`, type: "cost" },
         { label: "Last 7 days", value: `$${total7d.toFixed(2)}`, type: "cost" },
