@@ -286,7 +286,8 @@ export function SnippyEditor() {
     if (!bunnyVideo?.mp4Url || !selectionValid || clipTooLong || exporting) return;
     setExporting(true);
     setExportStatus("Rendering… 0%");
-    setDebugLogs([]);
+    setDebugLogs((prev) => prev.length > 0 ? [...prev, "", "─".repeat(40), ""] : []);
+    setDebugOpen(true);
 
     const body = {
       videoUrl: bunnyVideo.mp4Url,
