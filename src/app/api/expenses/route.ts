@@ -74,9 +74,10 @@ async function getApify(token: string): Promise<ProviderData> {
     return errorCard("Apify", 0, "Apify token unavailable", "https://console.apify.com/billing");
   }
   try {
-    const [monthlyRes, runsRes] = await Promise.all([
+    const [monthlyRes, runsRes, actsRes] = await Promise.all([
       fetchT(`https://api.apify.com/v2/users/me/usage/monthly?token=${token}`),
       fetchT(`https://api.apify.com/v2/actor-runs?token=${token}&limit=1000&desc=1`),
+      fetchT(`https://api.apify.com/v2/acts?token=${token}&limit=200`),
     ]);
     if (!monthlyRes.ok) {
       return errorCard("Apify", 0, `monthly endpoint HTTP ${monthlyRes.status}`, "https://console.apify.com/billing");
@@ -91,31 +92,55 @@ async function getApify(token: string): Promise<ProviderData> {
       return errorCard("Apify", 0, `unexpected payload: ${snippet}`, "https://console.apify.com/billing");
     }
     const runsData = (await runsRes.json()).data?.items || [];
+    const actsItems = actsRes.ok ? ((await actsRes.json()).data?.items || []) : [];
+    const actNameById: Record<string, string> = {};
+    for (const a of actsItems as any[]) {
+      if (a?.id) actNameById[a.id] = `${a.username || "?"}/${a.name || a.id}`;
+    }
 
     let total = 0;
     for (const [, v] of Object.entries(monthlyData.monthlyServiceUsage) as any) {
       total += v.amountAfterVolumeDiscountUsd || 0;
     }
 
+    const cycleStart = monthlyData.usageCycle.startAt; // ISO string
     const daily: Record<string, { count: number; cost: number }> = {};
-    for (const r of runsData) {
-      const date = (r.startedAt || "").slice(0, 10);
-      if (!date) continue;
-      if (!daily[date]) daily[date] = { count: 0, cost: 0 };
-      daily[date].count += 1;
-      daily[date].cost += r.usageTotalUsd || 0;
+    const byActor: Record<string, { count: number; cost: number }> = {};
+    for (const r of runsData as any[]) {
+      const startedAt = r.startedAt || "";
+      const cost = r.usageTotalUsd || 0;
+      const date = startedAt.slice(0, 10);
+      if (date) {
+        if (!daily[date]) daily[date] = { count: 0, cost: 0 };
+        daily[date].count += 1;
+        daily[date].cost += cost;
+      }
+      if (startedAt >= cycleStart && r.actId) {
+        if (!byActor[r.actId]) byActor[r.actId] = { count: 0, cost: 0 };
+        byActor[r.actId].count += 1;
+        byActor[r.actId].cost += cost;
+      }
     }
     const dailyMetrics = Object.entries(daily)
       .sort(([a], [b]) => b.localeCompare(a))
-      .slice(0, 7)
+      .slice(0, 5)
       .map(([date, d]) => ({ label: `${date} (${d.count} runs)`, value: `$${d.cost.toFixed(2)}`, type: "cost" }));
+    const actorMetrics = Object.entries(byActor)
+      .sort(([, a], [, b]) => b.cost - a.cost)
+      .slice(0, 8)
+      .map(([id, d]) => ({
+        label: `${actNameById[id] || id} (${d.count} runs)`,
+        value: `$${d.cost.toFixed(2)}`,
+        type: "cost",
+      }));
 
     return {
       name: "Apify", status: "ok", monthlyCost: total,
       metrics: [
         { label: "Cycle", value: `${monthlyData.usageCycle.startAt.slice(0, 10)} → ${monthlyData.usageCycle.endAt.slice(0, 10)}` },
         { label: "This cycle total", value: `$${total.toFixed(2)}`, type: "cost" },
-        ...dailyMetrics,
+        ...(actorMetrics.length ? [{ label: "— Top actors (cycle, by run cost) —", value: "" }, ...actorMetrics] : []),
+        ...(dailyMetrics.length ? [{ label: "— Daily —", value: "" }, ...dailyMetrics] : []),
       ],
       link: "https://console.apify.com/billing",
     };
