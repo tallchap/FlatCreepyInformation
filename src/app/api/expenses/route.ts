@@ -1,9 +1,35 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const PROVIDER_TIMEOUT_MS = 10_000;
+
+// Apify token, AES-256-GCM encrypted with key = SHA-256(EXPENSES_TOKEN_PLAINTEXT).
+// Decrypted at request time using the ?key=... already supplied by the user.
+// The middleware has already verified that key, so by the time we get here it
+// must be the right one. Encrypt new tokens with scripts/encrypt-secret.mjs.
+const APIFY_TOKEN_ENC_B64 =
+  "HYO7FQHl0W3z3j6mHjFoPtXlbPPO92W5aij8pUGq/aF8UNQIvprXbXldJevR1HmXca2kC/98fEIUmAQtAErOzIeWX8CPg2h+b9o=";
+
+async function decryptWithUserKey(b64: string, userKey: string): Promise<string> {
+  const blob = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const iv = blob.slice(0, 12);
+  const ct = blob.slice(12);
+  const keyBytes = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(userKey),
+  );
+  const key = await crypto.subtle.importKey(
+    "raw",
+    keyBytes,
+    "AES-GCM",
+    false,
+    ["decrypt"],
+  );
+  const pt = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, ct);
+  return new TextDecoder().decode(pt);
+}
 
 function fetchT(url: string, init?: RequestInit, ms = PROVIDER_TIMEOUT_MS) {
   const ctrl = new AbortController();
@@ -43,14 +69,14 @@ const errorCard = (name: string, monthlyCost = 0, msg = "API failed or timed out
   ...(link ? { link } : {}),
 });
 
-async function getApify(): Promise<ProviderData> {
-  if (!APIFY_TOKEN) {
-    return errorCard("Apify", 0, "APIFY_TOKEN env var not set", "https://console.apify.com/billing");
+async function getApify(token: string): Promise<ProviderData> {
+  if (!token) {
+    return errorCard("Apify", 0, "Apify token unavailable", "https://console.apify.com/billing");
   }
   try {
     const [monthlyRes, runsRes] = await Promise.all([
-      fetchT(`https://api.apify.com/v2/users/me/usage/monthly?token=${APIFY_TOKEN}`),
-      fetchT(`https://api.apify.com/v2/actor-runs?token=${APIFY_TOKEN}&limit=1000&desc=1`),
+      fetchT(`https://api.apify.com/v2/users/me/usage/monthly?token=${token}`),
+      fetchT(`https://api.apify.com/v2/actor-runs?token=${token}&limit=1000&desc=1`),
     ]);
     if (!monthlyRes.ok) {
       return errorCard("Apify", 0, `monthly endpoint HTTP ${monthlyRes.status}`, "https://console.apify.com/billing");
@@ -523,9 +549,19 @@ async function getAWS(): Promise<ProviderData> {
   }
 }
 
-export async function GET() {
+export async function GET(req: NextRequest) {
+  const userKey = req.nextUrl.searchParams.get("key") ?? "";
+  let apifyToken = APIFY_TOKEN;
+  if (!apifyToken && userKey) {
+    try {
+      apifyToken = await decryptWithUserKey(APIFY_TOKEN_ENC_B64, userKey);
+    } catch {
+      // fall through; getApify will report the empty-token errorCard
+    }
+  }
+
   const tasks: { fn: () => Promise<ProviderData>; name: string }[] = [
-    { fn: getApify, name: "Apify" },
+    { fn: () => getApify(apifyToken), name: "Apify" },
     { fn: getOpenAI, name: "OpenAI" },
     { fn: getClaude, name: "Claude (Anthropic)" },
     { fn: getElevenLabs, name: "ElevenLabs" },
