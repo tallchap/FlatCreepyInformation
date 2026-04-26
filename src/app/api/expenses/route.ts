@@ -44,12 +44,26 @@ const errorCard = (name: string, monthlyCost = 0, msg = "API failed or timed out
 });
 
 async function getApify(): Promise<ProviderData> {
+  if (!APIFY_TOKEN) {
+    return errorCard("Apify", 0, "APIFY_TOKEN env var not set", "https://console.apify.com/billing");
+  }
   try {
     const [monthlyRes, runsRes] = await Promise.all([
       fetchT(`https://api.apify.com/v2/users/me/usage/monthly?token=${APIFY_TOKEN}`),
       fetchT(`https://api.apify.com/v2/actor-runs?token=${APIFY_TOKEN}&limit=1000&desc=1`),
     ]);
-    const monthlyData = (await monthlyRes.json()).data;
+    if (!monthlyRes.ok) {
+      return errorCard("Apify", 0, `monthly endpoint HTTP ${monthlyRes.status}`, "https://console.apify.com/billing");
+    }
+    if (!runsRes.ok) {
+      return errorCard("Apify", 0, `runs endpoint HTTP ${runsRes.status}`, "https://console.apify.com/billing");
+    }
+    const monthlyJson = await monthlyRes.json();
+    const monthlyData = monthlyJson?.data;
+    if (!monthlyData?.monthlyServiceUsage) {
+      const snippet = JSON.stringify(monthlyJson).slice(0, 100);
+      return errorCard("Apify", 0, `unexpected payload: ${snippet}`, "https://console.apify.com/billing");
+    }
     const runsData = (await runsRes.json()).data?.items || [];
 
     let total = 0;
@@ -79,7 +93,10 @@ async function getApify(): Promise<ProviderData> {
       ],
       link: "https://console.apify.com/billing",
     };
-  } catch { return errorCard("Apify"); }
+  } catch (e) {
+    const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    return errorCard("Apify", 0, msg.slice(0, 120), "https://console.apify.com/billing");
+  }
 }
 
 async function getOpenAI(): Promise<ProviderData> {
