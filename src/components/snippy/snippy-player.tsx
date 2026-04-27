@@ -26,6 +26,8 @@ export interface SnippyPlayerHandle {
   getCurrentTime: () => number;
   isPlaying: () => boolean;
   playRange: (startSec: number, endSec: number) => void;
+  getVolume: () => number;
+  setVolume: (vol: number) => void;
 }
 
 interface SnippyPlayerProps {
@@ -36,6 +38,7 @@ interface SnippyPlayerProps {
   overlays?: OverlaySettings[];
   sourceCaptions?: WordTimestamp[];
   captionStyle?: CaptionStyle;
+  playbackRate?: number;
   onTimeUpdate?: (sec: number) => void;
   onPlayingChange?: (playing: boolean) => void;
   onDurationDetected?: (sec: number) => void;
@@ -67,6 +70,7 @@ const SnippyPlayer = forwardRef<SnippyPlayerHandle, SnippyPlayerProps>(
       overlays,
       sourceCaptions,
       captionStyle,
+      playbackRate = 1,
       onTimeUpdate,
       onPlayingChange,
       onDurationDetected,
@@ -131,6 +135,8 @@ const SnippyPlayer = forwardRef<SnippyPlayerHandle, SnippyPlayerProps>(
         playerRef.current.seekTo(Math.round(startSec * FPS));
         playerRef.current.play();
       },
+      getVolume: () => playerRef.current?.getVolume() ?? 1,
+      setVolume: (vol: number) => playerRef.current?.setVolume(vol),
     }));
 
     useEffect(() => {
@@ -179,7 +185,8 @@ const SnippyPlayer = forwardRef<SnippyPlayerHandle, SnippyPlayerProps>(
           durationInFrames={durationInFrames}
           inputProps={inputProps}
           style={{ width: "100%", height: "100%" }}
-          controls
+          clickToPlay
+          playbackRate={playbackRate}
           allowFullscreen
         />
       </SnippyPlayerIframe>

@@ -10,15 +10,30 @@ import {
   forwardRef,
 } from "react";
 
+interface OverlayInfo {
+  id: string;
+  text: string;
+  startSec: number;
+  endSec: number;
+  bgColor?: string;
+}
+
 interface Props {
   duration: number;
   startSec: number | null;
   endSec: number | null;
   playheadSec: number;
+  overlays?: OverlayInfo[];
+  captionCount?: number;
   onStartChange: (sec: number) => void;
   onEndChange: (sec: number) => void;
   onSeek: (sec: number) => void;
 }
+
+const LANE_H = 32;
+const TICK_H = 28;
+const LABEL_W = 80;
+const LANE_COLORS = ["#D97757", "#4ECDC4", "#FFE66D", "#A8E6CF", "#FF6B6B"];
 
 export interface SnippyScrubberHandle {
   fit: () => void;
@@ -45,7 +60,7 @@ function chooseStepSec(visibleWindowSec: number, visiblePx: number): number {
 
 export const SnippyScrubber = forwardRef<SnippyScrubberHandle, Props>(
   function SnippyScrubber(
-    { duration, startSec, endSec, playheadSec, onStartChange, onEndChange, onSeek },
+    { duration, startSec, endSec, playheadSec, overlays = [], captionCount = 0, onStartChange, onEndChange, onSeek },
     ref
   ) {
     const outerRef = useRef<HTMLDivElement>(null);
@@ -236,6 +251,10 @@ export const SnippyScrubber = forwardRef<SnippyScrubberHandle, Props>(
     const selActive =
       startSec != null && endSec != null && endSec > startSec;
 
+    const hasCaptions = captionCount > 0;
+    const laneCount = 1 + (hasCaptions ? 1 : 0) + overlays.length;
+    const timelineH = laneCount * LANE_H + TICK_H;
+
     return (
       <div className="w-full">
         <div
@@ -245,7 +264,7 @@ export const SnippyScrubber = forwardRef<SnippyScrubberHandle, Props>(
             background: "var(--snippy-card)",
             border: "1px solid var(--snippy-border)",
             borderRadius: 12,
-            height: 68,
+            height: timelineH,
             touchAction: "pan-x",
           }}
         >
@@ -268,12 +287,58 @@ export const SnippyScrubber = forwardRef<SnippyScrubberHandle, Props>(
             onPointerUp={onPointerUp}
             onPointerCancel={onPointerUp}
           >
+            {/* Layer lanes */}
+            <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: laneCount * LANE_H, pointerEvents: "none" }}>
+              {/* Video lane */}
+              <div style={{ height: LANE_H, borderBottom: "1px solid var(--snippy-border)", display: "flex", alignItems: "center", paddingLeft: 8, fontSize: 10, color: "var(--snippy-text-secondary)" }}>
+                <span style={{ position: "sticky", left: 8, zIndex: 2, background: "var(--snippy-card)", padding: "0 4px", borderRadius: 3, fontSize: 9, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em" }}>▶ Video</span>
+                <div style={{ position: "absolute", left: secToPx(0), width: secToPx(duration) - secToPx(0), height: LANE_H - 1, background: "rgba(255,255,255,0.04)", top: 0 }} />
+              </div>
+              {/* Captions lane */}
+              {hasCaptions && (
+                <div style={{ height: LANE_H, borderBottom: "1px solid var(--snippy-border)", position: "relative" }}>
+                  <span style={{ position: "sticky", left: 8, zIndex: 2, background: "var(--snippy-card)", padding: "0 4px", borderRadius: 3, fontSize: 9, fontWeight: 600, color: "var(--snippy-text-secondary)", textTransform: "uppercase", letterSpacing: "0.05em", display: "inline-block", marginTop: 8 }}>T Captions</span>
+                  {startSec != null && endSec != null && (
+                    <div style={{ position: "absolute", left: secToPx(startSec), width: Math.max(2, secToPx(endSec) - secToPx(startSec)), height: LANE_H - 8, top: 4, background: "rgba(217,119,87,0.3)", borderRadius: 4, border: "1px solid rgba(217,119,87,0.5)" }} />
+                  )}
+                </div>
+              )}
+              {/* Overlay lanes */}
+              {overlays.map((ov, i) => (
+                <div key={ov.id} style={{ height: LANE_H, borderBottom: "1px solid var(--snippy-border)", position: "relative" }}>
+                  <span style={{ position: "sticky", left: 8, zIndex: 2, background: "var(--snippy-card)", padding: "0 4px", borderRadius: 3, fontSize: 9, fontWeight: 600, color: "var(--snippy-text-secondary)", display: "inline-block", marginTop: 8, maxWidth: 70, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>T {ov.text || `overlay ${i + 1}`}</span>
+                  <div style={{
+                    position: "absolute",
+                    left: secToPx(ov.startSec),
+                    width: Math.max(2, secToPx(ov.endSec) - secToPx(ov.startSec)),
+                    height: LANE_H - 8,
+                    top: 4,
+                    background: `${ov.bgColor || LANE_COLORS[i % LANE_COLORS.length]}44`,
+                    borderRadius: 4,
+                    border: `1px solid ${ov.bgColor || LANE_COLORS[i % LANE_COLORS.length]}88`,
+                    display: "flex",
+                    alignItems: "center",
+                    paddingLeft: 6,
+                    fontSize: 9,
+                    color: "var(--snippy-text-secondary)",
+                    overflow: "hidden",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {ov.text}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Tick marks — positioned below lanes */}
             {ticks.map((t) => (
               <div
                 key={t}
-                className="absolute top-0 bottom-0 flex flex-col items-start pl-1"
+                className="absolute flex flex-col items-start pl-1"
                 style={{
                   left: secToPx(t),
+                  top: laneCount * LANE_H,
+                  height: TICK_H,
                   pointerEvents: "none",
                   color: "var(--snippy-text-secondary)",
                 }}
@@ -281,7 +346,7 @@ export const SnippyScrubber = forwardRef<SnippyScrubberHandle, Props>(
                 <div
                   style={{
                     width: 1,
-                    height: "50%",
+                    height: 12,
                     background: "var(--snippy-border)",
                   }}
                 />

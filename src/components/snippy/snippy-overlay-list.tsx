@@ -14,6 +14,7 @@ interface Props {
   onRemove: (id: string) => void;
   onChange: (id: string, patch: Partial<OverlaySettings>) => void;
   onStartPositioning: (id: string | null) => void;
+  forceExpanded?: boolean;
 }
 
 function fmtDur(sec: number): string {
@@ -53,10 +54,10 @@ export function SnippyOverlayList({
         </div>
         <button
           onClick={onAdd}
-          className="text-[11px] px-2.5 py-1 rounded"
-          style={{ background: "var(--snippy-accent)", color: "#fff" }}
+          className="text-[12px] px-3 py-1.5 rounded font-medium"
+          style={{ background: "var(--snippy-accent)", color: "#fff", letterSpacing: "0.02em" }}
         >
-          + Add
+          + Add Text Overlay
         </button>
       </div>
 

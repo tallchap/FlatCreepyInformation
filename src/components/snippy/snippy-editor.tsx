@@ -2,8 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SnippyPlayer, type SnippyPlayerHandle } from "./snippy-player";
-import { SnippyScrubber, type SnippyScrubberHandle } from "./snippy-scrubber";
-import { SnippyClipToolbar } from "./snippy-clip-toolbar";
+import { SnippyTimeline, type SnippyTimelineHandle } from "./snippy-timeline";
 import { SnippyExportBar } from "./snippy-export-bar";
 import { SnippyBunnyPicker, type BunnyItem } from "./snippy-bunny-picker";
 import { SnippyOverlayList } from "./snippy-overlay-list";
@@ -36,7 +35,21 @@ function rebaseWordsToClip(
     .filter((w) => w.end > w.start && w.text.trim().length > 0);
 }
 
-export function SnippyEditor() {
+interface SnippyEditorProps {
+  clipVideoGuid?: string;
+  clipInSec?: number;
+  clipOutSec?: number;
+  autoTranscribe?: boolean;
+  hideMarks?: boolean;
+}
+
+export function SnippyEditor({
+  clipVideoGuid,
+  clipInSec,
+  clipOutSec,
+  autoTranscribe = false,
+  hideMarks = false,
+}: SnippyEditorProps = {}) {
   const [bunnyVideo, setBunnyVideo] = useState<BunnyItem | null>(null);
   const [sourceCollapsed, setSourceCollapsed] = useState(false);
   const [totalDuration, setTotalDuration] = useState(0);
@@ -58,10 +71,17 @@ export function SnippyEditor() {
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<string[]>([]);
   const debugLogsRef = useRef<HTMLPreElement>(null);
+  const [playbackRate, setPlaybackRate] = useState(1);
+  const [volume, setVolume] = useState(1);
+  const [captionStyleOpen, setCaptionStyleOpen] = useState(false);
+  const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
+  const [transcriptWidth, setTranscriptWidth] = useState(260);
+  const [timelineHeight, setTimelineHeight] = useState(160);
+  const [rightPanelWidth, setRightPanelWidth] = useState(320);
 
   const playerRef = useRef<SnippyPlayerHandle>(null);
   const playerWrapRef = useRef<HTMLDivElement>(null);
-  const scrubberRef = useRef<SnippyScrubberHandle>(null);
+  const timelineRef = useRef<SnippyTimelineHandle>(null);
 
   const videoUrl = bunnyVideo
     ? `/api/bunny-proxy?src=${encodeURIComponent(bunnyVideo.mp4Url || "")}`
@@ -111,7 +131,7 @@ export function SnippyEditor() {
     playerRef.current?.playRange(startSec!, endSec!);
   }, [selectionValid, startSec, endSec]);
 
-  const fitScrubber = useCallback(() => scrubberRef.current?.fit(), []);
+  const fitScrubber = useCallback(() => timelineRef.current?.fit(), []);
   const clearSelection = useCallback(() => {
     setStartSec(null);
     setEndSec(null);
@@ -161,6 +181,34 @@ export function SnippyEditor() {
     setTranscribeStatus("");
     setExportStatus("");
   }, []);
+
+  // Auto-load video + set clip range when coming from clip selector (Step 1)
+  useEffect(() => {
+    if (!clipVideoGuid) return;
+    fetch(`/api/bunny/videos?itemsPerPage=100`)
+      .then((r) => r.json())
+      .then((data) => {
+        const video = (data.items || []).find((v: BunnyItem) => v.guid === clipVideoGuid);
+        if (video) {
+          handlePickBunny(video);
+          if (clipInSec != null && clipOutSec != null && clipOutSec > clipInSec) {
+            setTimeout(() => {
+              setStartSec(clipInSec);
+              setEndSec(clipOutSec);
+              setPlayheadSec(clipInSec);
+            }, 500);
+          }
+        }
+      })
+      .catch(() => {});
+  }, [clipVideoGuid, clipInSec, clipOutSec, handlePickBunny]);
+
+  // Auto-transcribe when clip is loaded from Step 1
+  useEffect(() => {
+    if (!autoTranscribe || !bunnyVideo || !selectionValid || sourceCaptions.length > 0) return;
+    const timer = setTimeout(() => handleTranscribe(), 1500);
+    return () => clearTimeout(timer);
+  }, [autoTranscribe, bunnyVideo, selectionValid, sourceCaptions.length]);
 
   const handleDurationDetected = useCallback((d: number) => {
     if (!d || !isFinite(d)) return;
@@ -405,13 +453,99 @@ export function SnippyEditor() {
       />
 
       {bunnyVideo && videoUrl && (
-        <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1.5fr)_minmax(380px,1fr)] gap-4 items-start">
-          {/* LEFT — player + scrubber + clip toolbar, stays visible (sticky) */}
+        <>
+        {/* Top area: Transcript | resize | Video | resize | Right panel */}
+        <div className="flex" style={{ minHeight: 200, overflow: "hidden" }}>
+          {/* LEFT — Transcript word list only */}
           <div
-            className="space-y-3 lg:sticky lg:self-start"
-            style={{ top: 16 }}
+            className="snippy-card overflow-y-auto flex-shrink-0"
+            style={{ width: transcriptWidth, maxHeight: "60vh" }}
           >
-            <div ref={playerWrapRef} className="relative">
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-semibold" style={{ color: "var(--snippy-text)" }}>Transcript</h3>
+              <button
+                onClick={handleTranscribe}
+                disabled={transcribing}
+                className="text-[10px] px-2 py-0.5 rounded"
+                style={{
+                  background: "var(--snippy-accent)",
+                  color: "#fff",
+                  opacity: transcribing ? 0.5 : 1,
+                  cursor: transcribing ? "not-allowed" : "pointer",
+                }}
+              >
+                {transcribing ? "…" : sourceWordCount ? "Re-transcribe" : "Transcribe"}
+              </button>
+            </div>
+            {transcribeStatus && (
+              <div className="mb-2 px-2 py-1 rounded" style={{ fontSize: 10, color: transcribeStatus.startsWith("Error") ? "#b94a2e" : "var(--snippy-text-secondary)", background: transcribeStatus.startsWith("Error") ? "rgba(185,74,46,0.08)" : "var(--snippy-canvas)", border: `1px solid ${transcribeStatus.startsWith("Error") ? "rgba(185,74,46,0.3)" : "var(--snippy-border)"}` }}>
+                {transcribeStatus}
+              </div>
+            )}
+            {sourceCaptions.length > 0 ? (
+              <CaptionWordList
+                sourceCaptions={sourceCaptions}
+                startSec={startSec}
+                endSec={endSec}
+                playheadSec={playheadSec}
+                onWordEdit={(index, text) =>
+                  setSourceCaptions((prev) =>
+                    prev.map((w, i) => (i === index ? { ...w, text } : w))
+                  )
+                }
+                onWordDelete={(index) =>
+                  setSourceCaptions((prev) => prev.filter((_, i) => i !== index))
+                }
+                onWordSeek={(sourceSec) =>
+                  playerRef.current?.seekTo(sourceSec)
+                }
+              />
+            ) : (
+              <div
+                className="text-center py-8"
+                style={{ fontSize: 11, color: "var(--snippy-text-secondary)", opacity: 0.6 }}
+              >
+                No transcript yet. Mark IN/OUT and transcribe.
+              </div>
+            )}
+          </div>
+
+          {/* Vertical resize handle (transcript width) */}
+          <div
+            style={{
+              width: 12,
+              cursor: "col-resize",
+              background: "rgba(0,0,0,0.06)",
+              flexShrink: 0,
+              transition: "background 0.15s",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column" as const,
+              gap: 2,
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = transcriptWidth;
+              const onMove = (ev: MouseEvent) => {
+                setTranscriptWidth(Math.max(180, Math.min(500, startW + ev.clientX - startX)));
+              };
+              const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+              document.addEventListener("mousemove", onMove);
+              document.addEventListener("mouseup", onUp);
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(217,119,87,0.25)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(0,0,0,0.06)"; }}
+          >
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+          </div>
+
+          {/* CENTER — Video Player */}
+          <div className="flex-1" style={{ minWidth: 0, overflow: "hidden" }}>
+            <div ref={playerWrapRef} className="relative" style={{ width: "100%", overflow: "hidden" }}>
               <SnippyPlayer
                 ref={playerRef}
                 videoUrl={videoUrl}
@@ -421,13 +555,14 @@ export function SnippyEditor() {
                 overlays={overlays}
                 sourceCaptions={captionsEnabled ? sourceCaptions : []}
                 captionStyle={captionStyle}
+                playbackRate={playbackRate}
                 onTimeUpdate={setPlayheadSec}
                 onPlayingChange={setIsPlaying}
                 onDurationDetected={handleDurationDetected}
               />
               {positioningOverlay && (
                 <PositioningLayer
-                  label={`overlay “${positioningOverlay.text || "overlay"}”`}
+                  label={`overlay "${positioningOverlay.text || "overlay"}"`}
                   x={positioningOverlay.xPct}
                   y={positioningOverlay.yPct}
                   wrapRef={playerWrapRef}
@@ -450,57 +585,52 @@ export function SnippyEditor() {
                 />
               )}
             </div>
-
-            <SnippyScrubber
-              ref={scrubberRef}
-              duration={totalDuration || bunnyVideo.length || 60}
-              startSec={startSec}
-              endSec={endSec}
-              playheadSec={playheadSec}
-              onStartChange={(s) =>
-                setStartSec(
-                  endSec != null && s >= endSec ? endSec - 0.1 : s
-                )
-              }
-              onEndChange={(s) =>
-                setEndSec(startSec != null && s <= startSec ? startSec + 0.1 : s)
-              }
-              onSeek={(s) => {
-                setPlayheadSec(s);
-                playerRef.current?.seekTo(s);
-              }}
-            />
-
-            <SnippyClipToolbar
-              duration={totalDuration}
-              startSec={startSec}
-              endSec={endSec}
-              playheadSec={playheadSec}
-              onMarkIn={markIn}
-              onMarkOut={markOut}
-              onJumpIn={jumpIn}
-              onJumpOut={jumpOut}
-              onPlaySelection={playSelection}
-              onFit={fitScrubber}
-              onClear={clearSelection}
-              onStartSec={(sec) => {
-                const clamped =
-                  endSec != null && sec >= endSec ? endSec - 0.1 : Math.max(0, sec);
-                setStartSec(clamped);
-                playerRef.current?.seekTo(clamped);
-              }}
-              onEndSec={(sec) => {
-                const clamped =
-                  startSec != null && sec <= startSec
-                    ? startSec + 0.1
-                    : Math.min(totalDuration, sec);
-                setEndSec(clamped);
-              }}
-            />
           </div>
 
-          {/* RIGHT — controls sidebar, scrolls independently */}
-          <div className="space-y-3">
+          {/* Vertical resize handle (right panel) */}
+          <div
+            style={{
+              width: 12,
+              cursor: "col-resize",
+              background: "rgba(0,0,0,0.06)",
+              flexShrink: 0,
+              transition: "background 0.15s",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexDirection: "column" as const,
+              gap: 2,
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              const startX = e.clientX;
+              const startW = rightPanelWidth;
+              const onMove = (ev: MouseEvent) => {
+                setRightPanelWidth(Math.max(260, Math.min(500, startW - (ev.clientX - startX))));
+              };
+              const onUp = () => { document.removeEventListener("mousemove", onMove); document.removeEventListener("mouseup", onUp); };
+              document.addEventListener("mousemove", onMove);
+              document.addEventListener("mouseup", onUp);
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(217,119,87,0.25)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(0,0,0,0.06)"; }}
+          >
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+            <div style={{ width: 4, height: 4, borderRadius: "50%", background: "rgba(0,0,0,0.2)" }} />
+          </div>
+
+          {/* RIGHT — Overlays + Captions styling + Export */}
+          <div className="flex-shrink-0 space-y-3 overflow-y-auto" style={{ width: rightPanelWidth, maxHeight: "60vh" }}>
+            <SnippyOverlayList
+              overlays={overlays}
+              clipDurationSec={clipDurationSec || 10}
+              positioningId={positioningId}
+              onAdd={handleAddOverlay}
+              onRemove={handleRemoveOverlay}
+              onChange={handleOverlayChange}
+              onStartPositioning={setPositioningId}
+            />
             <CaptionsPanel
               sourceCaptions={sourceCaptions}
               sourceWordCount={sourceWordCount}
@@ -533,18 +663,10 @@ export function SnippyEditor() {
               onWordSeek={(sourceSec) =>
                 playerRef.current?.seekTo(sourceSec)
               }
+              styleOpen={captionStyleOpen}
+              onStyleToggle={() => setCaptionStyleOpen((v) => !v)}
+              hideWordList
             />
-
-            <SnippyOverlayList
-              overlays={overlays}
-              clipDurationSec={clipDurationSec || 10}
-              positioningId={positioningId}
-              onAdd={handleAddOverlay}
-              onRemove={handleRemoveOverlay}
-              onChange={handleOverlayChange}
-              onStartPositioning={setPositioningId}
-            />
-
             <SnippyExportBar
               selectionValid={selectionValid && !clipTooLong}
               clipDurationSec={clipDurationSec}
@@ -560,6 +682,43 @@ export function SnippyEditor() {
             />
           </div>
         </div>
+
+
+        {/* Timeline — full width below */}
+        <div>
+          <SnippyTimeline
+            ref={timelineRef}
+            duration={hideMarks && clipDurationSec > 0 ? clipDurationSec : (totalDuration || bunnyVideo.length || 60)}
+            startSec={hideMarks ? null : startSec}
+            endSec={hideMarks ? null : endSec}
+            playheadSec={hideMarks && startSec != null ? playheadSec - startSec : playheadSec}
+            isPlaying={isPlaying}
+            overlays={overlays}
+            captionCount={sourceCaptions.length}
+            selectedLayerId={selectedLayerId}
+            playbackRate={playbackRate}
+            volume={volume}
+            laneAreaHeight={timelineHeight}
+            onStartChange={(s) => setStartSec(endSec != null && s >= endSec ? endSec - 0.1 : s)}
+            onEndChange={(s) => setEndSec(startSec != null && s <= startSec ? startSec + 0.1 : s)}
+            onSeek={(s) => {
+              const abs = hideMarks && startSec != null ? s + startSec : s;
+              setPlayheadSec(abs);
+              playerRef.current?.seekTo(abs);
+            }}
+            onMarkIn={markIn}
+            onMarkOut={markOut}
+            onTogglePlay={() => playerRef.current?.toggle()}
+            onPlaybackRateChange={setPlaybackRate}
+            onVolumeChange={(v) => { setVolume(v); playerRef.current?.setVolume(v); }}
+            onLayerSelect={setSelectedLayerId}
+            onFit={() => {}}
+            hideMarks={hideMarks}
+            onOverlayTimingChange={(id, s, e) => handleOverlayChange(id, { startSec: s, endSec: e })}
+            videoUrl={videoUrl}
+          />
+        </div>
+        </>
       )}
 
       {bunnyVideo && videoUrl && (
@@ -735,6 +894,10 @@ function CaptionsPanel({
   onWordEdit,
   onWordDelete,
   onWordSeek,
+  styleOpen,
+  onStyleToggle,
+  hideWordList = false,
+  hideHeader = false,
 }: {
   sourceCaptions: WordTimestamp[];
   sourceWordCount: number;
@@ -755,18 +918,23 @@ function CaptionsPanel({
   onWordEdit: (sourceIndex: number, text: string) => void;
   onWordDelete: (sourceIndex: number) => void;
   onWordSeek: (sourceSec: number) => void;
+  styleOpen: boolean;
+  onStyleToggle: () => void;
+  hideWordList?: boolean;
+  hideHeader?: boolean;
 }) {
   const isError = status.startsWith("Error");
 
   return (
-    <div className="snippy-card">
-      <div className="flex items-center justify-between mb-3">
+    <div className={hideHeader ? "" : "snippy-card"}>
+      {!hideHeader && <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <h3
             className="text-sm font-semibold"
-            style={{ color: "var(--snippy-text)" }}
+            style={{ color: "var(--snippy-text)", cursor: "pointer" }}
+            onClick={onStyleToggle}
           >
-            Captions
+            {styleOpen ? "▼" : "▶"} Captions
           </h3>
           <label
             className="flex items-center gap-1 cursor-pointer"
@@ -806,9 +974,9 @@ function CaptionsPanel({
             ? "Re-transcribe"
             : "Transcribe"}
         </button>
-      </div>
+      </div>}
 
-      {status && (
+      {status && !hideHeader && (
         <div
           className="mb-2 px-2 py-1 rounded"
           style={{
@@ -826,6 +994,7 @@ function CaptionsPanel({
         </div>
       )}
 
+      {styleOpen && (<>
       <div className="flex items-center gap-2 mb-2">
         <button
           onClick={onStartPositioning}
@@ -972,8 +1141,9 @@ function CaptionsPanel({
           </>
         )}
       </div>
+      </>)}
 
-      {sourceCaptions.length > 0 && (
+      {!hideWordList && sourceCaptions.length > 0 && (
         <div
           className="mt-3 pt-3"
           style={{ borderTop: "1px solid var(--snippy-border)" }}
