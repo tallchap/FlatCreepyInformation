@@ -197,10 +197,19 @@ export async function POST(request: Request) {
     startSec?: number;
     endSec?: number;
   };
-  const { videoUrl, startSec, endSec } = body;
+  let { videoUrl, startSec, endSec } = body;
 
   if (!videoUrl) {
     return NextResponse.json({ error: "Missing videoUrl" }, { status: 400 });
+  }
+
+  // Extract actual Bunny CDN URL if client sent a proxy path like /api/bunny-proxy?src=...
+  if (videoUrl.startsWith("/api/bunny-proxy")) {
+    try {
+      const proxyUrl = new URL(videoUrl, "https://placeholder.com");
+      const realSrc = proxyUrl.searchParams.get("src");
+      if (realSrc) videoUrl = realSrc;
+    } catch {}
   }
 
   const range =
