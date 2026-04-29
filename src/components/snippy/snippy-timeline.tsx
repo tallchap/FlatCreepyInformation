@@ -55,7 +55,7 @@ const MAX_ZOOM = 30;
 const LANE_H = 32;
 const VIDEO_LANE_H = 56;
 const RULER_H = 24;
-const TRANSPORT_H = 36;
+const TRANSPORT_H = 40;
 const SPEEDS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 const LANE_COLORS = ["#D97757", "#4ECDC4", "#FFE66D", "#A8E6CF", "#FF6B6B"];
 
@@ -252,15 +252,22 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
     const selActive = startSec != null && endSec != null && endSec > startSec;
     const clipDuration = selActive ? endSec! - startSec! : 0;
 
-    const btnStyle = {
-      fontSize: 11,
-      padding: "3px 8px",
+    const btnBase = {
+      fontSize: 10,
+      padding: "4px 7px",
       background: "transparent",
       border: "1px solid var(--snippy-border)",
-      borderRadius: 4,
+      borderRadius: 5,
       color: "var(--snippy-text-secondary)",
       cursor: "pointer",
+      lineHeight: 1,
+      whiteSpace: "nowrap" as const,
+      fontWeight: 500,
     } as const;
+    const btnPrimary = { ...btnBase, background: "var(--snippy-accent, #D97757)", color: "#fff", border: "none" } as const;
+    const btnSecondary = { ...btnBase, background: "rgba(74,124,89,0.85)", color: "#fff", border: "none" } as const;
+    const btnGhost = { ...btnBase, fontSize: 9, padding: "3px 5px" } as const;
+    const btnStyle = btnBase;
 
     const zoomCenter = () => {
       if (!outerRef.current) return duration / 2;
@@ -292,20 +299,20 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
           }}
         >
           {!hideMarks && (<>
-            <button onClick={onMarkIn} style={{ ...btnStyle, background: "#A0522D", color: "#fff", border: "none" }} title="Mark IN (I)">[ Mark IN</button>
-            <button onClick={onMarkOut} style={{ ...btnStyle, background: "#A0522D", color: "#fff", border: "none" }} title="Mark OUT (O)">Mark OUT ]</button>
-            <div style={{ width: 1, height: 16, background: "var(--snippy-border)", margin: "0 4px" }} />
+            <button onClick={onMarkIn} style={btnPrimary} title="Mark IN at playhead (I)">Mark IN</button>
+            <button onClick={onMarkOut} style={btnPrimary} title="Mark OUT at playhead (O)">Mark OUT</button>
+            <div style={{ width: 1, height: 14, background: "var(--snippy-border)", margin: "0 2px" }} />
           </>)}
 
           <button
             onClick={() => { if (startSec != null) { onSeek(startSec); } }}
             disabled={startSec == null}
-            style={{ ...btnStyle, background: "#4A7C59", color: "#fff", border: "none", opacity: startSec == null ? 0.3 : 1, cursor: startSec == null ? "not-allowed" : "pointer" }}
+            style={{ ...btnSecondary, opacity: startSec == null ? 0.3 : 1, cursor: startSec == null ? "not-allowed" : "pointer" }}
             title="Jump to Mark IN"
           >⇤ Start</button>
           <button
             onClick={onTogglePlay}
-            style={{ ...btnStyle, background: "#4A7C59", color: "#fff", border: "none" }}
+            style={{ ...btnSecondary, padding: "4px 9px" }}
             title={isPlaying ? "Pause (Space)" : "Play (Space)"}
           >
             {isPlaying ? "⏸" : "▶"}
@@ -313,34 +320,33 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
           <button
             onClick={() => { if (endSec != null) { onSeek(Math.max(0, endSec - 3)); } }}
             disabled={endSec == null}
-            style={{ ...btnStyle, background: "#4A7C59", color: "#fff", border: "none", opacity: endSec == null ? 0.3 : 1, cursor: endSec == null ? "not-allowed" : "pointer" }}
+            style={{ ...btnSecondary, opacity: endSec == null ? 0.3 : 1, cursor: endSec == null ? "not-allowed" : "pointer" }}
             title="Play last 3s before Mark OUT"
           >Last 3s ⇥</button>
 
-          <div style={{ width: 1, height: 16, background: "var(--snippy-border)", margin: "0 2px" }} />
+          <div style={{ width: 1, height: 14, background: "var(--snippy-border)", margin: "0 2px" }} />
 
-          {/* Seek arrows */}
           <button
             onClick={() => onSeek(Math.max(0, playheadSec - 5))}
-            style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)" }}
+            style={btnBase}
             title="Rewind 5s (←)"
           >← 5s</button>
           <button
             onClick={() => onSeek(Math.min(duration, playheadSec + 5))}
-            style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)" }}
+            style={btnBase}
             title="Forward 5s (→)"
           >5s →</button>
 
           {!hideMarks && startSec != null && (<>
-            <div style={{ width: 1, height: 16, background: "var(--snippy-border)", margin: "0 2px" }} />
+            <div style={{ width: 1, height: 14, background: "var(--snippy-border)", margin: "0 2px" }} />
             <button
               onClick={() => onStartChange(Math.max(0, startSec - 1/30))}
-              style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)", fontSize: 9 }}
+              style={btnGhost}
               title="Nudge IN left 1 frame"
             >◀ IN</button>
             <button
               onClick={() => onStartChange(Math.min(endSec ?? duration, startSec + 1/30))}
-              style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)", fontSize: 9 }}
+              style={btnGhost}
               title="Nudge IN right 1 frame"
             >IN ▶</button>
           </>)}
@@ -348,12 +354,12 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
           {!hideMarks && endSec != null && (<>
             <button
               onClick={() => onEndChange(Math.max(startSec ?? 0, endSec - 1/30))}
-              style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)", fontSize: 9 }}
+              style={btnGhost}
               title="Nudge OUT left 1 frame"
             >◀ OUT</button>
             <button
               onClick={() => onEndChange(Math.min(duration, endSec + 1/30))}
-              style={{ ...btnStyle, background: "var(--snippy-canvas)", border: "1px solid var(--snippy-border)", fontSize: 9 }}
+              style={btnGhost}
               title="Nudge OUT right 1 frame"
             >OUT ▶</button>
           </>)}
@@ -379,7 +385,7 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
               if (idx > 0) onPlaybackRateChange(SPEEDS[idx - 1]);
             }}
             disabled={SPEEDS.indexOf(playbackRate) <= 0}
-            style={{ ...btnStyle, fontSize: 9, padding: "2px 5px", opacity: SPEEDS.indexOf(playbackRate) <= 0 ? 0.3 : 1 }}
+            style={{ ...btnGhost, opacity: SPEEDS.indexOf(playbackRate) <= 0 ? 0.3 : 1 }}
             title="Slower"
           >◀</button>
           <span style={{ fontSize: 10, color: "var(--snippy-text)", fontVariantNumeric: "tabular-nums", minWidth: 28, textAlign: "center" as const, fontWeight: 600 }}>{playbackRate}×</span>
@@ -389,7 +395,7 @@ export const SnippyTimeline = forwardRef<SnippyTimelineHandle, Props>(
               if (idx < SPEEDS.length - 1) onPlaybackRateChange(SPEEDS[idx + 1]);
             }}
             disabled={SPEEDS.indexOf(playbackRate) >= SPEEDS.length - 1}
-            style={{ ...btnStyle, fontSize: 9, padding: "2px 5px", opacity: SPEEDS.indexOf(playbackRate) >= SPEEDS.length - 1 ? 0.3 : 1 }}
+            style={{ ...btnGhost, opacity: SPEEDS.indexOf(playbackRate) >= SPEEDS.length - 1 ? 0.3 : 1 }}
             title="Faster"
           >▶</button>
 

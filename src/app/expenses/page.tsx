@@ -19,13 +19,7 @@ export default function ExpenseDashboard() {
   async function loadAll() {
     setLoading(true);
     try {
-      const key =
-        typeof window !== "undefined"
-          ? new URLSearchParams(window.location.search).get("key") || ""
-          : "";
-      const res = await fetch(
-        `/api/expenses${key ? `?key=${encodeURIComponent(key)}` : ""}`
-      );
+      const res = await fetch("/api/expenses");
       const data = await res.json();
       setProviders(data.providers);
       setLastUpdated(new Date().toLocaleString());
