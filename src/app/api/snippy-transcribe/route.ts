@@ -203,13 +203,12 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Missing videoUrl" }, { status: 400 });
   }
 
-  // Extract actual Bunny CDN URL if client sent a proxy path like /api/bunny-proxy?src=...
-  if (videoUrl.startsWith("/api/bunny-proxy")) {
-    try {
-      const proxyUrl = new URL(videoUrl, "https://placeholder.com");
-      const realSrc = proxyUrl.searchParams.get("src");
-      if (realSrc) videoUrl = realSrc;
-    } catch {}
+  // If client sent a relative proxy path like /api/bunny-proxy?src=..., make it absolute
+  // so ffmpeg can fetch it as an HTTP URL (Bunny CDN requires auth via the proxy)
+  if (videoUrl.startsWith("/api/")) {
+    const host = request.headers.get("host") || "www.snippysaurus.com";
+    const proto = request.headers.get("x-forwarded-proto") || "https";
+    videoUrl = `${proto}://${host}${videoUrl}`;
   }
 
   const range =
