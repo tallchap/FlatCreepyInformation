@@ -12,7 +12,7 @@ Usage:
 
 Config — environment variables win; otherwise the first .env.local found in
 SNIPPY_ENV_FILE, the repo root (../../.env.local), or the canonical
-snippysaurus-live checkout is parsed:
+FlatCreepyInformation checkout is parsed:
   YOUTUBE_API_KEY                      YouTube Data API v3 key (~2 quota units / 100 videos)
   GOOGLE_APPLICATION_CREDENTIALS_JSON  service-account JSON with Editor on the sheet
   SNIPPY_SHEET_ID                      id of the tracking sheet ("Snippysaurus YT Home")
@@ -36,7 +36,7 @@ HERE = Path(__file__).resolve().parent
 ENV_CANDIDATES = [
     os.environ.get('SNIPPY_ENV_FILE'),
     HERE.parents[1] / '.env.local',                                   # repo root
-    Path.home() / 'Desktop/ClaudeCode/snippysaurus-live/.env.local',  # canonical checkout
+    Path.home() / 'Desktop/ClaudeCode/FlatCreepyInformation/.env.local',  # canonical checkout
 ]
 
 

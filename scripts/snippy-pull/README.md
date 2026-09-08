@@ -45,7 +45,7 @@ expires, sign in again through `launch.mjs`.
 
 `enrich-append.py` reads these from the environment, else from the first
 `.env.local` it finds (`SNIPPY_ENV_FILE`, the repo root, or
-`~/Desktop/ClaudeCode/snippysaurus-live/.env.local`):
+`~/Desktop/ClaudeCode/FlatCreepyInformation/.env.local`):
 
 | Var | Purpose |
 |-----|---------|

@@ -15,13 +15,13 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 /**
  * Load the first existing .env.local into process.env (never overriding what
  * is already set). Same search order as enrich-append.py: SNIPPY_ENV_FILE, the
- * repo root, then the canonical snippysaurus-live checkout.
+ * repo root, then the canonical FlatCreepyInformation checkout.
  */
 export function loadEnv() {
   const candidates = [
     process.env.SNIPPY_ENV_FILE,
     path.resolve(HERE, '..', '..', '..', '.env.local'),
-    path.join(os.homedir(), 'Desktop', 'ClaudeCode', 'snippysaurus-live', '.env.local'),
+    path.join(os.homedir(), 'Desktop', 'ClaudeCode', 'FlatCreepyInformation', '.env.local'),
   ].filter(Boolean);
   for (const file of candidates) {
     if (!fs.existsSync(file)) continue;
