@@ -1,0 +1,18 @@
+{
+  "name": "snippy-pull",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Snapshot the snippysaurus YouTube sandbox Home feed into the tracking Google Sheet",
+  "scripts": {
+    "launch": "node launch.mjs",
+    "check": "node check-signed-in.mjs",
+    "history": "node check-history.mjs",
+    "scrape": "node scrape-home.mjs",
+    "watch": "node watch.mjs",
+    "pull": "./pull.sh"
+  },
+  "dependencies": {
+    "playwright-core": "^1.63.0"
+  }
+}
