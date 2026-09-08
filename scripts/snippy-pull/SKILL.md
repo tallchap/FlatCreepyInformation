@@ -1,0 +1,59 @@
+---
+name: snippy-pull
+description: >
+  Pull a snapshot of the snippysaurus YouTube sandbox Home feed: scrape 100
+  full videos (no Shorts, no ads) in feed order, enrich via YouTube Data API,
+  append as a new tab in the tracking Google Sheet. Also seeds watch history.
+  Use when: "snippy-pull", "snippy pull", "snapshot the feed", "snapshot
+  youtube homepage", "new run of the spreadsheet", "pull the snippysaurus feed",
+  "seed the snippysaurus account", "watch these on snippysaurus".
+---
+
+# /snippy-pull — Home-feed snapshot for the snippysaurus sandbox
+
+A dedicated sandbox Google account (identity in `.env.local`: `SNIPPY_ACCOUNT_EMAIL`,
+`SNIPPY_ACCOUNT_NAME`) watches AI-safety videos so its Home feed reflects what YouTube shows an AI-safety viewer. This
+skill pulls one snapshot of that feed into the tracking sheet, or seeds the
+account's watch history. Full docs: `README.md` next to this file.
+
+Canonical source: `tallchap/FlatCreepyInformation` → `scripts/snippy-pull/`.
+
+**Tracking sheet:** "Snippysaurus YT Home", id in `SNIPPY_SHEET_ID` — one tab per
+pull; `enrich-append.py` prints the tab URL.
+
+## Snapshot (the default request)
+
+Run from this skill's directory (`<skill-dir>`):
+
+1. First time on a machine: `npm install` (playwright-core, uses installed Chrome)
+   and `pip3 install -r requirements.txt`.
+2. `./pull.sh [suffix] --open` — does all of:
+   - kills a lingering `launch.mjs`, since only one Playwright instance can
+     drive the profile;
+   - `node check-signed-in.mjs` — exits 1 if signed out, 2 if signed in as the
+     wrong account. **On exit 1, stop and ask Ori to re-sign-in via
+     `node launch.mjs`** (password is not stored). On exit 2, stop — never pull
+     under another account.
+   - `node scrape-home.mjs` → `runs/yt-home-<date>.json` (100 non-Shorts,
+     non-ad videos in feed order; ~30 s, headed);
+   - `python3 enrich-append.py <json> [suffix]` → new tab
+     `Run N — YYYY-MM-DD[ suffix]` with rank, published (exact ISO), channel,
+     title, description, duration (`[h]:mm:ss`), views, url, channel_url.
+3. Report the tab URL and row count (open it — `--open` does). If asked how the
+   feed shifted, diff video ids against the previous tab and summarize turnover
+   and notable arrivals.
+
+## Seeding watch history
+
+`node watch.mjs --seconds 60 <url-or-id>...` (or `--file seeds.txt`). Only
+AI-safety-adjacent videos — anything else contaminates the sandbox. The script
+waits out pre-roll ads before timing, because the playhead advances during ads
+and then resets. Check `node check-history.mjs` first if a seed run registers
+nothing.
+
+## Wiring
+- Env: `YOUTUBE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS_JSON`, `SNIPPY_SHEET_ID`,
+  `SNIPPY_ACCOUNT_EMAIL`, `SNIPPY_ACCOUNT_NAME` from the repo root `.env.local` (or `~/Desktop/ClaudeCode/snippysaurus-live/.env.local`,
+  or `SNIPPY_ENV_FILE`).
+- Chrome profile: `~/chrome-profiles/snippysaurus` (`SNIPPY_PROFILE_DIR`).
+  Machine-local, never committed.
