@@ -53,7 +53,7 @@ nothing.
 
 ## Wiring
 - Env: `YOUTUBE_API_KEY`, `GOOGLE_APPLICATION_CREDENTIALS_JSON`, `SNIPPY_SHEET_ID`,
-  `SNIPPY_ACCOUNT_EMAIL`, `SNIPPY_ACCOUNT_NAME` from the repo root `.env.local` (or `~/Desktop/ClaudeCode/snippysaurus-live/.env.local`,
+  `SNIPPY_ACCOUNT_EMAIL`, `SNIPPY_ACCOUNT_NAME` from the repo root `.env.local` (or `~/Desktop/ClaudeCode/FlatCreepyInformation/.env.local`,
   or `SNIPPY_ENV_FILE`).
 - Chrome profile: `~/chrome-profiles/snippysaurus` (`SNIPPY_PROFILE_DIR`).
   Machine-local, never committed.
