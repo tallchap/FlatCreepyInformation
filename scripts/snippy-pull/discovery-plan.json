@@ -1,0 +1,60 @@
+{
+  "edition": "2026-09-09",
+  "youtube_priority": "Dedicated Snippysaurus Home first, then original YouTube interviews/talks. X and web provide news pegs and source trails.",
+  "youtube_recent_after": "2026-08-15T00:00:00Z",
+  "youtube_duration": "long",
+  "exclude_shorts": true,
+  "youtube_queries": [
+    "Ajeya Cotra Dwarkesh warning shot", "Hugging Face attack AI safety original interview",
+    "Yoshua Bengio AI safety control interview", "Geoffrey Hinton AI control interview",
+    "Dario Amodei AI safety interview", "Stuart Russell superintelligence control interview",
+    "Daniel Kokotajlo Thomas Larsen AI control", "David Krueger AI safety interview",
+    "Helen Toner AI safety interview", "Connor Leahy AI takeover interview",
+    "Max Tegmark superintelligence regulation", "Roman Yampolskiy AI control interview",
+    "Volker Turk artificial intelligence human rights council", "Alex Sobel superintelligence bill",
+    "Jakub Pachocki alien mind interview", "Jacob Tsimerman MAISI AI safety",
+    "METR AI autonomy evaluation", "Apollo Research AI scheming interview",
+    "Tristan Harris artificial intelligence safety interview", "AI safety congressional hearing testimony"
+  ],
+  "youtube_archive_queries": [
+    "Ajeya Cotra AI takeover warning shot", "Yoshua Bengio AI self preservation",
+    "Stuart Russell AI control shutdown", "Geoffrey Hinton extinction control"
+  ],
+  "web_queries": [
+    "site:dwarkesh.com Ajeya Cotra warning shot", "site:dwarkesh.com Hugging Face attack",
+    "site:ohchr.org September 2026 artificial intelligence Turk",
+    "site:parliament.uk Alex Sobel superintelligence September 2026",
+    "site:controlai.com September 2026 superintelligence bill",
+    "site:openai.com An Alien Mind Pachocki September 2026",
+    "site:metr.org September 2026 autonomy evaluation", "site:apolloresearch.ai scheming September 2026",
+    "site:anthropic.com September 2026 alignment safety",
+    "David Krueger Smart Cookies podcast September 2026",
+    "Helen Toner Machine Learning Street Talk September 2026",
+    "Yoshua Bengio AI control September 2026 interview",
+    "site:youtube.com/watch Ajeya Cotra warning shot",
+    "site:youtube.com/watch AI safety original interview September 2026",
+    "site:un.org Volker Turk AI September 7 2026 video",
+    "site:grabien.com September 2026 AI superintelligence"
+  ],
+  "web_video_queries": [
+    "Ajeya Cotra Dwarkesh warning shot", "David Krueger Smart Cookies AI",
+    "Helen Toner Machine Learning Street Talk", "Volker Turk AI human rights September 2026",
+    "Yoshua Bengio AI control interview September 2026", "Alex Sobel superintelligence bill video"
+  ],
+  "twitter_queries": [
+    "(from:ControlAI OR from:PauseAI) filter:videos",
+    "(from:smartcookiespod OR from:MTSlive) (AI OR intelligence OR control)",
+    "(from:andreamiotti OR from:AndrewCritchPhD OR from:Jacob_Tsimerman) (AI OR superintelligence)",
+    "(from:Reuters OR from:UN_News_Centre) (AI OR \"artificial intelligence\") filter:videos",
+    "(\"Ajeya Cotra\" OR \"Yoshua Bengio\") (interview OR warns OR control OR safety)",
+    "(\"Geoffrey Hinton\" OR \"Stuart Russell\") (control OR extinction OR interview)",
+    "(\"David Krueger\" OR \"Helen Toner\") (podcast OR interview OR safety)",
+    "(\"Daniel Kokotajlo\" OR \"Thomas Larsen\" OR \"Connor Leahy\") filter:videos",
+    "(\"Hugging Face\" OR \"warning shot\") (AI OR OpenAI OR Cotra)",
+    "(AI OR OpenAI OR Anthropic OR \"artificial intelligence\") (scheming OR deception OR \"loss of control\") (interview OR talk OR video)",
+    "(\"superintelligence bill\" OR \"AI moratorium\") (speech OR interview OR video OR hearing)",
+    "(\"AI safety\" OR \"AI extinction\") (youtube.com OR youtu.be)"
+  ],
+  "hold_sources": ["Wes Roth", "Riley Brown", "Matthew Barnett", "Rowan Cheung"],
+  "selection_gates": ["Named speaker verified from original source", "Original interview or firsthand talk verified", "Collected timed transcript and meaningful standalone passage", "Top five directly concern catastrophic risk, alignment/control, dangerous capabilities or safety governance", "Derivative posts clustered to original event; engagement is secondary", "Recency ranked, not a hard eligibility cutoff"]
+}
