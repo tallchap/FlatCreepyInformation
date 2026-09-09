@@ -57,3 +57,14 @@ nothing.
   or `SNIPPY_ENV_FILE`).
 - Chrome profile: `~/chrome-profiles/snippysaurus` (`SNIPPY_PROFILE_DIR`).
   Machine-local, never committed.
+
+## Curation after collection — Ori feedback, 2026-09-08
+
+Keep raw Home-feed snapshots complete and in feed order; apply this policy to the curated shortlist, not by silently changing the raw scrape.
+
+- Primary sources are the main priority: original interviews, firsthand talks, research presentations, and demonstrations by the people doing the work. An original upload is not automatically a primary source for its claims.
+- Wes Roth is excluded by default from recommendations: reactions, recaps, commentary on other people's work, and rehosted excerpts do not qualify. His original podcast interviews may qualify when the actual interview is verified; a podcast label or title keyword alone is insufficient. When uncertain, hold for review instead of including.
+- Use reaction videos as discovery leads to locate the original interview, talk, paper, or demonstration. Prefer that primary source and deduplicate derivative coverage of the same event.
+- Record source type, named speakers, evidence for any exception, and inclusion/exclusion reason. Put speaker names first in report clip titles; do not infer a speaker from a channel name. Mark unidentified speakers explicitly.
+- Reports must state upfront whether Claude-in-Chrome / the dedicated sandbox Home scrape actually ran, or whether discovery used public search. Never label a manual sourcing report as a scraper run.
+- Provide a transcript dropdown for each clip. Include only collected transcript text with provenance and timing, or explicitly say 'Transcript not collected'. A summary or chapter label is not a transcript.
