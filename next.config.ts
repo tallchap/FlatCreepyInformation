@@ -44,6 +44,14 @@ const nextConfig: NextConfig = {
       bodySizeLimit: "10mb",
     },
   },
+  // Snippy Daily (the public daily-clips listicle) is a static Cloudflare Worker in
+  // tallchap/snippy-daily-clips (site/public). Serve it under /daily on this domain.
+  async rewrites() {
+    return [
+      { source: "/daily", destination: "https://snippy-public.ori-a3b.workers.dev/daily" },
+      { source: "/daily/:path*", destination: "https://snippy-public.ori-a3b.workers.dev/daily/:path*" },
+    ];
+  },
   images: {
     remotePatterns: [
       {
