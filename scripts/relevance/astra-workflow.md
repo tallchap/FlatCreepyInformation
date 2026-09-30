@@ -1,5 +1,13 @@
 # Astra clip processing
 
+## Authorized production run (2026-09-30)
+
+The user subsequently authorized the full 1,644 media-available candidate queue and publication of approved clips. The immutable production manifest is `.context/astra-clips/production-1644/input/manifest.json`: 1,116 eligible +528 review, including 15 previously published clips. Missing footage remains excluded. The thirty-sample limit applies to calibration, not this authorized production run.
+
+Run `.context/relevance-venv/bin/python scripts/relevance/production.py`. The exclusive lock prevents duplicate runners. It verifies existing publication receipts, stages bounded caption-aligned excerpts, uses the unchanged five-pass Luna loop in groups of five, publishes only independently cleared results, and retains unresolved evidence in `astra-handoff-queue.json`. `status.json` records the PID, heartbeat, counts and measured Luna usage. `--verify` checks coverage and receipts and exits nonzero while unresolved work remains. Failure records require diagnosis before explicit retry; no ambiguous API call is automatically charged again. A source-envelope recipe is staging evidence, never editorial approval.
+
+The production runner uses the Mac's existing local small.en Whisper CLI. The unclaimed Shadow dispatch was cancelled because its workers were offline. It does not use Bunny, paid transcription, paid Astra API calls or replacement source acquisition. Astra interventions are separate from the Luna estimate and remain incomplete until their evidence is resolved.
+
 The two generated review queues are `.context/astra-clips/01-ready-clips.md` (1,116 media-available candidates) and `02-recheck-clips.md` (528 additional media-available candidates). Run `python scripts/relevance/prepare_astra.py` to regenerate from the immutable audit. Each candidate includes five minutes of transcript before and after the proposed passage, where available. Queue files are portable editorial inputs; process bounded groups and checkpoint one decision per candidate.
 
 1. Astra reads a candidate and returns the contract in `astra-review-contract.md`. Save the exact JSON. A batch array must be split into one file per candidate before processing. Retain rejected and unresolved decisions in a coverage ledger; neither renders. Candidates with `source_resolution_required` are excluded at the user’s instruction.
