@@ -94,6 +94,22 @@ class CheckpointTests(unittest.TestCase):
             self.assertEqual(mapping['prefix_mappings'][1]['source_prefix'], '/Users/ori/run')
             self.assertEqual(summary['media_bytes_copied'], 0)
 
+    def test_paused_optimization_evidence_preserved_and_unsent_call_not_charged(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = self.fixture(tmp)
+            audit.atomic(root / 'batches/b1/call2/call-state.json', {
+                'status': 'cancelled_before_dispatch', 'dispatched': False, 'charge_unknown': False})
+            audit.atomic(root / 'paused-wave-records/abcdefghijk.json', {'status': 'reviewing'})
+            audit.atomic(root / 'optimization-evidence/encoder/report.json', {'seconds': 2.1})
+            (root / 'optimization-evidence/encoder/clip.mp4').write_bytes(b'excluded footage')
+            summary = checkpoint.create_checkpoint(root, Path(tmp) / 'checkpoints')
+            result = Path(summary['directory']) / 'artifacts'
+            self.assertEqual(summary['unknown_charge_calls'], 0)
+            self.assertTrue((result / 'paused-wave-records/abcdefghijk.json').exists())
+            self.assertTrue((result / 'optimization-evidence/encoder/report.json').exists())
+            self.assertFalse((result / 'optimization-evidence/encoder/clip.mp4').exists())
+            self.assertTrue((result / 'batches/b1/call2/call-state.json').exists())
+
     def test_repeated_snapshots_have_new_names_and_do_not_mutate_previous(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = self.fixture(tmp)

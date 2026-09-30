@@ -83,6 +83,21 @@ class BenchmarkTests(unittest.TestCase):
     def report(self):
         return BenchmarkReporter(self.root, 'test-ten').run()
 
+    def test_unsent_operator_cancellation_has_no_charge_or_http_interval(self):
+        directory = self.request_dirs[0]
+        (directory / 'response.json').unlink()
+        self.write(str(directory / 'call-state.json'), {'status': 'cancelled_before_dispatch',
+            'dispatched': False, 'charge_unknown': False})
+        self.events(directory, http_status=None, error='cancelled_before_dispatch')
+        path = directory / 'transport-events.jsonl'
+        events = [json.loads(line) for line in path.read_text().splitlines()]
+        events[-1].update(dispatched=False, charge_unknown=False)
+        path.write_text(''.join(json.dumps(event)+'\n' for event in events), encoding='utf-8')
+        report = self.report()
+        self.assertEqual(report['transport']['peak_overlapping_requests'], 9)
+        self.assertEqual(report['transport']['summed_http_call_seconds'], 90)
+        self.assertTrue(report['checks']['current_wave_unknown_charges_and_transport_resolved'])
+
     def test_exact_fifty_baseline_isolation_cost_and_actual_peak(self):
         report = self.report()
         self.assertTrue(report['passed'], report['errors'])

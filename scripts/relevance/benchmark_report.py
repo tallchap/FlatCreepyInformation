@@ -228,6 +228,9 @@ class BenchmarkReporter:
                         request_starts.append(entry); starts.append(entry); group_starts.append(entry.get('started_at') or entry.get('timestamp'))
                     elif event.get('event') == 'request_end':
                         request_ends.append(entry); ends.append(entry); group_ends.append(entry.get('ended_at') or entry.get('timestamp'))
+                        if (event.get('status') == 'cancelled_before_dispatch' and event.get('dispatched') is False
+                                and event.get('charge_unknown') is False):
+                            continue
                         a, b = entry.get('started_at'), entry.get('ended_at') or entry.get('timestamp')
                         group_http_starts.append(a)
                         duration = elapsed(a, b)
@@ -246,7 +249,9 @@ class BenchmarkReporter:
                 end_keys = Counter((e.get('attempt'), e.get('pid')) for e in request_ends)
                 unmatched = start_keys != end_keys
                 unknown_attempts = [e.get('attempt') for e in request_ends if e.get('status') == 'unknown_charge']
-                unknown_charge = bool(unknown_attempts) or (not rid and state.get('status') not in ('rejected', 'rate_limited'))
+                cancelled_unsent = (state.get('status') == 'cancelled_before_dispatch' and state.get('dispatched') is False
+                                    and state.get('charge_unknown') is False)
+                unknown_charge = bool(unknown_attempts) or (not rid and state.get('status') not in ('rejected', 'rate_limited') and not cancelled_unsent)
                 if unknown_charge or unmatched:
                     unknown.append({'batch_name': slot['batch_name'], 'request_hash': request_hash,
                         'call_status': state.get('status'), 'charge_unknown': unknown_charge,
@@ -359,7 +364,8 @@ class BenchmarkReporter:
             review_repair_publication_phase_seconds=elapsed(timing['review_started_at'], timing['review_finished_at']),
             attempts=status.get('attempts', []))
         context = self.read(self.root / 'benchmark-context.json', optional=True) or {}
-        two_waves = (context.get('authorized_wave_count') == 2 and
+        cancelled_second = context.get('second_wave_cancelled') is True
+        two_waves = (not cancelled_second and context.get('authorized_wave_count') == 2 and
                      context.get('authorized_total_fresh_candidates') == 100)
         wave_number = 2 if previous_id else 1
         stop_contract = (
@@ -369,6 +375,10 @@ class BenchmarkReporter:
             if two_waves and wave_number == 1 else
             'STOP after this bounded experiment. Cost/time confirmation required before any more production; '
             'no Astra work authorized.')
+        if cancelled_second:
+            stop_contract = ('Large wave paused incomplete by user override; second 50-candidate wave CANCELLED. '
+                             'Only tiny optimization experiments and at most five fresh validation candidates are authorized; '
+                             'stop afterward for cost/time review. No Astra editorial work.')
         claimed_at = self.claim_at or context.get('relay_claimed_at') or plan.get('relay_claimed_at')
         initial_trial_start = previous_status.get('started_at') or timing['started_at']
         setup = {'relay_claimed_at': claimed_at, 'trial_started_at': initial_trial_start,

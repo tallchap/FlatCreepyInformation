@@ -28,8 +28,10 @@ ROOT_FILES = {'status.json', 'verification.json', 'checkpoint-import.json', 'che
               'benchmark-report.json', 'benchmark-report.md', 'benchmark-context.json',
               'failure-analysis.json', 'failure-analysis.md', 'code-verification.md',
               'preparation-timing.json', 'preparation-timing.md', 'experiment-transition.json',
-              'cloud-usage.json', 'cloud-usage.md', 'storage-metadata.json',
-              'round-comparison.json', 'round-comparison.md'}
+              'cloud-usage.json', 'cloud-usage.md', 'storage-metadata.json', 'output-storage-metadata.json',
+              'round-comparison.json', 'round-comparison.md', 'safe-drain.json', 'STOP.json',
+              'stream-plan.json', 'stream-status.json', 'optimization-report.json', 'optimization-report.md',
+              'tiny-validation.json', 'tiny-validation.md'}
 RENDER_FILES = {'recipe.json', 'parent-recipe.json', 'result.json', 'qa.json', 'final-qa.json',
                 'source.json', 'source-ffprobe.json', 'transfer.json', 'trim.json',
                 'contact.jpg', 'contact.png', 'clip.json', 'evidence.json'}
@@ -194,6 +196,10 @@ def selected(relative, candidate_ids):
     name = parts[-1]
     if len(parts) == 1:
         return name in ROOT_FILES
+    if parts[0] == 'paused-wave-records':
+        return len(parts) == 2 and relative.suffix == '.json' and relative.stem in candidate_ids
+    if parts[0] == 'optimization-evidence':
+        return relative.suffix in {'.json', '.md', '.jpg', '.png'}
     if parts[0] in {'records', 'publications', 'publication-attempts', 'recipes'}:
         return len(parts) == 2 and relative.suffix == '.json' and (parts[0] != 'records' or relative.stem in candidate_ids)
     if parts[0] == 'input':
@@ -287,7 +293,11 @@ def create_checkpoint(root, output):
         if path.name == 'call-state.json' and 'batches' in path.relative_to(root).parts:
             # Use the captured response inventory; never imply a live request is failed.
             if str(path.with_name('response.json')) not in captured_response_paths:
-                pending.append({'source_path': str(path), 'state': read(path), 'charge_status': 'unknown',
+                state = read(path)
+                if (state.get('status') == 'cancelled_before_dispatch' and state.get('dispatched') is False
+                        and state.get('charge_unknown') is False):
+                    continue
+                pending.append({'source_path': str(path), 'state': state, 'charge_status': 'unknown',
                                 'reason': 'Call state exists without a captured durable response; may still be in flight. Never automatically retry.'})
 
     media, receipts, transfers = [], {}, []

@@ -145,7 +145,9 @@ class Reporter:
                     # Saved requests alone do not prove that an API request was sent.
                     unknown.append({'request_hash': request_hash, 'request_path': str(path),
                         'status': status or 'no_durable_call_state',
-                        'charge_unknown': status not in ('rejected', 'rate_limited')})
+                        'charge_unknown': status not in ('rejected', 'rate_limited') and not
+                            (status == 'cancelled_before_dispatch' and state.get('dispatched') is False
+                             and state.get('charge_unknown') is False)})
                     continue
                 raw = self.read(response_path)
                 if not isinstance(raw, dict) or not raw.get('id'):
