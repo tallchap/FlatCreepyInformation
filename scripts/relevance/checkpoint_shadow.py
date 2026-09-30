@@ -3,8 +3,9 @@
 
 Usage: python -X utf8 scripts/relevance/checkpoint_shadow.py --root RUN --output CHECKPOINTS
 The output is a new timestamped directory. Media bytes, requests, embedded image
-packages, logs and credentials are excluded. Original evidence paths stay intact;
-locator-map.json maps them to archived relative locations.
+packages and credentials are excluded. Verified immutable experiment archives
+retain their exact metadata, raw responses and logs, outside live-run statistics.
+Original evidence paths stay intact; locator-map.json maps their new locations.
 """
 import argparse
 from collections import Counter
@@ -25,12 +26,17 @@ ROOT_FILES = {'status.json', 'verification.json', 'checkpoint-import.json', 'che
               'preflight-query.json', 'supervisor.json', 'experiment-plan.json',
               'experiment-status.json', 'benchmark-baseline.json',
               'benchmark-report.json', 'benchmark-report.md', 'benchmark-context.json',
-              'failure-analysis.json', 'failure-analysis.md', 'code-verification.md'}
+              'failure-analysis.json', 'failure-analysis.md', 'code-verification.md',
+              'preparation-timing.json', 'preparation-timing.md', 'experiment-transition.json',
+              'cloud-usage.json', 'cloud-usage.md', 'storage-metadata.json',
+              'round-comparison.json', 'round-comparison.md'}
 RENDER_FILES = {'recipe.json', 'parent-recipe.json', 'result.json', 'qa.json', 'final-qa.json',
                 'source.json', 'source-ffprobe.json', 'transfer.json', 'trim.json',
                 'contact.jpg', 'contact.png', 'clip.json', 'evidence.json'}
 SECRET_KEYS = {'apikey', 'openaiapikey', 'privatekey', 'accesstoken',
                'refreshtoken', 'clientsecret', 'password', 'secretaccesskey'}
+ARCHIVE_SUFFIXES = {'.json', '.jsonl', '.md', '.csv', '.log', '.jpg', '.png'}
+ARCHIVE_METADATA = {'checkpoint-upload-receipt.json', 'next-experiment-plan.json'}
 
 
 def stable_bytes(path):
@@ -61,6 +67,122 @@ def reject_secrets(value):
 
 def json_bytes(data):
     return json.dumps(data, indent=2, ensure_ascii=False).encode('utf-8')
+
+
+def safe_relative(value):
+    # Reject both slash styles and Windows drive/alternate-stream syntax, even
+    # when a checkpoint is later verified on a different operating system.
+    if (not isinstance(value, str) or not value or '\\' in value or ':' in value or
+            any(part in {'', '.', '..'} for part in value.split('/')) or '\x00' in value):
+        raise ValueError('Unsafe archive relative path')
+    return Path(*value.split('/'))
+
+
+def checked_path(root, path):
+    if not path.is_relative_to(root) or not path.resolve().is_relative_to(root):
+        raise ValueError('Artifact escapes the run root')
+    for parent in (path, *path.parents):
+        if parent == root:
+            break
+        if parent.is_symlink() or getattr(parent, 'is_junction', lambda: False)():
+            raise ValueError('Symlink or junction in checkpoint artifact path')
+    return path
+
+
+def active_files(root):
+    """Never descend into archived copies for current-run accounting."""
+    for child in sorted(root.iterdir()):
+        if child.name == 'experiments':
+            continue
+        checked_path(root, child)
+        if child.is_file():
+            yield child
+        elif child.is_dir():
+            for path in sorted(child.rglob('*')):
+                if 'experiments' in path.relative_to(root).parts:
+                    continue
+                checked_path(root, path)
+                if path.is_file():
+                    yield path
+
+
+def reject_text_secrets(data):
+    value = data.decode('utf-8-sig')
+    reject_secrets(value)
+    if re.search(r'''(?ix)(?:["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password|private[_-]?key)["']?\s*[:=]\s*["']?\S+|authorization["']?\s*[:=]\s*["']?(?:bearer|basic|digest)\s+\S+)''', value):
+        raise ValueError('Credential-shaped field in checkpoint text; refusing to copy')
+
+
+def archive_files(root, capture, read):
+    """Validate all immutable archive receipts before selecting their bytes."""
+    base = root / 'experiments'
+    journal_path = root / 'experiment-transition.json'
+    journal = read(journal_path) if journal_path.exists() else {}
+    if journal.get('archive_relative'):
+        expected = safe_relative(journal['archive_relative'])
+        if (len(expected.parts) != 2 or expected.parts[0] != 'experiments' or
+                not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', expected.name)):
+            raise ValueError('Unsafe archive location in transition receipt')
+        if not checked_path(root, root / expected).is_dir():
+            raise ValueError('Transition receipt references a missing immutable archive')
+    if not base.exists():
+        return [], []
+    checked_path(root, base)
+    selected_paths, summaries = [], []
+    for archive in sorted(base.iterdir()):
+        checked_path(root, archive)
+        # An interrupted transition's mutable staging directory is not history.
+        if archive.name.startswith('.'):
+            continue
+        if not archive.is_dir() or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', archive.name):
+            raise ValueError('Unsafe experiment archive directory')
+        manifest_path = archive / 'archive-manifest.json'
+        metadata = read(manifest_path)
+        digest = hashlib.sha256(capture(manifest_path)).hexdigest()
+        if metadata.get('schema_version') != 'snippy-wave-archive-v1' or metadata.get('experiment_id') != archive.name:
+            raise ValueError('Archive manifest identity/schema mismatch')
+        if journal.get('archive_relative') == archive.relative_to(root).as_posix() and journal.get('archive_manifest_sha256') != digest:
+            raise ValueError('Archive manifest differs from transition receipt')
+        entries = metadata.get('files')
+        if not isinstance(entries, list):
+            raise ValueError('Archive file inventory is missing')
+        names, paths = set(), [manifest_path]
+        for item in entries:
+            if not isinstance(item, dict):
+                raise ValueError('Invalid archive manifest file entry')
+            relative = safe_relative(item.get('path'))
+            name = relative.as_posix()
+            if name.casefold() in names:
+                raise ValueError('Duplicate archive manifest path')
+            names.add(name.casefold())
+            if (name not in ARCHIVE_METADATA and (relative.parts[0] != 'artifacts' or len(relative.parts) < 2) or
+                    relative.suffix.lower() not in ARCHIVE_SUFFIXES or
+                    relative.name.lower() in {'request.json', 'packages.json'}):
+                raise ValueError('Unsafe artifact type in immutable archive')
+            if item.get('source_relative') is not None:
+                source = safe_relative(item['source_relative'])
+                if relative != Path('artifacts') / source:
+                    raise ValueError('Archive source path binding mismatch')
+            path = checked_path(root, archive / relative)
+            data = capture(path)
+            if (type(item.get('size')) is not int or len(data) != item['size'] or
+                    hashlib.sha256(data).hexdigest() != item.get('sha256')):
+                raise ValueError('Immutable archive artifact hash/size mismatch: ' + name)
+            if path.suffix.lower() == '.json':
+                read(path)
+            elif path.suffix.lower() == '.jsonl':
+                for line in data.decode('utf-8-sig').splitlines():
+                    if line.strip():
+                        reject_secrets(json.loads(line))
+            elif path.suffix.lower() in {'.md', '.csv', '.log'}:
+                reject_text_secrets(data)
+            paths.append(path)
+        if not ARCHIVE_METADATA.issubset(names):
+            raise ValueError('Archive checkpoint/next-plan receipts are missing')
+        selected_paths.extend(paths)
+        summaries.append({'experiment_id': archive.name, 'manifest_sha256': digest,
+                          'files': len(paths), 'statistics_scope': 'Preserved bytes only; excluded from live-run accounting'})
+    return selected_paths, summaries
 
 
 def selected(relative, candidate_ids):
@@ -115,8 +237,7 @@ def create_checkpoint(root, output):
     def capture(path):
         relative = path.relative_to(root).as_posix()
         if relative not in files:
-            if path.is_symlink() or not path.resolve().is_relative_to(root):
-                raise ValueError('Artifact escapes the run root')
+            checked_path(root, path)
             files[relative] = stable_bytes(path)
         return files[relative]
 
@@ -129,11 +250,10 @@ def create_checkpoint(root, output):
 
     records = [read(path) for path in sorted((root / 'records').glob('*.json'))]
     candidate_ids = {row['candidate_id'] for row in records}
-    source_files = sorted(p for p in root.rglob('*') if p.is_file())
-    for path in source_files:
+    source_files = list(active_files(root))
+    history_files, archives = archive_files(root, capture, read)
+    for path in [p for p in source_files if selected(p.relative_to(root), candidate_ids)] + history_files:
         relative = path.relative_to(root)
-        if not selected(relative, candidate_ids):
-            continue
         data = capture(path)
         if path.suffix == '.json':
             read(path)
@@ -172,6 +292,8 @@ def create_checkpoint(root, output):
 
     media, receipts, transfers = [], {}, []
     for relative, data in list(cached.items()):
+        if 'experiments' in Path(relative).parts:
+            continue
         path = root / relative
         if path.name == 'result.json' and data.get('output_sha256') and data.get('clip_path'):
             local_media = path.parent / 'clip.mp4'
@@ -216,6 +338,7 @@ def create_checkpoint(root, output):
                'source_root': str(root), 'snapshot_consistency': 'Live nontransactional snapshot; each copied artifact read stably. Records captured first.',
                'counts': counts, 'recorded_candidates': len(records), 'copied_files': len(manifest),
                'copied_bytes': sum(row['size'] for row in manifest), 'media_bytes_copied': 0,
+               'immutable_archives': archives,
                'unknown_charge_calls': len(pending), 'current_response_count': len(current),
                'checkpoint_cost_usd': baseline.get('luna_cost_usd', 0),
                'current_cost_usd': sum(row['cost_usd'] for row in current),
@@ -225,7 +348,8 @@ def create_checkpoint(root, output):
                'transfer_body_bytes_read': sum(row['body_bytes_read'] for row in transfers),
                'transfer_requested_bytes': sum(row['requested_bytes'] for row in transfers),
                'excluded': ['All video/audio bytes', 'Raw request.json and packages.json with embedded base64',
-                            'Raw response.json (usage summaries retained)', 'Logs, private environment files and credentials',
+                            'Live raw response.json (usage summaries retained; immutable archives preserve raw responses)',
+                            'Live logs and private environment files; all credentials (immutable archives preserve verified logs)',
                             'Unchanged full corpus and cull transcripts; retain the verified original input bundle'],
                'complete_checkpoint': True}
     reports = {'summary.json': summary, 'manifest.json': {'files': manifest},
