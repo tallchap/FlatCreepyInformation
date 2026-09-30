@@ -106,6 +106,21 @@ class BenchmarkTests(unittest.TestCase):
         self.assertEqual(result['peak_overlapping_requests'], 1)
         self.assertEqual(result['union_http_call_seconds'], 20)
 
+    def test_two_wave_authorization_requires_preservation_before_second_fifty(self):
+        default = self.report()
+        self.assertEqual(default['authorized']['wave_count'], 1)
+        self.assertTrue(default['stop_contract'].startswith('STOP'))
+        self.write('benchmark-context.json', {'authorized_wave_count': 2,
+            'authorized_total_fresh_candidates': 100, 'authorization_updated_at': '2026-09-30T20:56:24Z'})
+        report = self.report()
+        self.assertEqual(report['authorized']['wave_number'], 1)
+        self.assertEqual(report['authorized']['total_fresh_candidates'], 100)
+        self.assertIn('preserve this first wave before the authorized second', report['stop_contract'])
+        self.assertIn('STOP after wave 2', report['stop_contract'])
+        markdown = (self.root/'benchmark-report.md').read_text(encoding='utf-8')
+        self.assertIn('wave 1 of 2 authorized waves', markdown)
+        self.assertNotIn('no additional production authorized', markdown)
+
     def test_mixed_seven_eligible_three_review_lanes_and_setup_are_isolated(self):
         for i, slot in enumerate(self.slots):
             lane = 'eligible' if i < 7 else 'review'
@@ -203,6 +218,64 @@ class BenchmarkTests(unittest.TestCase):
         report=self.report()
         self.assertEqual(report['gcs']['upstream_requested_bytes'],30)
         self.assertEqual(report['gcs']['upstream_body_bytes_read'],10)
+
+    def test_second_wave_preserves_baseline_seventyfive_and_unresolved_charges(self):
+        self.write('benchmark-context.json', {'authorized_wave_count': 2, 'authorized_total_fresh_candidates': 100})
+        next_ids=[f'd{i:010d}' for i in range(50)]
+        self.write('input/manifest.json',{'candidates':[{'candidate_id':vid,'lane':'eligible'}
+            for vid in self.baseline+self.fresh+next_ids]})
+        self.plan['manifest_sha256']=sha(self.manifest)
+        self.write_plan()
+        first_plan=json.loads(json.dumps(self.plan))
+        archive=self.root/'experiments/test-ten'
+        self.write(str(archive/'artifacts/experiment-plan.json'),first_plan)
+        self.write(str(archive/'artifacts/experiment-status.json'),self.status)
+        old_unknown,_=self.response('batches/experiment-0000','unknown-first-wave',self.fresh[:5],rid='unknown_not_saved')
+        (old_unknown/'response.json').unlink()
+        self.write(str(old_unknown/'call-state.json'),{'status':'unknown_charge'})
+        preserved=[{'request_path':str(old_unknown/'request.json'),'charge_unknown':True}]
+        self.write(str(archive/'archive-manifest.json'),{'first_wave_unknown_charge_evidence_preserved':preserved})
+        baseline_ids=self.baseline+self.fresh
+        baseline_hashes={vid:sha(self.root/'records'/f'{vid}.json') for vid in baseline_ids}
+        baseline_responses=[]
+        baseline_cost=0
+        for base in ('batches','mac-checkpoint/batches'):
+            for path in (self.root/base).glob('*/*/response.json'):
+                raw=json.loads(path.read_text());baseline_responses.append(raw['id']);baseline_cost+=audit.price(raw)
+        frozen_requests=[p.relative_to(self.root).as_posix() for base in ('batches','mac-checkpoint/batches')
+            for p in (self.root/base).glob('*/*/request.json')]
+        slots=[{'batch_name':f'wave2-eligible-{i+1:04d}','lane':'eligible','candidate_ids':next_ids[i*5:i*5+5]} for i in range(10)]
+        self.plan={**first_plan,'experiment_id':'test-two','wave_number':2,'previous_experiment_id':'test-ten',
+            'previous_plan_sha256':first_plan['plan_sha256'],'candidate_ids':next_ids,'slots':slots,
+            'baseline_covered_ids':baseline_ids,'baseline_record_sha256':baseline_hashes,
+            'baseline_response_ids':baseline_responses,'baseline_luna_cost_usd':baseline_cost,
+            'baseline_request_paths':frozen_requests,
+            'baseline_request_sha256':{p:sha(self.root/p) for p in frozen_requests},
+            'preserved_unknown_charge_count':1,'preserved_first_wave_unknown_charges':preserved}
+        self.write_plan()
+        self.write('experiment-status.json',{**self.status,'experiment_id':'test-two',
+            'started_at':'2026-09-30T20:03:00Z','finished_at':'2026-09-30T20:05:00Z'})
+        for vid in next_ids:
+            self.write('records/'+vid+'.json',{'candidate_id':vid,'status':'awaiting_astra'})
+        for i,slot in enumerate(slots):
+            directory,_=self.response('batches/'+slot['batch_name'],'second'+str(i),slot['candidate_ids'],rid='wave2_'+str(i))
+            self.events(directory)
+        report=BenchmarkReporter(self.root,'test-two').run()
+        self.assertEqual(report['errors'],[])
+        self.assertEqual(report['baseline']['covered_count'],75)
+        self.assertTrue(report['checks']['no_overrun'])
+        self.assertEqual(report['baseline']['preserved_unknown_charge_count'],1)
+        self.assertFalse(report['checks']['preserved_baseline_unknowns_resolved'])
+        self.assertTrue(report['checks']['current_wave_unknown_charges_and_transport_resolved'])
+        self.assertFalse(report['passed'])
+        self.assertEqual(report['api']['unique_responses'],10)
+        self.assertAlmostEqual(report['baseline']['previous_experiments_luna_cost_usd'],report['api']['usage_derived_cost_usd'])
+        self.assertAlmostEqual(report['baseline']['first_shadow_luna_cost_usd'],report['baseline']['mac_luna_cost_usd'])
+        self.assertEqual(report['authorized']['wave_number'], 2)
+        self.assertEqual(report['authorized']['wave_count'], 2)
+        self.assertTrue(report['stop_contract'].startswith('STOP'))
+        self.assertIn('Cost/time confirmation', report['stop_contract'])
+        self.assertNotIn('before the authorized second', report['stop_contract'])
 
 
 if __name__=='__main__':

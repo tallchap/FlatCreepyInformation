@@ -6,11 +6,13 @@ remain the editorial contract. These adapters add Windows execution, bounded
 concurrency, resume identities and operational evidence only.
 
 For Relay job `SNIPPY-LUNA-CODEX-1644-20260930`, the posting session's
-2026-09-30 20:20:30Z update limits the next admission to one experiment of ten
-groups of five fresh candidates. Stop after that experiment for cost confirmation.
-The 20:28:58Z update selects seven eligible groups and three review groups, for
-35 eligible and 15 review candidates. Failed preparation does not authorize a
-replacement candidate outside that frozen set.
+2026-09-30 20:56:24Z update authorizes two sequential experiments, each with ten
+groups of five fresh candidates. Report and preserve round one before launching
+round two; stop after round two for cost and time review. The total admission cap
+is 100 fresh candidates. Each round selects seven eligible groups and three
+review groups, for 35 eligible and 15 review candidates. Failed preparation does
+not authorize a replacement candidate outside its frozen set, and round two must
+not retry any round-one candidate.
 Every Astra referral stays pending and unpublished; do not invoke an editorial
 Astra or Claude fallback.
 

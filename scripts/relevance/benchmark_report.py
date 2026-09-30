@@ -91,8 +91,8 @@ class BenchmarkReporter:
         if len({s.get('batch_name') for s in slots}) != len(slots):
             self.error('duplicate_experiment_group', path)
         baseline = set(plan.get('baseline_covered_ids', []))
-        if len(baseline) != 25 or baseline.intersection(ids):
-            self.error('baseline_twentyfive_not_isolated', path)
+        if len(baseline) < 25 or len(baseline) != len(plan.get('baseline_covered_ids', [])) or baseline.intersection(ids):
+            self.error('signed_baseline_not_isolated', path)
         manifest = self.root / 'input/manifest.json'
         if not manifest.exists() or sha(manifest) != plan.get('manifest_sha256'):
             self.error('manifest_hash_drift', manifest)
@@ -106,6 +106,8 @@ class BenchmarkReporter:
             unsigned = {k: v for k, v in plan.items() if k != 'plan_sha256'}
             if audit.digest(unsigned) != plan['plan_sha256']:
                 self.error('experiment_plan_signature_drift', path)
+        else:
+            self.error('experiment_plan_signature_missing', path)
         return plan
 
     def raw_responses(self):
@@ -273,9 +275,23 @@ class BenchmarkReporter:
         if baseline_response_ids - set(raw):
             self.error('baseline_response_receipts_missing', response_ids=sorted(baseline_response_ids - set(raw)))
         authorized_groups = {slot['batch_name'] for slot in plan.get('slots', [])}
+        baseline_request_paths = set(plan.get('baseline_request_paths', []))
+        baseline_request_hashes = plan.get('baseline_request_sha256', {})
+        for relative in baseline_request_paths:
+            path = (self.root / relative).resolve()
+            if not path.is_relative_to(self.root) or Path(relative).is_absolute() or path.name != 'request.json':
+                self.error('invalid_frozen_baseline_request_path', relative)
+                continue
+            body = self.read(path)
+            if body is not None and audit.digest(body) != path.parent.name:
+                self.error('baseline_request_hash_drift', path)
+            if baseline_request_hashes and (not path.exists() or sha(path) != baseline_request_hashes.get(relative)):
+                self.error('signed_baseline_request_file_hash_drift', path)
         unauthorized_requests = []
         for path in sorted((self.root / 'batches').glob('*/*/request.json')):
             if path.parent.parent.name in authorized_groups:
+                continue
+            if path.relative_to(self.root).as_posix() in baseline_request_paths:
                 continue
             response = self.read(path.with_name('response.json'), optional=True) or {}
             if response.get('id') not in baseline_response_ids:
@@ -290,6 +306,34 @@ class BenchmarkReporter:
         baseline_cost = sum(raw[rid]['usage_derived_cost_usd'] or 0 for rid in baseline_response_ids if rid in raw)
         mac_ids = {rid for rid, row in raw.items() if any('/mac-checkpoint/' in p.replace('\\', '/') for p in row['paths'])}
         mac_cost = sum(raw[rid]['usage_derived_cost_usd'] or 0 for rid in mac_ids & baseline_response_ids)
+        initial_ids = baseline_response_ids
+        previous_plan, previous_status, preserved_unknown = {}, {}, []
+        previous_id = plan.get('previous_experiment_id')
+        if previous_id:
+            archive = self.root / 'experiments' / previous_id
+            previous_plan = self.read(archive / 'artifacts/experiment-plan.json') or {}
+            previous_status = self.read(archive / 'artifacts/experiment-status.json') or {}
+            archive_manifest = self.read(archive / 'archive-manifest.json') or {}
+            preserved_unknown = archive_manifest.get('first_wave_unknown_charge_evidence_preserved', [])
+            signed_unknown = plan.get('preserved_first_wave_unknown_charges')
+            if signed_unknown is not None:
+                if signed_unknown != preserved_unknown:
+                    self.error('preserved_unknown_archive_binding_drift', archive)
+                preserved_unknown = signed_unknown
+            previous_digest = audit.digest({k: v for k, v in previous_plan.items() if k != 'plan_sha256'})
+            if previous_digest != previous_plan.get('plan_sha256') or previous_digest != plan.get('previous_plan_sha256'):
+                self.error('previous_experiment_plan_binding_drift', archive)
+            initial_ids = set(previous_plan.get('baseline_response_ids', []))
+            if not initial_ids or not initial_ids.issubset(baseline_response_ids):
+                self.error('initial_baseline_response_inventory_missing', archive)
+        initial_shadow_cost = sum(raw[rid]['usage_derived_cost_usd'] or 0 for rid in (initial_ids - mac_ids) if rid in raw)
+        previous_experiment_cost = sum(raw[rid]['usage_derived_cost_usd'] or 0 for rid in (baseline_response_ids - initial_ids) if rid in raw)
+        for field, derived in [('initial_shadow_cost_usd', initial_shadow_cost), ('previous_experiment_cost_usd', previous_experiment_cost)]:
+            if field in plan and (not numeric(plan[field]) or abs(plan[field] - derived) > 1e-10):
+                self.error('signed_baseline_cost_component_drift', component=field, usage_derived=derived)
+        inherited_unknown_count = plan.get('preserved_unknown_charge_count', 0)
+        if not isinstance(inherited_unknown_count, int) or inherited_unknown_count < 0 or inherited_unknown_count != len(preserved_unknown):
+            self.error('preserved_unknown_charge_inventory_mismatch', declared=inherited_unknown_count, observed=len(preserved_unknown))
         if numeric(plan.get('baseline_luna_cost_usd')) and abs(baseline_cost - plan['baseline_luna_cost_usd']) > 1e-10:
             self.error('baseline_cost_receipts_drift', expected=plan['baseline_luna_cost_usd'], usage_derived=baseline_cost)
         transfers = {}
@@ -315,9 +359,22 @@ class BenchmarkReporter:
             review_repair_publication_phase_seconds=elapsed(timing['review_started_at'], timing['review_finished_at']),
             attempts=status.get('attempts', []))
         context = self.read(self.root / 'benchmark-context.json', optional=True) or {}
+        two_waves = (context.get('authorized_wave_count') == 2 and
+                     context.get('authorized_total_fresh_candidates') == 100)
+        wave_number = 2 if previous_id else 1
+        stop_contract = (
+            'Report and preserve this first wave before the authorized second bounded 50 candidates. '
+            'STOP after wave 2 (100 fresh candidates total) for cost/time confirmation before any more production; '
+            'no Astra work authorized.'
+            if two_waves and wave_number == 1 else
+            'STOP after this bounded experiment. Cost/time confirmation required before any more production; '
+            'no Astra work authorized.')
         claimed_at = self.claim_at or context.get('relay_claimed_at') or plan.get('relay_claimed_at')
-        setup = {'relay_claimed_at': claimed_at, 'trial_started_at': timing['started_at'],
-            'setup_before_trial_seconds': elapsed(claimed_at, timing['started_at']),
+        initial_trial_start = previous_status.get('started_at') or timing['started_at']
+        setup = {'relay_claimed_at': claimed_at, 'trial_started_at': initial_trial_start,
+            'current_trial_started_at': timing['started_at'],
+            'setup_before_trial_seconds': elapsed(claimed_at, initial_trial_start),
+            'interwave_gap_seconds': elapsed(previous_status.get('finished_at'), timing['started_at']),
             'scope': 'One-time claim-to-trial setup; excluded from trial and steady-phase throughput.'}
         timing['measured_throughput'] = {}
         for name, seconds in [('end_to_end', timing['total_wall_seconds']), ('review_repair_publication', timing['review_repair_publication_phase_seconds'])]:
@@ -353,25 +410,35 @@ class BenchmarkReporter:
         checks = {'integrity': not self.errors, 'exact_fifty_coverage': len(coverage) == len(selected) == 50,
             'all_fifty_disposed': len(coverage) == 50 and counts['pending'] == 0,
             'no_overrun': not overrun and not unexplained and not unauthorized_requests,
-            'unknown_charges_and_transport_resolved': not unknown,
+            'current_wave_unknown_charges_and_transport_resolved': not unknown,
+            'preserved_baseline_unknowns_resolved': inherited_unknown_count == 0,
+            'unknown_charges_and_transport_resolved': not unknown and inherited_unknown_count == 0,
             'experiment_finished': bool(status.get('finished_at')),
             'ten_groups_have_transport_evidence': len(group_stats) == 10 and all(g['first_request_start'] for g in group_stats)}
         report = {'schema_version': 'snippy-ten-group-benchmark-report-v1', 'generated_at': audit.now(),
             'experiment_id': plan.get('experiment_id'), 'plan_path': str(self.root / 'experiment-plan.json'),
             'authorized': {'groups': 10, 'group_size': 5, 'fresh_candidates': 50, 'frozen_ids': plan.get('candidate_ids', []),
+                'wave_number': wave_number, 'wave_count': 2 if two_waves else 1,
+                'total_fresh_candidates': 100 if two_waves else 50,
+                'authorization_updated_at': context.get('authorization_updated_at'),
                 'groups_by_lane': dict(Counter(group_lanes.values())), 'candidates_by_lane': dict(Counter(candidate_lanes.values()))},
             'baseline': {'covered_count': len(baseline), 'covered_ids': sorted(baseline),
-                'mac_luna_cost_usd': mac_cost, 'first_shadow_luna_cost_usd': baseline_cost - mac_cost,
-                'total_luna_cost_usd': baseline_cost, 'response_ids': sorted(baseline_response_ids)},
+                'mac_luna_cost_usd': mac_cost, 'first_shadow_luna_cost_usd': initial_shadow_cost,
+                'previous_experiments_luna_cost_usd': previous_experiment_cost,
+                'preserved_unknown_charge_count': inherited_unknown_count,
+                'total_luna_cost_usd': baseline_cost, 'response_ids': sorted(baseline_response_ids),
+                'frozen_request_paths': sorted(baseline_request_paths)},
             'counts': {'attempted': sum(r['attempted'] for r in coverage), 'pass': counts['pass'],
                 'deferred': counts['deferred'], 'failed': counts['failed'], 'pending': counts['pending']},
             'phase': status.get('phase'), 'setup': setup, 'timing': timing, 'groups': group_stats, 'lanes': lanes,
+            'measurement_caveats': context.get('measurement_caveats', []),
             'transport': {**overlap(intervals), 'request_attempts': len(starts),
                 'retry_attempts': sum(max(0, r['transport_attempts_started'] - 1) for r in requests),
                 'throttles_429': sum(e.get('http_status') == 429 for e in ends),
                 'http_status_counts': dict(Counter(str(e.get('http_status')) for e in ends)),
                 'roles': dict(Counter(e.get('role') for e in starts)), 'event_count': event_count,
-                'intervals': intervals, 'unknown_or_unmatched': unknown},
+                'intervals': intervals, 'unknown_or_unmatched': unknown,
+                'preserved_baseline_unknown_or_unmatched': preserved_unknown},
             'api': {'unique_responses': len(responses), 'response_ids': sorted(request_ids),
                 'token_categories': dict(tokens), 'usage_derived_cost_usd': cost,
                 'cost_per_attempted_candidate_usd': cost / sum(r['attempted'] for r in coverage) if any(r['attempted'] for r in coverage) else None,
@@ -384,7 +451,7 @@ class BenchmarkReporter:
             'pending_ids': [r['candidate_id'] for r in coverage if r['outcome'] == 'pending'],
             'coverage': coverage, 'checks': checks, 'errors': self.errors,
             'passed': all(checks.values()), 'publication_success_for_all_fifty': counts['pass'] == 50,
-            'stop_contract': 'STOP after this bounded experiment. Cost confirmation required before more production; no Astra work authorized.'}
+            'stop_contract': stop_contract}
         audit.atomic(self.root / 'benchmark-report.json', report)
         self.markdown(report)
         return report
@@ -392,10 +459,11 @@ class BenchmarkReporter:
     def markdown(self, report):
         counts, timing, transport = report['counts'], report['timing'], report['transport']
         lines = [f"# Benchmark: {report['experiment_id']}", '',
-            f"Receipt verification: **{'PASS' if report['passed'] else 'INCOMPLETE / FLAGGED'}**. 10 frozen groups of 5; no additional production authorized.", '',
+            f"Receipt verification: **{'PASS' if report['passed'] else 'INCOMPLETE / FLAGGED'}**. 10 frozen groups of 5; wave {report['authorized']['wave_number']} of {report['authorized']['wave_count']} authorized waves.", '',
             f"Attempted {counts['attempted']}/50; passed {counts['pass']}; deferred to Astra {counts['deferred']}; failed {counts['failed']}; pending {counts['pending']}.", '',
             f"Experiment Luna usage-derived cost: **${report['api']['usage_derived_cost_usd']:.9f}** ({report['api']['unique_responses']} saved responses). This is an estimate from actual API usage, not an invoice; unknown charges are excluded.",
-            f"Separate baseline: Mac ${report['baseline']['mac_luna_cost_usd']:.9f}; first Shadow batch ${report['baseline']['first_shadow_luna_cost_usd']:.9f}.", '',
+            f"Separate baseline: Mac ${report['baseline']['mac_luna_cost_usd']:.9f}; first Shadow batch ${report['baseline']['first_shadow_luna_cost_usd']:.9f}; previous experiment(s) ${report['baseline']['previous_experiments_luna_cost_usd']:.9f}.",
+            f"Preserved baseline unknown charges/transport cases: **{report['baseline']['preserved_unknown_charge_count']}**; retained unresolved and excluded from known cost.", '',
             f"One-time setup before trial: {report['setup']['setup_before_trial_seconds']} s (claim {report['setup']['relay_claimed_at']} to trial {report['setup']['trial_started_at']}); excluded from throughput.",
             f"Total wall time: {timing['total_wall_seconds']} s; preparation: {timing['preparation_wall_seconds']} s; review/repair/publication phase: {timing['review_repair_publication_phase_seconds']} s.",
             f"Closed HTTP calls only: first-start to last-end span {transport['observed_http_span_seconds']} s; summed call time {transport['summed_http_call_seconds']} s; union of active-call time {transport['union_http_call_seconds']} s.",
@@ -410,6 +478,8 @@ class BenchmarkReporter:
             lines.append(f"| {lane} | {value['groups']} | {value['candidates']} | {c['pass']} | {c['deferred']} | {c['failed']} | {c['pending']} | ${value['usage_derived_cost_usd']:.9f} | {value['http']['observed_http_span_seconds']} |")
         lines += ['', '| Token category | Count |', '|---|---:|']
         lines += [f'| {key} | {value} |' for key, value in sorted(report['api']['token_categories'].items())]
+        if report['measurement_caveats']:
+            lines += ['', 'Measurement context:', ''] + ['- '+item for item in report['measurement_caveats']]
         if report['errors']:
             lines += ['', 'Receipt errors:', ''] + [f"- {e['code']}: {e.get('path', e.get('candidate_id', 'see JSON'))}" for e in report['errors']]
         lines += ['', 'Full request/response IDs, timings, per-ID evidence, and pending IDs: [benchmark-report.json](benchmark-report.json).', '', report['stop_contract'], '']
