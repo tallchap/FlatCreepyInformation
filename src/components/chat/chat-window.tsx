@@ -57,6 +57,8 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
     "filter" | "main" | "filesearch" | null
   >(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const videoPreviewRef = useRef<HTMLDivElement>(null);
+  const returnToVideoRef = useRef<string | null>(null);
   const sendingRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -95,6 +97,33 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   useEffect(() => {
     if (messages.length && !preview) scrollToBottom();
   }, [messages, scrollToBottom, preview]);
+
+  useEffect(() => {
+    if (!selectedVideo) {
+      if (returnToVideoRef.current) {
+        const source = document.querySelector<HTMLAnchorElement>(
+          `a[data-video-id="${returnToVideoRef.current}"]`,
+        );
+        returnToVideoRef.current = null;
+        source?.focus({ preventScroll: true });
+        source?.scrollIntoView({ block: "center", behavior: "instant" });
+      }
+      return;
+    }
+    if (!window.matchMedia("(max-width: 1199px)").matches) return;
+    videoPreviewRef.current?.scrollIntoView({
+      block: "start",
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches
+        ? "instant"
+        : "smooth",
+    });
+    videoPreviewRef.current?.focus({ preventScroll: true });
+  }, [selectedVideo]);
+
+  function closeVideoPreview() {
+    returnToVideoRef.current = selectedVideo?.videoId ?? null;
+    setSelectedVideo(null);
+  }
 
   function handleNewConversation() {
     setMessages([]);
@@ -410,6 +439,8 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
       </section>
       {selectedVideo && (
         <VideoPreviewPane
+          previewRef={videoPreviewRef}
+          onClose={closeVideoPreview}
           videoId={selectedVideo.videoId}
           startSec={selectedVideo.startSec}
           title={selectedVideo.title}

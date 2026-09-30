@@ -157,6 +157,27 @@ const fs = require("node:fs");
   console.log(
     "PASS Real homepage has Spring physics and upward native touch pull without scrolling",
   );
+  // A tapped citation must visibly reveal the player, including before the
+  // transcript arrives. External media is stubbed for deterministic layout QA.
+  await mobile.route("**/api/transcript/**", (r) =>
+    r.fulfill({ contentType: "application/json", body: "[]" }),
+  );
+  await mobile.route("https://www.youtube.com/**", (r) => r.abort());
+  await mobile.goto(base + "/preview/chat");
+  const citation = mobile.locator("a[data-video-id]").first();
+  await citation.tap();
+  await mobile.waitForFunction(() => {
+    const frame = document.querySelector("iframe")?.getBoundingClientRect();
+    return frame && frame.top >= 0 && frame.bottom <= innerHeight;
+  });
+  assert((await mobile.locator("iframe").getAttribute("src")).includes("start=3965"));
+  await mobile.getByRole("button", { name: "Back to chat" }).tap();
+  assert.equal(await mobile.locator("iframe").count(), 0);
+  assert(await citation.evaluate((e) => {
+    const box = e.getBoundingClientRect();
+    return document.activeElement === e && box.top >= 0 && box.bottom <= innerHeight;
+  }));
+  console.log("PASS Mobile citation reveals timestamped preview; Back to chat restores quote and focus");
   await p.goto(base);
   await p.waitForTimeout(500);
   const dir = ".context/homepage-qa/home-chat-flow";
