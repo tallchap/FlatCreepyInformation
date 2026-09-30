@@ -245,19 +245,34 @@ def verify(root):
 
 
 class Runner:
-    def __init__(self, root, whisper, limit=None, machine=None, namespace=None, batch_workers=1, experiment_id=None):
+    def __init__(self, root, whisper, limit=None, machine=None, namespace=None, batch_workers=1, experiment_id=None,
+                 stream_id=None, max_candidates=None):
         if batch_workers not in range(1, 11):
             raise ValueError('Batch workers must be between 1 and 10')
         if batch_workers > 2 and not experiment_id:
             raise ValueError('More than two workers requires a frozen bounded experiment')
         if experiment_id and (batch_workers != 10 or limit != 10):
             raise ValueError('The bounded experiment requires exactly 10 workers and max-batches 10')
+        if stream_id and (experiment_id or batch_workers > 2 or max_candidates not in range(1, 6)):
+            raise ValueError('Streaming requires a unique stream-id, 1-5 max-candidates, and at most two batch workers')
+        if max_candidates is not None and not stream_id:
+            raise ValueError('max-candidates requires a frozen stream-id')
         self.root, self.whisper, self.limit = root.resolve(), whisper, limit
         frozen_path = self.root / 'experiment-plan.json'
+        if experiment_id and (self.root / 'experiment-status.json').exists():
+            previous = luna.read(self.root / 'experiment-status.json')
+            if (previous.get('experiment_id') == experiment_id and previous.get('phase') in ('paused', 'cancelled')
+                    and previous.get('drained_at')):
+                raise ValueError('Drained paused/cancelled experiment cannot restart; its frozen scope remains closed')
         if frozen_path.exists() and (not experiment_id or luna.read(frozen_path).get('experiment_id') != experiment_id):
-            raise ValueError('Existing bounded experiment requires its matching experiment-id; queue continuation is paused')
+            status_path = self.root / 'experiment-status.json'
+            previous = luna.read(status_path) if status_path.exists() else {}
+            if (not stream_id or previous.get('phase') not in ('paused', 'cancelled') or not previous.get('drained_at')
+                    or previous.get('experiment_id') != luna.read(frozen_path).get('experiment_id')):
+                raise ValueError('Existing bounded experiment requires its matching experiment-id; queue continuation is paused')
         self.batch_workers = batch_workers
         self.experiment_id = experiment_id
+        self.stream_id, self.max_candidates = stream_id, max_candidates
         self.review_barrier = None
         self.publication_lock = threading.Lock()
         self.render_slots = luna.RENDER_LOCK
@@ -283,6 +298,21 @@ class Runner:
         self.active_batches = {}
         self.batch_claims = set()
         self.last_id = None
+
+    def pause_candidates(self, items, stage):
+        for item in items:
+            vid = item['candidate_id']
+            row = self.records.get(vid)
+            if row and row.get('status') not in TERMINAL and row.get('status') != 'paused':
+                self.save(vid, 'paused', previous_status=row.get('status'), pause_stage=stage,
+                          pause_reason='Operator STOP.json; no new operations admitted', paused_at=audit.now())
+
+    def stop_requested(self):
+        try:
+            luna.check_stop(self.root)
+            return False
+        except luna.OperationalPause:
+            return True
 
     def save(self, vid, status, **values):
         with self.lock:
@@ -339,6 +369,7 @@ class Runner:
     def prepare(self, item):
         vid = item['candidate_id']
         try:
+            luna.check_stop(self.root)
             with self.lock:
                 self.active_ids.add(vid)
             if shutil.disk_usage(self.root).free < 10 * 1024**3:
@@ -358,14 +389,20 @@ class Runner:
             audit.atomic(self.root / 'recipes' / f'{vid}.json', recipe)
             args = SimpleNamespace(output=self.root / 'rendered', max_transfer_bytes=256 * 1024**2)
             with self.render_slots:
+                luna.check_stop(self.root)
                 result = media.render(args, recipe, packet, valid)
             directory = Path(result['clip_path']).parent
             self.save(vid, 'transcribing', directory=str(directory), transfer=result['transfer'], output_bytes=result['output_bytes'])
+            luna.check_stop(self.root)
             luna.ensure_asr(directory, self.whisper)
+            luna.check_stop(self.root)
             if not (directory / 'contact.jpg').exists():
                 luna.contact_sheet(directory)
             self.save(vid, 'prepared', directory=str(directory))
             return directory
+        except luna.OperationalPause:
+            self.pause_candidates([item], 'preparation')
+            return None
         except Exception as exc:
             self.save(vid, 'failed', stage='preparation', error=f'{type(exc).__name__}: {exc}')
             return None
@@ -374,6 +411,12 @@ class Runner:
                 self.active_ids.discard(vid)
 
     def batch_slots(self):
+        if getattr(self, 'stream_id', None):
+            plan = self.stream_plan()
+            for slot in plan['slots']:
+                if any(self.records.get(row['candidate_id'], {}).get('status') not in TERMINAL for row in slot['items']):
+                    yield self.root / 'batches' / slot['batch_name'], slot['items']
+            return
         for lane in ('eligible', 'review'):
             items = [row for row in self.candidates if row['lane'] == lane]
             for i in range(0, len(items), 5):
@@ -404,6 +447,7 @@ class Runner:
         try:
             if self.review_barrier is not None:
                 self.review_barrier.wait(timeout=60)
+            luna.check_stop(self.root)
             if not group:
                 return True
             self.heartbeat()
@@ -411,6 +455,7 @@ class Runner:
             if not (batch / 'batch-plan.json').exists():
                 with ThreadPoolExecutor(max_workers=2) as pool:
                     directories = [directory for directory in pool.map(self.prepare, group) if directory]
+            luna.check_stop(self.root)
             if directories == []:
                 # A proposal hold is a valid disposition, not an operational failure.
                 with self.lock:
@@ -426,6 +471,7 @@ class Runner:
             result = planned_pipeline(plan, batch, self.input / 'candidates', self.whisper)
             self.batch_phase(batch, 'publishing')
             for decision in result['decisions']:
+                luna.check_stop(self.root)
                 vid = decision['candidate_id']
                 if self.records.get(vid, {}).get('status') in TERMINAL:
                     continue
@@ -437,13 +483,19 @@ class Runner:
                 receipt_path = self.root / 'publications' / f'{vid}.json'
                 try:
                     with self.publication_lock:
+                        luna.check_stop(self.root)
                         publish_astra.publish(recipe, clip, recipe.parent / 'final-qa.json', receipt_path)
                         live_receipt(luna.read(receipt_path))
                         self.save(vid, 'published', publication_receipt=str(receipt_path), final_directory=str(recipe.parent))
+                except luna.OperationalPause:
+                    raise
                 except Exception as exc:
                     self.save(vid, 'failed', stage='publication', error=f'{type(exc).__name__}: {exc}', retry_recipe=str(recipe), retry_media=str(clip))
             with self.lock:
                 return not any(self.records[row['candidate_id']]['status'] == 'failed' for row in group)
+        except luna.OperationalPause:
+            self.pause_candidates(group, stage)
+            return True
         except Exception as exc:
             for item in group:
                 vid = item['candidate_id']
@@ -463,9 +515,13 @@ class Runner:
         submitted = failures = 0
         exhausted = False
         stop_error = None
+        paused = False
         with ThreadPoolExecutor(max_workers=self.batch_workers) as pool:
             while True:
                 while not stop_error and not exhausted and len(active) < self.batch_workers:
+                    if self.stop_requested():
+                        paused = True
+                        break
                     if self.limit is not None and submitted >= self.limit:
                         break
                     try:
@@ -492,6 +548,8 @@ class Runner:
                     self.phase = 'draining_after_batch_failures'
                     self.error = stop_error
                     self.heartbeat()
+        if paused or self.stop_requested():
+            raise luna.OperationalPause('Operator stop requested; active batches drained')
         if stop_error:
             raise RuntimeError(stop_error)
         return exhausted
@@ -548,6 +606,60 @@ class Runner:
             raise ValueError('Frozen experiment membership is invalid')
         return plan
 
+    def stream_plan(self):
+        """Freeze one tiny fresh admission; restart can never select replacements."""
+        if not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_-]{0,79}', self.stream_id):
+            raise ValueError('Stream ID must be a simple name of at most 80 characters')
+        path = self.root / 'stream-plan.json'
+        manifest_hash = luna.sha(self.input / 'manifest.json')
+        if path.exists():
+            plan = luna.read(path)
+            unsigned = {key: value for key, value in plan.items() if key != 'plan_sha256'}
+            if (plan.get('stream_id') != self.stream_id or plan.get('target_candidate_count') != self.max_candidates
+                    or plan.get('manifest_sha256') != manifest_hash or plan.get('plan_sha256') != audit.digest(unsigned)):
+                raise ValueError('Frozen streaming identity, limit, or manifest changed')
+        else:
+            excluded = set(self.records)
+            previous_path = self.root / 'experiment-plan.json'
+            if previous_path.exists():
+                previous = luna.read(previous_path)
+                if previous.get('plan_sha256') != audit.digest({k: v for k, v in previous.items() if k != 'plan_sha256'}):
+                    raise ValueError('Previous experiment plan hash changed')
+                excluded.update(previous['candidate_ids'])
+            slots = []
+            for lane, count in (('eligible', (self.max_candidates + 1)//2), ('review', self.max_candidates//2)):
+                if not count:
+                    continue
+                fresh = [row for row in self.candidates if row['lane'] == lane and row['candidate_id'] not in excluded][:count]
+                if len(fresh) != count:
+                    raise ValueError('Insufficient fresh mixed-lane candidates for frozen streaming trial')
+                name = f'{self.stream_id}-{lane}-0001'
+                if (self.root / 'batches' / name).exists():
+                    raise ValueError('Streaming namespace already contains artifacts without a frozen plan')
+                slots.append({'batch_name': name, 'lane': lane, 'items': fresh,
+                              'candidate_ids': [row['candidate_id'] for row in fresh]})
+            plan = {'schema_version': 'snippy-small-stream-v1', 'stream_id': self.stream_id, 'created_at': audit.now(),
+                    'target_candidate_count': self.max_candidates, 'maximum_candidates': 5,
+                    'candidate_ids': [vid for slot in slots for vid in slot['candidate_ids']], 'slots': slots,
+                    'excluded_prior_candidate_ids': sorted(excluded), 'manifest_sha256': manifest_hash,
+                    'baseline_record_sha256': {path.stem: luna.sha(path) for path in (self.root / 'records').glob('*.json')}}
+            plan['plan_sha256'] = audit.digest(plan)
+            audit.atomic(path, plan)
+        ids = [vid for slot in plan['slots'] for vid in slot['candidate_ids']]
+        wanted = {row['candidate_id']: row for row in self.candidates}
+        if (len(ids) != self.max_candidates or len(ids) != len(set(ids)) or ids != plan['candidate_ids']
+                or set(ids) & set(plan.get('excluded_prior_candidate_ids', []))
+                or any(not 1 <= len(slot['candidate_ids']) <= 5
+                       or slot['items'] != [wanted[vid] for vid in slot['candidate_ids']] for slot in plan['slots'])):
+            raise ValueError('Frozen streaming candidate membership is invalid')
+        for vid, digest in plan['baseline_record_sha256'].items():
+            record = self.root / 'records' / f'{vid}.json'
+            if not record.exists() or luna.sha(record) != digest:
+                raise ValueError('Streaming baseline record changed: ' + vid)
+        if set(self.records) - set(ids) - set(plan['baseline_record_sha256']):
+            raise ValueError('Ledger grew outside the frozen streaming admission')
+        return plan
+
     def prepare_experiment_batch(self, batch, slot):
         group = [row for row in slot if self.records.get(row['candidate_id'], {}).get('status') not in TERMINAL]
         if not group:
@@ -558,8 +670,11 @@ class Runner:
                 return
             with ThreadPoolExecutor(max_workers=2) as pool:
                 directories = [directory for directory in pool.map(self.prepare, group) if directory]
+            luna.check_stop(self.root)
             if directories:
                 bound_batch_plan(batch, [row['candidate_id'] for row in slot], directories, self.input / 'candidates')
+        except luna.OperationalPause:
+            self.pause_candidates(group, 'experiment_preparation')
         except Exception as exc:
             for row in group:
                 vid = row['candidate_id']
@@ -588,9 +703,16 @@ class Runner:
             self.heartbeat()
 
         work = [(self.root / 'batches' / slot['batch_name'], slot['items']) for slot in plan['slots']]
+        if self.stop_requested():
+            phase('paused', 'drained_at')
+            return
         phase('experiment_preparing', 'preparation_started_at')
         with ThreadPoolExecutor(max_workers=2) as pool:
             list(pool.map(lambda pair: self.prepare_experiment_batch(*pair), work))
+        if self.stop_requested():
+            self.pause_candidates([item for _, items in work for item in items], 'preparation')
+            phase('paused', 'drained_at')
+            return
         phase('experiment_prepared', 'preparation_finished_at')
         # No new IDs are admitted. Every selected preparation has settled before
         # ten workers are released together, including groups held before review.
@@ -601,6 +723,10 @@ class Runner:
                 outcomes = list(pool.map(lambda pair: self.process_batch(*pair), work))
         finally:
             self.review_barrier = None
+        if self.stop_requested():
+            self.pause_candidates([item for _, items in work for item in items], 'luna_or_publication')
+            phase('paused', 'drained_at')
+            return
         phase('experiment_review_finished', 'review_finished_at')
         status['batch_outcomes'] = outcomes
         status['remaining_queue_paused_for_cost_confirmation'] = True
@@ -610,15 +736,22 @@ class Runner:
         thread = threading.Thread(target=self.pulse, daemon=True)
         thread.start()
         try:
+            luna.check_stop(self.root)
+            stream_plan = self.stream_plan() if self.stream_id else None
+            admitted_ids = set(stream_plan['candidate_ids']) if stream_plan else None
             self.phase = 'verifying_previous_publications'
             for vid, receipt in self.prior.items():
+                luna.check_stop(self.root)
                 if self.records.get(vid, {}).get('status') in TERMINAL:
+                    continue
+                if admitted_ids is not None and vid not in admitted_ids:
                     continue
                 live_receipt(receipt)
                 path = self.root / 'publications' / f'{vid}.json'
                 audit.atomic(path, receipt)
                 self.save(vid, 'already_published', publication_receipt=str(path))
             # Fail closed on any unexpected existing Astra record; never duplicate it.
+            luna.check_stop(self.root)
             query_job = audit.bq_client().query(
                 "SELECT DISTINCT original_video_id FROM `youtubetranscripts-429803.reptranscripts.snippets_auto` WHERE provider='astra'")
             existing = {row['original_video_id'] for row in query_job.result()}
@@ -629,17 +762,46 @@ class Runner:
                              'cache_hit': query_job.cache_hit, 'time': audit.now()})
             audit.atomic(receipt_path, {'query_jobs': jobs, 'time': audit.now()})
             for vid in existing - set(self.prior):
+                if admitted_ids is not None and vid not in admitted_ids:
+                    continue
                 if vid in self.sources and self.records.get(vid, {}).get('status') not in TERMINAL:
                     self.save(vid, 'failed', stage='existing_publication', error='Untracked prior publication requires reconciliation')
             if self.experiment_id:
                 self.run_experiment()
                 return
             self.phase = 'processing_batches'
+            if self.stream_id:
+                plan = stream_plan
+                self.limit = None  # The immutable stream slots are the admission bound.
+                status_path = self.root / 'stream-status.json'
+                status = luna.read(status_path) if status_path.exists() else {
+                    'stream_id': self.stream_id, 'started_at': audit.now(), 'candidate_ids': plan['candidate_ids'], 'attempts': []}
+                if status['stream_id'] != self.stream_id:
+                    raise ValueError('Stream status identity differs from frozen plan')
+                status['attempts'].append({'pid': os.getpid(), 'started_at': audit.now()})
+                status['phase'] = 'streaming'
+                audit.atomic(status_path, status)
             if not self.run_batches():
                 self.phase = 'batch_limit_reached'
                 return
+            if self.stream_id:
+                self.phase = 'stream_completed'
+                status.update(phase=self.phase, finished_at=audit.now(),
+                    counts=dict(Counter(self.records.get(vid, {}).get('status', 'pending') for vid in plan['candidate_ids'])))
+                audit.atomic(status_path, status)
+                return
             self.phase = 'coverage_finished'
             verify(self.root)
+        except luna.OperationalPause:
+            self.phase, self.error = 'paused', None
+            audit.atomic(self.root / 'pause-status.json', {'phase': 'paused', 'drained_at': audit.now(),
+                'reason': 'Operator STOP.json; in-flight operations finished before return',
+                'stream_id': self.stream_id, 'experiment_id': self.experiment_id})
+            if self.stream_id:
+                path = self.root / 'stream-status.json'
+                status = luna.read(path) if path.exists() else {'stream_id': self.stream_id}
+                status.update(phase='paused', drained_at=audit.now())
+                audit.atomic(path, status)
         except Exception as exc:
             self.phase, self.error = 'stopped_on_error', f'{type(exc).__name__}: {exc}'
             raise
@@ -659,6 +821,8 @@ def main():
     parser.add_argument('--max-batches', type=int)
     parser.add_argument('--batch-workers', type=int, choices=range(1, 11), default=1)
     parser.add_argument('--experiment-id')
+    parser.add_argument('--stream-id')
+    parser.add_argument('--max-candidates', type=int, choices=range(1, 6))
     args = parser.parse_args()
     if args.private_env_file:
         private_environment(args.private_env_file)
@@ -668,7 +832,8 @@ def main():
         raise SystemExit(0 if result['passed'] else 1)
     args.root.mkdir(parents=True, exist_ok=True)
     with runner_lock(args.root / 'runner.lock'):
-        Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers, args.experiment_id).run()
+        Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers,
+               args.experiment_id, args.stream_id, args.max_candidates).run()
 
 
 if __name__ == '__main__':

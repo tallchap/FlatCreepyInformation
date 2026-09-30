@@ -150,6 +150,36 @@ class ProductionTests(unittest.TestCase):
             self.assertEqual(status['current_luna_cost_usd'], 0)
             self.assertEqual(status['unique_api_responses'], 4)
 
+    def test_tiny_runner_completes_five_once_and_preserves_status_timing_on_resume(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            candidates = [{'candidate_id': f'v{i:010}', 'lane': 'eligible' if i < 1200 else 'review'} for i in range(1644)]
+            p.audit.atomic(root / 'input/manifest.json', {'candidates': candidates})
+            p.audit.atomic(root / 'input/already-published.json', {})
+            p.audit.atomic(root / 'input/culled-ids.json', [])
+            job = Mock(job_id='preflight-offline', total_bytes_billed=0, cache_hit=True)
+            job.result.return_value = []
+            client = Mock(); client.query.return_value = job
+            admitted = []
+            def process(runner, batch, slot):
+                for item in slot:
+                    admitted.append(item['candidate_id'])
+                    runner.save(item['candidate_id'], 'awaiting_astra', stage='proposal', reason='offline fixture')
+                return True
+            with patch('production.audit.inputs', return_value=[]), patch('production.audit.bq_client', return_value=client), \
+                 patch.object(p.Runner, 'process_batch', process):
+                runner = p.Runner(root, 'whisper', stream_id='tiny-test', max_candidates=5, batch_workers=2)
+                runner.run()
+                first = p.luna.read(root / 'stream-status.json')
+                self.assertEqual(first['phase'], 'stream_completed')
+                self.assertEqual(first['counts'], {'awaiting_astra': 5})
+                self.assertEqual(len(admitted), 5)
+                p.Runner(root, 'whisper', stream_id='tiny-test', max_candidates=5, batch_workers=2).run()
+            second = p.luna.read(root / 'stream-status.json')
+            self.assertEqual(second['started_at'], first['started_at'])
+            self.assertEqual(len(second['attempts']), 2)
+            self.assertEqual(len(admitted), 5)
+
 
 class BatchResumeTests(unittest.TestCase):
     def setUp(self):
@@ -410,6 +440,150 @@ class ConcurrentBatchTests(unittest.TestCase):
             render.assert_not_called()
         self.assertEqual(self.runner.records['disk-id']['stage'], 'disk_space_low')
 
+    def test_stop_before_preparation_admits_no_work_or_false_failure(self):
+        p.audit.atomic(self.runner.root / 'STOP.json', {'reason': 'operator pause'})
+        with patch('production.media.render') as render:
+            self.assertIsNone(self.runner.prepare({'candidate_id': 'new-id'}))
+            render.assert_not_called()
+        self.assertNotIn('new-id', self.runner.records)
+
+    def test_active_render_finishes_receipt_then_pauses_before_asr(self):
+        self.runner.save = p.Runner.save.__get__(self.runner)
+        item = {'candidate_id': 'vid', 'packet_sha256': p.audit.digest({'id': 'vid'})}
+        self.runner.sources, self.runner.forbidden = {'vid': {}}, set()
+        p.audit.atomic(self.runner.input / 'candidates/vid.json', {'id': 'vid'})
+        directory = self.runner.root / 'rendered/vid'
+
+        def render(*args):
+            p.audit.atomic(self.runner.root / 'STOP.json', {'reason': 'drain'})
+            return {'clip_path': str(directory / 'clip.mp4'), 'transfer': {'complete': True}, 'output_bytes': 42}
+
+        with patch('production.seed', return_value={}), patch('production.media.validate'), \
+             patch('production.media.render', side_effect=render), patch('production.luna.ensure_asr') as asr:
+            self.assertIsNone(self.runner.prepare(item))
+            asr.assert_not_called()
+        row = self.runner.records['vid']
+        self.assertEqual(row['status'], 'paused')
+        self.assertEqual(row['previous_status'], 'transcribing')
+        self.assertEqual(row['pause_stage'], 'preparation')
+        self.assertEqual(row['directory'], str(directory))
+        self.assertEqual(row['transfer'], {'complete': True})
+
+    def test_stop_drains_active_batches_and_never_schedules_next(self):
+        self.runner.batch_slots = lambda: iter(self.slots(6))
+        admitted = []
+        barrier = threading.Barrier(2)
+        stopped = threading.Event()
+
+        def work(batch, slot):
+            admitted.append(batch.name)
+            barrier.wait(timeout=3)
+            if batch.name == 'batch0':
+                p.audit.atomic(self.runner.root / 'STOP.json', {'reason': 'drain'})
+                stopped.set()
+            self.assertTrue(stopped.wait(timeout=3))
+            time.sleep(.02)
+            return True
+        self.runner.process_batch = work
+        with self.assertRaises(p.luna.OperationalPause):
+            self.runner.run_batches()
+        self.assertEqual(set(admitted), {'batch0', 'batch1'})
+
+    def test_tiny_stream_excludes_entire_prior_fifty_and_never_reselects(self):
+        self.runner.stream_id, self.runner.max_candidates = 'tiny-one', 5
+        self.runner.candidates = [{'candidate_id': str(i), 'lane': 'eligible' if i < 60 else 'review'} for i in range(100)]
+        p.audit.atomic(self.runner.input / 'manifest.json', {'candidates': self.runner.candidates})
+        previous = {'candidate_ids': [str(i) for i in range(35)] + [str(i) for i in range(60, 75)]}
+        previous['plan_sha256'] = p.audit.digest(previous)
+        p.audit.atomic(self.runner.root / 'experiment-plan.json', previous)
+        self.runner.records = {'35': {'status': 'paused'}}
+        p.audit.atomic(self.runner.root / 'records/35.json', self.runner.records['35'])
+        plan = self.runner.stream_plan()
+        self.assertEqual([slot['candidate_ids'] for slot in plan['slots']], [['36', '37', '38'], ['75', '76']])
+        self.assertFalse(set(plan['candidate_ids']) & set(previous['candidate_ids']))
+        self.runner.records.update({vid: {'status': 'published'} for vid in plan['candidate_ids']})
+        self.assertEqual(self.runner.stream_plan(), plan)
+        self.assertEqual(list(self.runner.batch_slots()), [])
+        self.runner.stream_id = 'tiny-two'
+        with self.assertRaisesRegex(ValueError, 'Frozen streaming identity'):
+            self.runner.stream_plan()
+
+    def test_tiny_stream_requires_proven_prior_drain(self):
+        p.audit.atomic(self.runner.root / 'experiment-plan.json', {'experiment_id': 'bounded-ten'})
+        with self.assertRaisesRegex(ValueError, 'queue continuation is paused'):
+            p.Runner(self.runner.root, 'whisper', stream_id='tiny-one', max_candidates=5, batch_workers=2)
+
+    def test_drained_benchmark_cannot_restart_even_without_stop_file(self):
+        p.audit.atomic(self.runner.root / 'experiment-plan.json', {'experiment_id': 'bounded-ten'})
+        p.audit.atomic(self.runner.root / 'experiment-status.json',
+                       {'experiment_id': 'bounded-ten', 'phase': 'paused', 'drained_at': p.audit.now()})
+        with self.assertRaisesRegex(ValueError, 'scope remains closed'):
+            p.Runner(self.runner.root, 'whisper', limit=10, batch_workers=10, experiment_id='bounded-ten')
+
+    def test_stop_after_saved_pipeline_does_not_publish_or_mark_failed(self):
+        batch, slot = self.slots(1)[0]
+        p.audit.atomic(batch / 'batch-plan.json', {'existing': True})
+        def pipeline(*args):
+            p.audit.atomic(self.runner.root / 'STOP.json', {'reason': 'drain'})
+            return {'decisions': [{'candidate_id': '0', 'status': 'pass', 'complete': True}]}
+        with patch('production.bound_batch_plan', return_value={'candidate_ids': ['0']}), \
+             patch('production.planned_pipeline', side_effect=pipeline), patch('production.publish_astra.publish') as publish:
+            self.assertTrue(self.runner.process_batch(batch, slot))
+            publish.assert_not_called()
+        self.assertEqual(self.runner.records['0']['status'], 'paused')
+        self.assertEqual(self.runner.records['0']['previous_status'], 'reviewing')
+
+    def test_tiny_groups_stream_review_while_other_group_prepares(self):
+        slots = [(self.runner.root / 'tiny-eligible', [{'candidate_id': str(i), 'lane': 'eligible'} for i in range(3)]),
+                 (self.runner.root / 'tiny-review', [{'candidate_id': str(i), 'lane': 'review'} for i in range(3, 5)])]
+        self.runner.batch_slots = lambda: iter(slots)
+        review_started = threading.Event()
+        order = []
+        def prepare(item):
+            if item['lane'] == 'eligible':
+                self.assertTrue(review_started.wait(timeout=3))
+            order.append('prepared-' + item['candidate_id'])
+            return self.runner.root / 'rendered' / item['candidate_id']
+        def pipeline(plan, batch, *args):
+            if batch.name == 'tiny-review':
+                order.append('review-started')
+                review_started.set()
+            return {'decisions': [{'candidate_id': vid, 'status': 'review', 'complete': False,
+                                  'astra_escalation_path': 'hold.md', 'reason': 'hold'} for vid in plan['candidate_ids']]}
+        self.runner.prepare = prepare
+        with patch('production.bound_batch_plan', side_effect=lambda batch, ids, *args: {'candidate_ids': ids}), \
+             patch('production.planned_pipeline', side_effect=pipeline):
+            self.assertTrue(self.runner.run_batches())
+        self.assertLess(order.index('review-started'), order.index('prepared-0'))
+        self.assertEqual(len(self.runner.records), 5)
+
+    def test_publication_inflight_finishes_readback_and_record_after_stop(self):
+        batch, slot = self.slots(1)[0]
+        p.audit.atomic(batch / 'batch-plan.json', {'existing': True})
+        decision = {'candidate_id': '0', 'status': 'pass', 'complete': True,
+                    'recipe_path': str(self.runner.root / 'recipe.json'), 'media_path': str(self.runner.root / 'clip.mp4')}
+        def publish(*args):
+            p.audit.atomic(self.runner.root / 'STOP.json', {'reason': 'drain'})
+        with patch('production.bound_batch_plan', return_value={'candidate_ids': ['0']}), \
+             patch('production.planned_pipeline', return_value={'decisions': [decision]}), \
+             patch('production.publish_astra.publish', side_effect=publish), patch('production.live_receipt') as live, \
+             patch('production.luna.read', return_value={'passed': True}):
+            self.assertTrue(self.runner.process_batch(batch, slot))
+        live.assert_called_once()
+        self.assertEqual(self.runner.records['0']['status'], 'published')
+
+    def test_stop_during_benchmark_preparation_does_not_freeze_partial_paid_batch(self):
+        batch, slot = self.slots(1)[0]
+        def prepare(item):
+            self.runner.records[item['candidate_id']] = {'status': 'prepared'}
+            p.audit.atomic(self.runner.root / 'STOP.json', {})
+            return self.runner.root / 'rendered' / item['candidate_id']
+        self.runner.prepare = prepare
+        with patch('production.bound_batch_plan') as bound:
+            self.runner.prepare_experiment_batch(batch, slot)
+            bound.assert_not_called()
+        self.assertEqual(self.runner.records['0']['status'], 'paused')
+
     def test_frozen_experiment_blocks_old_unlimited_continuation_command(self):
         p.audit.atomic(self.runner.root / 'experiment-plan.json', {'experiment_id': 'bounded-ten'})
         with self.assertRaisesRegex(ValueError, 'queue continuation is paused'):
@@ -503,6 +677,81 @@ class ConcurrentBatchTests(unittest.TestCase):
         self.assertTrue(status['remaining_queue_paused_for_cost_confirmation'])
         self.assertLessEqual(status['preparation_finished_at'], status['review_started_at'])
         self.assertEqual(status['phase'], 'experiment_completed')
+
+
+class CooperativeTransportTests(unittest.TestCase):
+    def invoke(self, root, post, sleep=None):
+        with patch.object(p.luna, 'build_request', return_value={'model': 'gpt-6-luna'}), \
+             patch.object(p.luna, 'bind_request'), patch.object(p.audit, 'api_key', return_value='test'), \
+             patch.object(p.luna, 'normalize', return_value={'decisions': []}), \
+             patch('requests.post', side_effect=post) as request, patch.object(p.luna.time, 'sleep', side_effect=sleep):
+            result = p.luna.review_packages([], root / 'batches/test')
+        return result, request
+
+    def test_stop_before_request_writes_no_call_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p.audit.atomic(root / 'STOP.json', {})
+            with self.assertRaises(p.luna.OperationalPause):
+                self.invoke(root, lambda *a, **k: self.fail('HTTP admitted after stop'))
+            self.assertFalse(list(root.rglob('call-state.json')))
+
+    def test_inflight_response_is_saved_even_if_stop_arrives(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            response = Mock(status_code=200)
+            response.json.return_value = {'id': 'resp_drained'}
+            def post(*args, **kwargs):
+                p.audit.atomic(root / 'STOP.json', {})
+                return response
+            _, request = self.invoke(root, post)
+            self.assertEqual(request.call_count, 1)
+            self.assertEqual(p.luna.read(next(root.rglob('response.json')))['id'], 'resp_drained')
+            self.assertEqual(p.luna.read(next(root.rglob('call-state.json')))['status'], 'response_saved')
+
+    def test_stop_during_429_wait_prevents_next_attempt_without_unknown_charge(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            response = Mock(status_code=429, headers={'Retry-After': '0'})
+            calls = []
+            def post(*args, **kwargs):
+                calls.append(1)
+                return response
+            with self.assertRaises(p.luna.OperationalPause):
+                self.invoke(root, post, lambda delay: p.audit.atomic(root / 'STOP.json', {}))
+            self.assertEqual(calls, [1])
+            self.assertEqual(p.luna.read(next(root.rglob('call-state.json')))['status'], 'rate_limited')
+
+    def test_stop_after_intent_is_truthfully_receipted_as_not_dispatched(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            original = p.luna.check_stop
+            def check(directory):
+                if list(root.rglob('transport-events.jsonl')):
+                    p.audit.atomic(root / 'STOP.json', {})
+                original(directory)
+            with patch.object(p.luna, 'check_stop', side_effect=check), self.assertRaises(p.luna.OperationalPause):
+                self.invoke(root, lambda *a, **k: self.fail('HTTP was dispatched'))
+            state = p.luna.read(next(root.rglob('call-state.json')))
+            self.assertEqual(state['status'], 'cancelled_before_dispatch')
+            self.assertFalse(state['dispatched'])
+            self.assertFalse(state['charge_unknown'])
+            events = [json.loads(line) for line in next(root.rglob('transport-events.jsonl')).read_text().splitlines()]
+            self.assertEqual(events[-1]['event'], 'request_end')
+            self.assertFalse(events[-1]['dispatched'])
+
+    def test_legacy_review_cli_checks_stop_before_http(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            clip = root / 'rendered/vid'
+            p.audit.atomic(clip / 'result.json', {'candidate_id': 'vid'})
+            p.audit.atomic(root / 'STOP.json', {})
+            argv = ['luna_batch_qa.py', 'review', '--clips', str(clip), '--output', str(root / 'batches')]
+            with patch.object(sys, 'argv', argv), patch.object(p.luna, 'package', return_value={'evidence': {}}), \
+                 patch.object(p.luna, 'build_request', return_value={'model': 'gpt-6-luna'}), patch('requests.post') as post:
+                with self.assertRaises(p.luna.OperationalPause):
+                    p.luna.main()
+                post.assert_not_called()
 
 
 if __name__ == '__main__':

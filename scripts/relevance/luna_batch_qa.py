@@ -31,6 +31,18 @@ RELEASE_POLICY_VERSION = 'snippy-luna-release-v1'
 DEFAULT_MIN_RELEASE_CONFIDENCE = .95
 ASR_LOCK = threading.Lock()
 RENDER_LOCK = threading.BoundedSemaphore(2)
+
+
+class OperationalPause(RuntimeError):
+    """A durable operator stop; never a technical/editorial failure."""
+
+
+def check_stop(directory):
+    """Stop new operations beneath a run's STOP.json; drain active calls."""
+    path = Path(directory).resolve()
+    for parent in (path, *path.parents):
+        if (parent / 'STOP.json').exists():
+            raise OperationalPause('Operator stop requested: ' + str(parent / 'STOP.json'))
 ESCALATION_REASONS = ['boundary_uncertain', 'critical_transcript_disagreement', 'context_missing', 'attribution_uncertain', 'caveat_uncertain', 'evidence_missing']
 IDENTITIES = ['candidate_id', 'source_input_hash', 'media_sha256', 'recipe_hash', 'evidence_hash']
 PROPS = {'candidate_id': {'type': 'string'}}
@@ -360,6 +372,7 @@ def execute_trim(plan_path, output, whisper_python=None):
         return cached
     duration = plan['keep_end_seconds'] - plan['keep_start_seconds']
     with RENDER_LOCK:
+        check_stop(output)
         run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-ss', str(plan['keep_start_seconds']), '-i', str(directory / 'clip.mp4'), '-t', str(duration), '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(media)], out / 'trim.log')
     qa = probe(media, out / 'probe.log')
     source_qa = read(directory / 'qa.json')['ffprobe']
@@ -387,12 +400,15 @@ def execute_trim(plan_path, output, whisper_python=None):
     trimmed = {**result, 'clip_path': str(media.resolve()), 'output_sha256': sha(media), 'duration_seconds': float(qa['format']['duration']), 'output_bytes': media.stat().st_size, 'automated_qa': checks, 'attempt': plan['attempt'], 'recipe_hash': audit.digest(revised), 'elapsed_seconds': time.monotonic() - started, 'additional_gcs_bytes_read': 0, 'transfer_note': 'Parent transfer receipt retained; this local trim fetched zero additional GCS bytes', 'source_ranges': plan['source_ranges'], 'uploaded': False, 'database_written': False, 'human_picture_and_dialogue_review': 'pending', 'created_at': audit.now()}
     if whisper_python:
         (out / 'asr').mkdir(exist_ok=True)
-        run([whisper_python, '-m', 'whisper', str(media), '--model', 'small.en', '--language', 'en', '--fp16', 'False', '--threads', '8', '--word_timestamps', 'True', '--output_format', 'json', '--output_dir', str(out / 'asr')], out / 'whisper.log')
+        with ASR_LOCK:
+            check_stop(output)
+            run([whisper_python, '-m', 'whisper', str(media), '--model', 'small.en', '--language', 'en', '--fp16', 'False', '--threads', '8', '--word_timestamps', 'True', '--output_format', 'json', '--output_dir', str(out / 'asr')], out / 'whisper.log')
     audit.atomic(out / 'result.json', trimmed)
     return trimmed
 
 
 def apply_publication_metadata(directory, speaker, title, description, output, source_speaker_evidence=None):
+    check_stop(output)
     directory = Path(directory)
     recipe, result = read(directory / 'recipe.json'), read(directory / 'result.json')
     allowed = [recipe['speaker']] + verify_source_speakers(source_speaker_evidence, recipe, result)
@@ -428,6 +444,7 @@ def apply_speaker_metadata(directory, speaker, output):
 
 
 def review_packages(packages, output, role='finalizer', min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
+    check_stop(output)
     require(role in ('finalizer', 'verifier'), 'Unknown reviewer role')
     body = build_request(packages, min_release_confidence)
     if role == 'verifier':
@@ -441,11 +458,12 @@ def review_packages(packages, output, role='finalizer', min_release_confidence=D
     raw_path = out / 'response.json'
     api_called = not raw_path.exists()
     if api_called:
+        check_stop(output)
         state = out / 'call-state.json'
         require(not state.exists(), 'Prior API call has no durable response; inspect call-state before explicitly retrying (no automatic duplicate charges)')
-        audit.atomic(state, {'role': role, 'status': 'started', 'time': audit.now()})
         import requests
         for attempt in range(1, 4):
+            check_stop(output)
             audit.atomic(state, {'role': role, 'status': 'started', 'time': audit.now(), 'attempt': attempt})
             started_at, started_clock = audit.now(), time.monotonic()
             event_base = {'role': role, 'model': body.get('model'), 'request_hash': out.name,
@@ -467,6 +485,16 @@ def review_packages(packages, output, role='finalizer', min_release_confidence=D
             # The durable intent precedes the request. The end event carries
             # exact client HTTP endpoints, excluding JSON parsing and disk writes.
             event_base['started_at'], started_clock = audit.now(), time.monotonic()
+            try:
+                check_stop(output)
+            except OperationalPause:
+                http_ended_at, http_ended_clock = audit.now(), time.monotonic()
+                request_end(status='cancelled_before_dispatch', http_status=None, response_id=None,
+                            dispatched=False, charge_unknown=False)
+                audit.atomic(state, {'role': role, 'status': 'cancelled_before_dispatch', 'time': audit.now(),
+                    'attempt': attempt, 'dispatched': False, 'charge_unknown': False,
+                    'reason': 'STOP.json arrived after durable intent and before HTTP dispatch; no API call made'})
+                raise
             try:
                 response = requests.post('https://api.openai.com/v1/responses', headers={'Authorization': 'Bearer ' + audit.api_key()}, json=body, timeout=(15, 300))
                 http_ended_at, http_ended_clock = audit.now(), time.monotonic()
@@ -509,6 +537,7 @@ def review_packages(packages, output, role='finalizer', min_release_confidence=D
 
 
 def contact_sheet(directory):
+    check_stop(directory)
     directory = Path(directory)
     duration = read(directory / 'result.json')['duration_seconds']
     run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(directory / 'clip.mp4'), '-vf', f'fps=6/{duration},scale=320:-1,tile=3x2', '-frames:v', '1', str(directory / 'contact.jpg')], directory / 'contact.log')
@@ -598,6 +627,7 @@ def escalation(output, vid, history, p, reason=None, min_release_confidence=DEFA
 
 
 def ensure_asr(directory, whisper_cli):
+    check_stop(directory)
     directory = Path(directory)
     path, binding = directory / 'asr/clip.json', directory / 'asr/evidence.json'
     media_hash = sha(directory / 'clip.mp4')
@@ -611,6 +641,7 @@ def ensure_asr(directory, whisper_cli):
         command = ([os.environ.get('SNIPPY_WHISPER_PYTHON', sys.executable), '-X', 'utf8', whisper_cli]
                    if str(whisper_cli).lower().endswith('.py') else [whisper_cli])
         with ASR_LOCK:
+            check_stop(directory)
             run(command + [str(directory / 'clip.mp4'), '--model', 'small.en', '--language', 'en', '--output_dir', str(path.parent), '--output_format', 'json', '--fp16', 'False', '--threads', '8', '--word_timestamps', 'True'], directory / 'whisper.log')
     require(words_from(read(path)), 'ASR returned no word timings')
     if existing is None:
@@ -618,6 +649,7 @@ def ensure_asr(directory, whisper_cli):
 
 
 def pipeline(args):
+    check_stop(args.output)
     started = time.monotonic()
     threshold = validate_threshold(getattr(args, 'min_release_confidence', DEFAULT_MIN_RELEASE_CONFIDENCE))
     images = dict(item.split('=', 1) for item in args.images)
@@ -652,6 +684,7 @@ def pipeline(args):
     calls = {}
     active = list(originals)
     for pass_number in range(1, MAX_PASSES + 1):
+        check_stop(args.output)
         row = {'pass': pass_number, 'active_candidates': list(active)}
         ledger['rounds'].append(row)
         audit.atomic(run_dir / 'ledger.json', ledger)
@@ -663,6 +696,7 @@ def pipeline(args):
         round_errors = {}
         finalizer_holds = []
         for decision in finalized['decisions']:
+            check_stop(args.output)
             vid = decision['candidate_id']
             gate = release_gate(decision, threshold)
             if gate['escalation_reasons']:
@@ -681,6 +715,8 @@ def pipeline(args):
             if decision['status'] == 'approve':
                 try:
                     directories[vid] = apply_publication_metadata(directories[vid], decision['retained_speaker'], decision['final_title'], decision['final_description'], args.output / 'trimmed', next(p['evidence']['source_speaker_evidence'] for p in finalizer_packages if p['evidence']['candidate_id'] == vid))
+                except OperationalPause:
+                    raise
                 except Exception as exc:
                     round_errors[vid] = str(exc)
                 continue
@@ -693,6 +729,8 @@ def pipeline(args):
                 if not (directory / 'contact.jpg').exists():
                     contact_sheet(directory)
                 directories[vid] = directory
+            except OperationalPause:
+                raise
             except Exception as exc:
                 round_errors[vid] = str(exc)
         row['finalizer_astra_candidates'] = finalizer_holds
@@ -795,6 +833,7 @@ def main():
     if not raw_path.exists():
         require(args.command == 'review', '--response does not exist')
         import requests
+        check_stop(args.output)
         response = requests.post('https://api.openai.com/v1/responses', headers={'Authorization': 'Bearer ' + audit.api_key()}, json=body, timeout=(15, 300))
         response.raise_for_status()
         audit.atomic(raw_path, response.json())
