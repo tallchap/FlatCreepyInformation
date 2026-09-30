@@ -44,6 +44,13 @@ def verify_artifacts(media_path, recipe_path, media_hash, recipe_hash):
 
 
 def manifest_candidates(manifest):
+    if not manifest.get('ids') and manifest.get('candidates'):
+        manifest['ids'] = [row['candidate_id'] for row in manifest['candidates']]
+        manifest['lanes'] = {row['candidate_id']: row['lane'] for row in manifest['candidates']}
+        waves = {}
+        for row in manifest['candidates']:
+            waves.setdefault(str(row.get('wave', 'unspecified')), []).append(row['candidate_id'])
+        manifest['waves'] = [{'wave_id': wave, 'ids': ids} for wave, ids in waves.items()]
     ids = manifest.get('ids', [])
     require(isinstance(ids, list) and ids and len(ids) == len(set(ids)), 'Manifest needs unique ids')
     lanes = manifest.get('lanes', {})
@@ -100,6 +107,15 @@ def summarize(rows):
 def compare(manifest_path, pipeline_paths, astra_paths):
     manifest = read(manifest_path)
     ids, lanes, waves = manifest_candidates(manifest)
+    for vid in ids:
+        receipt_path = Path(manifest_path).parent / 'receipts' / f'{vid}.json'
+        if receipt_path.exists():
+            receipt = read(receipt_path)
+            if receipt.get('status') == 'not_rendered':
+                manifest.setdefault('not_rendered', {}).setdefault(vid, receipt.get('reason', 'Explicit preparation deferral'))
+            if receipt.get('directory'):
+                directory = Path(receipt['directory'])
+                manifest.setdefault('originals', {}).setdefault(vid, {'media_path': str(directory / 'clip.mp4'), 'recipe_path': str(directory / 'recipe.json')})
     reports = astra_records(astra_paths)
     require(all(r['candidate_id'] in ids for r in reports), 'Astra report includes a candidate outside manifest')
     rows, seen_runs, seen_ids, costs = [], {}, set(), {}
