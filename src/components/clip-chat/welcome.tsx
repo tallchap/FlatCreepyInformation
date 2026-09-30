@@ -1,5 +1,4 @@
 "use client";
-import { UsersRound } from "lucide-react";
 import { PortraitPicker } from "./portrait-picker";
 import { SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
@@ -23,19 +22,6 @@ export function Welcome({
           disabled={disabled}
         />
       )}
-      <button
-        className={styles.anySpeaker}
-        aria-pressed={speaker === "all"}
-        disabled={disabled}
-        onClick={() =>
-          onSpeakerChange(
-            speaker === "all" ? "sam-altman" : "all",
-            speaker === "all" ? "Sam Altman" : "Any speaker",
-          )
-        }
-      >
-        <UsersRound size={14} aria-hidden="true" /> Any speaker
-      </button>
       <h1>
         {speaker === "all" ? (
           <>

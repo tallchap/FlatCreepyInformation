@@ -24,38 +24,44 @@ export function PortraitPicker({
     );
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
     const count = SEARCH_SPEAKERS.length;
-    const wrap = (n: number) => (n + count) % count;
+    const wrap = (n: number) => ((n % count) + count) % count;
     const current = () =>
       Math.max(
         0,
         SEARCH_SPEAKERS.findIndex((p) => p.slug === latest.current.value),
       );
-    const step = () => (stage.clientWidth < 340 ? 94 : 112);
+    const step = () => (stage.clientWidth < 400 ? 120 : 154);
+    const clamp = (n: number, limit: number) =>
+      Math.max(-limit, Math.min(limit, n));
+    const nearest = (index: number, from: number) =>
+      from + wrap(index - from + count / 2) - count / 2;
+    let position = current();
+    let target = position;
+    let velocity = 0;
+    let frame = 0;
+    let lastFrame = 0;
     let suppressClickUntil = 0;
     let drag: {
       id: number;
       x: number;
       y: number;
       dx: number;
+      origin: number;
       axis: "x" | "y" | null;
       lastX: number;
       lastTime: number;
       velocity: number;
     } | null = null;
-    function paint(dx = 0, animate = true) {
+    function paint() {
       cards.forEach((card, index) => {
-        let relative = wrap(index - current());
-        if (relative > count / 2) relative -= count;
-        const distance = relative + dx / step(),
-          abs = Math.abs(distance);
-        card.style.transition =
-          animate && !motion.matches
-            ? "transform 480ms cubic-bezier(.22,1.22,.36,1), opacity 280ms ease"
-            : "none";
-        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 10}px) rotate(${distance * 11 - 5}deg) scale(${Math.max(0.52, 1 - abs * 0.3)})`;
-        card.style.opacity = String(
-          abs > 1.9 ? 0 : Math.max(0, 1 - abs * 0.72),
-        );
+        const distance = nearest(index, position) - position;
+        const abs = Math.abs(distance);
+        const active = Math.max(0, 1 - abs);
+        const lift = drag?.axis === "x" ? 8 * active : 0;
+        const tilt = motion.matches ? 0 : clamp(velocity * -1.4, 9) * active;
+        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 15 - lift}px) rotate(${distance * 12 - 5 + tilt}deg) scale(${Math.max(0.5, 1 - abs * 0.25)})`;
+        card.style.opacity = String(Math.max(0, 1 - abs * 0.65));
+        card.style.boxShadow = `0 ${7 + lift}px ${18 + lift}px rgba(32,53,43,${0.09 * active})`;
         card.style.zIndex = String(10 - Math.round(abs * 2));
         card.style.pointerEvents = abs < 1.4 ? "auto" : "none";
         card.setAttribute("aria-hidden", String(abs >= 1.4));
@@ -64,10 +70,39 @@ export function PortraitPicker({
         );
       });
     }
+    function tick(time: number) {
+      const dt = Math.min((time - lastFrame) / 1000, 0.032);
+      lastFrame = time;
+      // Damped spring: release speed carries into the snap, then settles softly.
+      velocity += ((target - position) * 240 - velocity * 23) * dt;
+      position += velocity * dt;
+      const settled =
+        Math.abs(target - position) < 0.001 && Math.abs(velocity) < 0.01;
+      if (settled) {
+        position = target;
+        velocity = 0;
+      }
+      paint();
+      frame = settled ? 0 : requestAnimationFrame(tick);
+    }
+    function settle() {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      if (motion.matches) {
+        position = target;
+        velocity = 0;
+        paint();
+      } else {
+        lastFrame = performance.now();
+        frame = requestAnimationFrame(tick);
+      }
+    }
     function choose(index: number) {
       if (latest.current.disabled) return;
       const person = SEARCH_SPEAKERS[wrap(index)];
+      target = nearest(wrap(index), position);
       latest.current.onChange(person.slug, person.name);
+      settle();
     }
     function finish(event: PointerEvent, cancelled = false) {
       if (!drag || drag.id !== event.pointerId) return;
@@ -76,15 +111,26 @@ export function PortraitPicker({
       stage.classList.remove(styles.dragging);
       if (stage.hasPointerCapture(event.pointerId))
         stage.releasePointerCapture(event.pointerId);
-      if (gesture.axis !== "x") return;
+      if (gesture.axis !== "x") {
+        settle();
+        return;
+      }
       suppressClickUntil = performance.now() + 350;
+      const recent = event.timeStamp - gesture.lastTime < 100;
+      velocity = recent ? gesture.velocity : 0;
       const flick =
-        event.timeStamp - gesture.lastTime < 100 &&
-        Math.abs(gesture.velocity) > 0.45 &&
-        Math.abs(gesture.dx) > 12;
-      if (!cancelled && (Math.abs(gesture.dx) > step() * 0.32 || flick))
+        recent && Math.abs(velocity) > 2.5 && Math.abs(gesture.dx) > 12;
+      if (
+        !cancelled &&
+        !latest.current.disabled &&
+        (Math.abs(gesture.dx) > step() * 0.32 || flick)
+      ) {
         choose(current() + (gesture.dx < 0 ? 1 : -1));
-      else paint();
+      } else {
+        target = nearest(current(), position);
+        if (cancelled) velocity = 0;
+        settle();
+      }
     }
     stage.onpointerdown = (event) => {
       if (
@@ -94,11 +140,14 @@ export function PortraitPicker({
         drag
       )
         return;
+      cancelAnimationFrame(frame);
+      frame = 0;
       drag = {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
         dx: 0,
+        origin: position,
         axis: null,
         lastX: event.clientX,
         lastTime: event.timeStamp,
@@ -118,11 +167,24 @@ export function PortraitPicker({
       }
       if (drag.axis !== "x") return;
       const elapsed = event.timeStamp - drag.lastTime;
-      if (elapsed > 0) drag.velocity = (event.clientX - drag.lastX) / elapsed;
+      if (elapsed > 0) {
+        const instantaneous =
+          -(event.clientX - drag.lastX) / step() / (elapsed / 1000);
+        drag.velocity = clamp(drag.velocity * 0.35 + instantaneous * 0.65, 7);
+      }
       drag.lastX = event.clientX;
       drag.lastTime = event.timeStamp;
       drag.dx = dx;
-      paint(Math.max(-step() * 1.12, Math.min(step() * 1.12, dx)), false);
+      // Direct tracking near the center; resistance keeps a long pull playful and bounded.
+      const pull = dx / step();
+      const resisted =
+        Math.abs(pull) <= 1
+          ? pull
+          : Math.sign(pull) *
+            (1 + (1 - Math.exp(-(Math.abs(pull) - 1))) * 0.28);
+      position = drag.origin - resisted;
+      velocity = drag.velocity;
+      paint();
     };
     stage.onpointerup = (event) => finish(event);
     stage.onpointercancel = (event) => finish(event, true);
@@ -155,12 +217,22 @@ export function PortraitPicker({
       );
     };
     const observer = new ResizeObserver(() => {
-      if (!drag) paint(0, false);
+      paint();
     });
     observer.observe(stage);
-    repaint.current = () => paint();
-    paint(0, false);
+    repaint.current = () => {
+      if (drag) return;
+      target = nearest(current(), position);
+      settle();
+    };
+    const motionChanged = () => {
+      if (!drag) settle();
+    };
+    motion.addEventListener("change", motionChanged);
+    paint();
     return () => {
+      cancelAnimationFrame(frame);
+      motion.removeEventListener("change", motionChanged);
       observer.disconnect();
       stage.onpointerdown =
         stage.onpointermove =
@@ -200,12 +272,15 @@ export function PortraitPicker({
               <span>Any speaker</span>
             </span>
           ) : (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`/speakers/${person.slug}.jpg`}
-              alt={person.name}
-              draggable={false}
-            />
+            <span className={styles.portraitImage}>
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                data-speaker={person.slug}
+                src={`/speakers/${person.slug}.jpg`}
+                alt={person.name}
+                draggable={false}
+              />
+            </span>
           )}
           <span data-badge className={styles.badge}>
             <Scissors size={20} />

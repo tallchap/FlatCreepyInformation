@@ -120,6 +120,45 @@ fs.mkdirSync(out, { recursive: true });
   checks.push(
     "PASS Desktop drag still changes speaker without visible controls",
   );
+  const stage = page.getByRole("group", { name: "Choose a speaker" });
+  const activeCard = page.locator('[data-portrait="1"]');
+  assert.equal(await activeCard.evaluate((e) => e.offsetWidth), 180);
+  const resting = await activeCard.evaluate((e) => e.style.transform);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 20, y, { steps: 8 });
+  const pulled = await activeCard.evaluate((e) => e.style.transform);
+  assert.notEqual(pulled, resting);
+  await page.waitForTimeout(150); // A small held pull should return, not count as a flick.
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  assert((await heading()).includes("Dario Amodei"));
+  assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 85, y, { steps: 6 });
+  await stage.evaluate((e) =>
+    e.dispatchEvent(
+      new PointerEvent("pointercancel", { pointerId: 1, bubbles: true }),
+    ),
+  );
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  assert((await heading()).includes("Dario Amodei"));
+  assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
+  // Catch a card mid-spring, reverse the gesture, and verify a clean final settle.
+  await stage.press("ArrowRight");
+  await page.waitForTimeout(90);
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 90, y, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(800);
+  assert((await heading()).includes("Dario Amodei"));
+  assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
+  checks.push(
+    "PASS Larger cards track the pointer, settle after small pulls/cancellation, and support reversing mid-spring",
+  );
   await page.locator("#clip-prompt").fill("Find a quote about safety");
   await page.locator("#clip-prompt").press("Enter");
   await page.waitForURL(base + "/chat");
@@ -237,7 +276,13 @@ fs.mkdirSync(out, { recursive: true });
   ])
     assert(!bodyText.includes(removed));
   assert.equal(await page.locator("footer").count(), 0);
-  await page.getByRole("button", { name: "Any speaker", exact: true }).click();
+  assert.equal(
+    await page
+      .getByRole("button", { name: "Any speaker", exact: true })
+      .count(),
+    0,
+  );
+  await page.getByRole("group", { name: "Choose a speaker" }).press("End");
   assert.equal(await heading(), "Find a clip from any speaker!");
   assert.equal(
     await page
@@ -277,9 +322,7 @@ fs.mkdirSync(out, { recursive: true });
     assert(suggestionBox.y >= composerBox.y + composerBox.height);
     await page.screenshot({ path: out + `/home-${width}.png`, fullPage: true });
     if (width === 390 || width === 1440) {
-      await page
-        .getByRole("button", { name: "Any speaker", exact: true })
-        .click();
+      await page.getByRole("group", { name: "Choose a speaker" }).press("End");
       await page.waitForTimeout(550);
       await page.screenshot({
         path: out + `/any-speaker-${width}.png`,
