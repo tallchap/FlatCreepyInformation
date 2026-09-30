@@ -453,7 +453,7 @@ class ConcurrentBatchTests(unittest.TestCase):
 
     def test_experiment_resume_keeps_frozen_fifty_and_baseline_hashes(self):
         self.runner.experiment_id = 'bounded-ten'
-        self.runner.candidates = [{'candidate_id': str(i), 'lane': 'eligible'} for i in range(100)]
+        self.runner.candidates = [{'candidate_id': str(i), 'lane': 'eligible' if i < 80 else 'review'} for i in range(100)]
         self.runner.responses = {'old-response': .01}
         self.runner.checkpoint_status = {'luna_cost_usd': .02}
         p.audit.atomic(self.runner.input / 'manifest.json', {'candidates': self.runner.candidates})
@@ -461,8 +461,9 @@ class ConcurrentBatchTests(unittest.TestCase):
         p.audit.atomic(self.runner.root / 'records/0.json', self.runner.records['0'])
         p.audit.atomic(self.runner.root / 'mac-checkpoint/batches/mac-batch/request-hash/response.json', {'id': 'mac-response'})
         plan = self.runner.experiment_plan()
-        self.assertEqual(plan['candidate_ids'], [str(i) for i in range(1, 51)])
+        self.assertEqual(plan['candidate_ids'], [str(i) for i in range(1, 36)] + [str(i) for i in range(80, 95)])
         self.assertEqual(len(plan['slots']), 10)
+        self.assertEqual([slot['lane'] for slot in plan['slots']], ['eligible'] * 7 + ['review'] * 3)
         self.assertEqual(plan['baseline_response_ids'], ['mac-response', 'old-response'])
         self.assertEqual(plan['baseline_record_sha256']['0'], p.luna.sha(self.runner.root / 'records/0.json'))
         for vid in plan['candidate_ids'][:15]:

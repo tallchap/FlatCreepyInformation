@@ -509,12 +509,15 @@ class Runner:
                 raise ValueError('Frozen experiment identity or input manifest changed')
         else:
             # Fresh means never admitted to the ledger, not merely nonterminal.
-            fresh = [row for row in self.candidates if row['lane'] == 'eligible' and row['candidate_id'] not in self.records][:50]
-            if len(fresh) != 50:
-                raise ValueError('Exactly 50 fresh eligible candidates are required for this experiment')
-            slots = [{'batch_name': f'{self.experiment_id}-eligible-{i//5+1:04d}', 'lane': 'eligible',
-                      'candidate_ids': [row['candidate_id'] for row in fresh[i:i+5]], 'items': fresh[i:i+5]}
-                     for i in range(0, 50, 5)]
+            fresh, slots = [], []
+            for lane, count in (('eligible', 35), ('review', 15)):
+                selected = [row for row in self.candidates if row['lane'] == lane and row['candidate_id'] not in self.records][:count]
+                if len(selected) != count:
+                    raise ValueError(f'Exactly {count} fresh {lane} candidates are required for this experiment')
+                fresh.extend(selected)
+                slots.extend({'batch_name': f'{self.experiment_id}-{lane}-{i//5+1:04d}', 'lane': lane,
+                              'candidate_ids': [row['candidate_id'] for row in selected[i:i+5]], 'items': selected[i:i+5]}
+                             for i in range(0, count, 5))
             baseline_response_ids = set(self.responses)
             for response_path in (self.root / 'mac-checkpoint' / 'batches').glob('*/*/response.json'):
                 response_id = luna.read(response_path).get('id')
@@ -537,7 +540,10 @@ class Runner:
         manifest_items = {row['candidate_id']: row for row in self.candidates}
         if (len(plan['slots']) != 10 or any(len(slot['candidate_ids']) != 5 for slot in plan['slots'])
                 or len(ids) != len(set(ids)) or len(ids) != 50 or ids != plan['candidate_ids']
-                or [slot['batch_name'] for slot in plan['slots']] != [f'{self.experiment_id}-eligible-{i:04d}' for i in range(1, 11)]
+                or [slot['batch_name'] for slot in plan['slots']] !=
+                   [f'{self.experiment_id}-eligible-{i:04d}' for i in range(1, 8)] +
+                   [f'{self.experiment_id}-review-{i:04d}' for i in range(1, 4)]
+                or [slot['lane'] for slot in plan['slots']] != ['eligible'] * 7 + ['review'] * 3
                 or any(slot['items'] != [manifest_items[vid] for vid in slot['candidate_ids']] for slot in plan['slots'])):
             raise ValueError('Frozen experiment membership is invalid')
         return plan
