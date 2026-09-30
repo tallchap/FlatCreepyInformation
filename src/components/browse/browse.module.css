@@ -155,6 +155,10 @@
   .pageNumber { min-width: 36px; }
 }
 @media (prefers-reduced-motion: reduce) { .speakerRow { transition: none; } }
+.playerActions { display: flex; flex-wrap: wrap; gap: 8px; }
+.snippetTranscript { font-size: 13px; line-height: 1.6; }
+.snippetTranscript summary { cursor: pointer; font-weight: 600; }
+.snippetTranscript p { max-height: 180px; overflow-y: auto; margin-top: 8px; white-space: pre-wrap; }
 /* Fit the existing app header on phones only while a Browse view is mounted. */
 @media (max-width: 540px) {
   :global(body):has(.surface) > :global(nav) { padding: 12px; }

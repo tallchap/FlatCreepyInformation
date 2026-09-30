@@ -52,11 +52,11 @@ export async function getSpeakerLibrary(speaker: string): Promise<SpeakerLibrary
   }));
   if (!videos.length) return { videos, snippets: [] };
   const [snippets] = await bigQuery.query({
-    query: `SELECT CONCAT('clip:', CAST(clip_id AS STRING)) AS id, video_id, title, duration_ms, gcs_url
+    query: `SELECT CONCAT('clip:', CAST(clip_id AS STRING)) AS id, video_id, title, duration_ms, gcs_url, transcript
       FROM \`youtubetranscripts-429803.reptranscripts.clips\`
       WHERE video_id IN UNNEST(@videoIds) AND gcs_url IS NOT NULL AND gcs_url != ''
       UNION ALL
-      SELECT CONCAT('auto:', snippet_id) AS id, original_video_id AS video_id, title, duration_ms, gcs_url
+      SELECT CONCAT('auto:', snippet_id) AS id, original_video_id AS video_id, title, duration_ms, gcs_url, transcript
       FROM \`youtubetranscripts-429803.reptranscripts.snippets_auto\`
       WHERE original_video_id IN UNNEST(@videoIds) AND gcs_url IS NOT NULL AND gcs_url != ''`,
     params: { videoIds: videos.map((v: { id: string }) => v.id) },
@@ -71,9 +71,10 @@ export async function getSpeakerLibrary(speaker: string): Promise<SpeakerLibrary
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
-    }).map((r: { id: string; video_id: string; title: string; duration_ms: number; gcs_url: string }) => ({
+    }).map((r: { id: string; video_id: string; title: string; duration_ms: number; gcs_url: string; transcript: string | null }) => ({
       id: String(r.id), videoId: String(r.video_id), title: String(r.title || "Untitled snippet"),
       durationMs: Number(r.duration_ms) || 0, url: playableMediaUrl(String(r.gcs_url))!,
+      transcript: r.transcript || null,
     })),
   };
 }
