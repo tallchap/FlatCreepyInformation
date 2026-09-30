@@ -18,6 +18,7 @@ import time
 from urllib.parse import quote
 
 import audit
+from captions import parse_captions
 
 
 def require(value, message):
@@ -55,11 +56,7 @@ def validate(recipe, packet, source, forbidden):
         return {'renderable': False, 'duration_seconds': 0}
     require(recipe.get('clip_worthy') is True and edits, 'Approved recipe needs edits')
     require(recipe['title'].strip() and recipe['speaker'].strip() and recipe['reason'].strip(), 'Missing editorial metadata')
-    captions = []
-    for line in source['transcript'].splitlines():
-        m = re.fullmatch(r'\[([\d.]+)\] (.*)', line)
-        require(m is not None, 'Unparseable source caption')
-        captions.append((float(m[1]), m[2]))
+    captions = parse_captions(source['transcript'])
     times = {t for t, _ in captions}
     times.add(float(packet['source_duration_seconds']))
     previous, total = -1, 0
