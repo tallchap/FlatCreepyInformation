@@ -48,6 +48,8 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
 
   const [isLoading, setIsLoading] = useState(false);
   const [selectedVideo, setSelectedVideo] = useState<SelectedVideo>(null);
+  const selectedVideoRef = useRef(selectedVideo);
+  selectedVideoRef.current = selectedVideo;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [debugFilterCall, setDebugFilterCall] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -98,9 +100,9 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   useEffect(() => {
     // Streaming tokens must not pull a mobile viewer away from the open player.
     if (returnToVideoRef.current) return;
-    if (selectedVideo && window.matchMedia("(max-width: 1199px)").matches) return;
+    if (selectedVideoRef.current && window.matchMedia("(max-width: 1199px)").matches) return;
     if (messages.length && !preview) scrollToBottom();
-  }, [messages, scrollToBottom, preview, selectedVideo]);
+  }, [messages, scrollToBottom, preview]);
 
   useEffect(() => {
     if (!selectedVideo) {
