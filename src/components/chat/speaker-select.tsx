@@ -146,19 +146,19 @@ export function SpeakerSelect({
         <Popover.Content
           align="start"
           sideOffset={4}
-          className="z-50 w-[min(320px,calc(100vw-48px))] rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
+          className="z-50 flex max-h-[var(--radix-popover-content-available-height)] w-[min(320px,calc(100vw-48px))] flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             inputRef.current?.focus();
           }}
         >
-          <div className="p-2 border-b border-gray-100">
+          <div className="shrink-0 p-2 border-b border-gray-100">
             <input
               ref={inputRef}
               type="text"
               placeholder="Type to search speakers..."
               aria-label="Search speakers"
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent"
+              className="min-h-11 w-full rounded border border-gray-300 bg-white px-3 py-2 text-base sm:text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -167,12 +167,12 @@ export function SpeakerSelect({
               onKeyDown={handleKeyDown}
             />
           </div>
-          <div ref={listRef} className="max-h-[300px] overflow-y-auto p-1">
+          <div ref={listRef} className="min-h-0 max-h-[300px] overflow-y-auto overscroll-contain p-1">
             {items.map((item, i) => (
               <button
                 key={item.slug}
                 aria-label={item.label}
-                className={`flex items-center gap-3 w-full text-left px-3 py-2 text-sm rounded-sm cursor-pointer transition-colors ${
+                className={`flex min-h-11 items-center gap-3 w-full text-left px-3 py-2 text-sm rounded-sm cursor-pointer transition-colors ${
                   i === highlightIndex
                     ? "bg-[#99cc66]/20 text-gray-900"
                     : item.slug === value

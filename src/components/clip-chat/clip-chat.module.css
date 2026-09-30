@@ -324,7 +324,8 @@
     gap: 6px;
   }
   .suggestions button {
-    font-size: 9px;
+    font-size: 11px;
+    min-height: 44px;
     padding: 10px;
   }
   .composer {
@@ -344,8 +345,8 @@
     height: 23px;
   }
   .send {
-    height: 41px;
-    width: 41px;
+    height: 44px;
+    width: 44px;
     border-radius: 12px;
   }
   .hint {
@@ -360,7 +361,8 @@
     padding: 5px 0 15px;
   }
   .chatHeader button {
-    font-size: 10px;
+    font-size: 12px;
+    min-height: 44px;
   }
   .chatTools {
     font-size: 9px;
