@@ -111,6 +111,36 @@ class BatchTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 qa.trim_plan(self.p['evidence'], start, end)
 
+    def test_invalid_trim_isolated_from_valid_neighbor(self):
+        other = self.root / 'other'
+        shutil.copytree(self.clip, other)
+        vid = 'lmnopqrstuv'
+        for name in ('recipe.json', 'result.json'):
+            data = qa.read(other / name); data['candidate_id'] = vid
+            self.write(other / name, data)
+        shutil.copyfile(self.packets / f'{self.vid}.json', self.packets / f'{vid}.json')
+        p2 = qa.package(other, self.packets)
+        bad = self.decision(status='adjust', keep_start_seconds=5.123, keep_end_seconds=25)
+        result = self.normalize(self.raw([bad, self.decision(p2)]), [self.p, p2], self.root / 'out')
+        failed, good = result['decisions']
+        self.assertEqual(failed['status'], 'review')
+        self.assertIn('ASR word boundaries', failed['action_validation_error'])
+        self.assertFalse(failed['automatic_release_eligible'])
+        self.assertNotIn('trim_path', failed)
+        self.assertEqual(good['status'], 'approve')
+
+    def test_invalid_action_cannot_pass_even_if_verifier_approves_current_media(self):
+        def reviewer(packages, output, role):
+            decision = self.decision(packages[0], status='review' if role == 'finalizer' else 'approve')
+            decision['automatic_release_eligible'] = role == 'verifier'
+            if role == 'finalizer': decision['action_validation_error'] = 'Invalid timestamp'
+            return {'response_id': role, 'cost_usd': 0, 'decisions': [decision]}
+        with patch.object(qa, 'review_packages', side_effect=reviewer):
+            result = qa.pipeline(self.args())
+        self.assertFalse(result['all_complete'])
+        self.assertEqual(result['decisions'][0]['attempts'], 5)
+        self.assertFalse((self.clip / 'final-qa.json').exists())
+
     def test_gap_handles_never_overlap_excluded_words(self):
         evidence = copy.deepcopy(self.p['evidence'])
         evidence['asr_words'] = [{'start': n * 5 + 1, 'end': n * 5 + 4, 'text': 'word' + str(n)} for n in range(8)]

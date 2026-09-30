@@ -195,8 +195,11 @@ def normalize(raw, packages, output, request=None):
         status = decision['status']
         action = None
         if status == 'adjust':
-            require(decision['preserves_meaning'], 'Trim must preserve meaning')
-            action = trim_plan(evidence, decision['keep_start_seconds'], decision['keep_end_seconds'], decision['retained_speaker'])
+            try:
+                require(decision['preserves_meaning'], 'Trim must preserve meaning')
+                action = trim_plan(evidence, decision['keep_start_seconds'], decision['keep_end_seconds'], decision['retained_speaker'])
+            except ValueError as exc:
+                decision.update(status='review', keep_start_seconds=None, keep_end_seconds=None, action_validation_error=str(exc), reason=decision['reason'] + ' [Invalid proposed edit; media unchanged: ' + str(exc) + ']')
             if evidence['attempt'] >= MAX_PASSES or not evidence['technical_pass']:
                 decision.update(status='review', reason=decision['reason'] + ' [Automatic guard: retry exhausted or technical failure.]')
                 action = None
@@ -448,6 +451,9 @@ def pipeline(args):
         round_errors = {}
         for decision in finalized['decisions']:
             vid = decision['candidate_id']
+            if decision.get('action_validation_error'):
+                round_errors[vid] = decision['action_validation_error']
+                continue
             if decision['status'] == 'approve':
                 try:
                     directories[vid] = apply_speaker_metadata(directories[vid], decision['retained_speaker'], args.output / 'trimmed')
