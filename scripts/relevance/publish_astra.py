@@ -20,10 +20,13 @@ def publish(recipe_path,media_path,qa_path,out):
     required=['picture_verified','dialogue_verified','boundaries_verified','duration_verified']
     if not all(qa.get('checks',{}).get(k) is True for k in required):raise ValueError('Incomplete audiovisual QA')
     vid=recipe['candidate_id'];sid='astra_'+vid+'_'+rh[:12];name=f'clips/astra/{vid}/{rh[:16]}.mp4'
-    b=audit.bq_client();params=[bigquery.ScalarQueryParameter('vid','STRING',vid)]
-    live=list(b.query('SELECT COUNT(*) n FROM `youtubetranscripts-429803.reptranscripts.youtube_videos` WHERE video_id=@vid',job_config=bigquery.QueryJobConfig(query_parameters=params)).result())[0]['n']
+    b=audit.bq_client();jobs=[]
+    def query(sql, **kwargs):
+        job=b.query(sql, **kwargs);rows=list(job.result());jobs.append({'job_id':job.job_id,'bytes_billed':job.total_bytes_billed or 0,'cache_hit':job.cache_hit});return rows
+    params=[bigquery.ScalarQueryParameter('vid','STRING',vid)]
+    live=query('SELECT COUNT(*) n FROM `youtubetranscripts-429803.reptranscripts.youtube_videos` WHERE video_id=@vid',job_config=bigquery.QueryJobConfig(query_parameters=params))[0]['n']
     if not live:raise ValueError('Source not in live library')
-    cull_ids={r['video_id'] for r in b.query('SELECT video_id FROM `youtubetranscripts-429803.snippy_history.cull_20260930_decisions`').result()}
+    cull_ids={r['video_id'] for r in query('SELECT video_id FROM `youtubetranscripts-429803.snippy_history.cull_20260930_decisions`')}
     if vid in cull_ids:raise ValueError('Culled source forbidden')
     s=AuthorizedSession(google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])[0]);url='https://storage.googleapis.com/storage/v1/b/'+BUCKET+'/o/'+quote(name,safe='')
     meta=s.get(url,timeout=30)
@@ -41,10 +44,10 @@ def publish(recipe_path,media_path,qa_path,out):
     params=[bigquery.ScalarQueryParameter(k,'INT64' if k=='duration_ms' else 'STRING',v) for k,v in row.items()]
     cols=', '.join(row);vals=', '.join('@'+k for k in row)
     sql=f'MERGE `{TABLE}` T USING (SELECT @snippet_id snippet_id) S ON T.snippet_id=S.snippet_id WHEN NOT MATCHED THEN INSERT ({cols},created_at) VALUES ({vals},CURRENT_TIMESTAMP())'
-    job=b.query(sql,job_config=bigquery.QueryJobConfig(query_parameters=params));job.result()
-    rows=[dict(r) for r in b.query(f'SELECT * FROM `{TABLE}` WHERE snippet_id=@id',job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('id','STRING',sid)])).result()]
+    query(sql,job_config=bigquery.QueryJobConfig(query_parameters=params))
+    rows=[dict(r) for r in query(f'SELECT * FROM `{TABLE}` WHERE snippet_id=@id',job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('id','STRING',sid)]))]
     if len(rows)!=1 or any(rows[0][k]!=v for k,v in row.items()):raise ValueError('DB receipt mismatch or duplicate')
-    receipt={'passed':True,'time':audit.now(),'snippet_id':sid,'video_id':vid,'gcs_url':public,'gcs_generation':stored['generation'],'media_sha256':sha,'recipe_hash':rh,'uploaded_bytes':media_path.stat().st_size,'row':{k:str(v) for k,v in rows[0].items()},'query_job':job.job_id}
+    receipt={'passed':True,'time':audit.now(),'snippet_id':sid,'video_id':vid,'gcs_url':public,'gcs_generation':stored['generation'],'media_sha256':sha,'recipe_hash':rh,'uploaded_bytes':media_path.stat().st_size,'row':{k:str(v) for k,v in rows[0].items()},'query_jobs':jobs,'query_bytes_billed':sum(j['bytes_billed'] for j in jobs)}
     audit.atomic(out,receipt);print(json.dumps(receipt,indent=2))
 
 if __name__=='__main__':
