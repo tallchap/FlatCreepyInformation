@@ -13,11 +13,26 @@ const fs = require("node:fs");
     requests++;
     return r.abort();
   });
+  await p.route("**/api/speakers", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        speakers: [
+          { name: "Ada Lovelace", slug: "ada-lovelace", videoCount: 12 },
+        ],
+      }),
+    }),
+  );
   await p.goto(base + "/preview/chat");
   await p.getByRole("log").waitFor();
   const content = await p.locator("main").innerText();
   assert(!content.includes("Searching Sam Altman"));
   assert(!content.includes("Clip conversation"));
+  assert.equal(await p.locator("main img").count(), 0);
+  assert.equal(
+    await p.locator("[data-speaker-initial]").first().innerText(),
+    "S",
+  );
   assert.equal(
     await p.getByRole("complementary", { name: "Chat speakers" }).count(),
     0,
@@ -52,13 +67,41 @@ const fs = require("node:fs");
       .count(),
     1,
   );
-  await p.route("**/api/speakers", (route) =>
-    route.fulfill({ contentType: "application/json", body: '{"speakers":[]}' }),
-  );
-  await p.getByRole("button", { name: "Change speaker", exact: true }).click();
-  await p.getByRole("button", { name: "Sam Altman", exact: true }).click();
+  await p
+    .getByRole("button", {
+      name: "Choose speaker, current: Sam Altman",
+      exact: true,
+    })
+    .click();
   await p.getByRole("button", { name: "Elon Musk (0)", exact: true }).click();
   assert((await p.locator("main").innerText()).includes("Elon Musk said"));
+  await p
+    .getByRole("button", {
+      name: "Choose speaker, current: Elon Musk",
+      exact: true,
+    })
+    .click();
+  await p
+    .getByRole("textbox", { name: "Search speakers", exact: true })
+    .fill("Ada");
+  await p
+    .getByRole("button", { name: "Ada Lovelace (12)", exact: true })
+    .click();
+  assert.deepEqual(
+    await p.locator("[data-speaker-initial]").allTextContents(),
+    ["A", "A"],
+  );
+  assert.equal(await p.locator("main img").count(), 0);
+  await p.getByRole("button", { name: "New chat", exact: true }).click();
+  await p
+    .getByRole("button", {
+      name: "Choose speaker, current: Ada Lovelace",
+      exact: true,
+    })
+    .waitFor();
+  console.log(
+    "PASS Always-visible searchable speaker selector and initials for speakers without photos",
+  );
   console.log(
     "PASS Simple chat preview, simulated follow-up, empty state, no paid API requests",
   );

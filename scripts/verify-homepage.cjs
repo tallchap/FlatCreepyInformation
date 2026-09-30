@@ -289,9 +289,11 @@ fs.mkdirSync(out, { recursive: true });
   checks.push("PASS Request failure is visible and composer recovers");
   fail = false;
   await page
-    .getByRole("button", { name: "Change speaker", exact: true })
+    .getByRole("button", {
+      name: "Choose speaker, current: Sam Altman",
+      exact: true,
+    })
     .click();
-  await page.getByRole("button", { name: "Sam Altman", exact: true }).click();
   await page
     .getByRole("button", { name: "Yoshua Bengio (0)", exact: true })
     .click();
@@ -342,7 +344,12 @@ fs.mkdirSync(out, { recursive: true });
     .waitFor();
   assert.equal(requests.at(-1).speaker, "all");
   assert.equal(requests.at(-1).speakerName, "Any speaker");
-  await page.getByText("All speakers", { exact: true }).waitFor();
+  await page
+    .getByRole("button", {
+      name: "Choose speaker, current: All Speakers",
+      exact: true,
+    })
+    .waitFor();
   checks.push(
     "PASS Any speaker survives homepage handoff and submits the all-speakers search; footer copy removed",
   );

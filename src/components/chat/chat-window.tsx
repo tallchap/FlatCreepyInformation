@@ -9,10 +9,9 @@ import {
   CHAT_HANDOFF_KEY,
   FEATURED_SPEAKERS,
   readChatHandoff,
-  speakerPortrait,
 } from "../clip-chat/speakers";
 import styles from "../clip-chat/clip-chat.module.css";
-import { SpeakerSelect } from "./speaker-select";
+import { SpeakerSelect, speakerInitial } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
 import { VideoPreviewPane } from "./video-preview-pane";
 
@@ -60,7 +59,6 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
-  const [showAllSpeakers, setShowAllSpeakers] = useState(false);
 
   useEffect(() => {
     if (preview) return;
@@ -314,15 +312,12 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
       <section className={styles.chat}>
         <div className={styles.chatHeader}>
           <div className={styles.chatIdentity}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {FEATURED_SPEAKERS.some((person) => person.slug === speaker) && (
-              <img src={speakerPortrait(speaker)} alt="" />
-            )}
-            <div>
-              <strong>
-                {speaker === "all" ? "All speakers" : speakerName}
-              </strong>
-            </div>
+            <SpeakerSelect
+              value={speaker}
+              name={speakerName}
+              onValueChange={handleSpeakerChange}
+              disabled={isLoading}
+            />
           </div>
           <Button
             variant="outline"
@@ -335,12 +330,13 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
         </div>
         {messages.length === 0 ? (
           <div className={styles.chatEmpty}>
-            {FEATURED_SPEAKERS.some((person) => person.slug === speaker) && (
-              <div className={styles.chatWelcomePortrait}>
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={speakerPortrait(speaker)} alt="" />
-              </div>
-            )}
+            <div
+              className={styles.chatInitial}
+              data-speaker-initial
+              aria-hidden="true"
+            >
+              {speakerInitial(speaker === "all" ? "All speakers" : speakerName)}
+            </div>
             <h1>What would you like to find?</h1>
             <p>
               Describe a moment, an idea, or something{" "}
@@ -384,12 +380,6 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
           />
           <div className={styles.chatTools}>
             <button
-              onClick={() => setShowAllSpeakers(!showAllSpeakers)}
-              disabled={isLoading}
-            >
-              Change speaker
-            </button>
-            <button
               onClick={() =>
                 window.open(
                   `/api/export-transcripts?speaker=${encodeURIComponent(speakerName)}`,
@@ -420,18 +410,6 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
               </button>
             )}
           </div>
-          {showAllSpeakers && (
-            <div className={styles.chatSelect}>
-              <SpeakerSelect
-                value={speaker}
-                onValueChange={(value, name) => {
-                  handleSpeakerChange(value, name);
-                  setShowAllSpeakers(false);
-                }}
-                disabled={isLoading}
-              />
-            </div>
-          )}
         </div>
       </section>
       {selectedVideo && (
