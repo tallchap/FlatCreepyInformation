@@ -140,6 +140,61 @@ class ProxyTests(unittest.TestCase):
         self.assertEqual(len(session.calls), 1)
         self.assertTrue(any('budget exhausted' in x for x in proxy.errors))
 
+    def test_pages_reassemble_exact_nonzero_range_and_budget(self):
+        data = bytes(range(256)) * 100
+        obj = dict(self.obj, size=str(len(data)))
+        session = FakeSession(data)
+        proxy = RangeProxy(session, obj, 5001, page_bytes=1024)
+        with proxy:
+            with urlopen(Request(proxy.url, headers={'Range': 'bytes=731-5731'})) as response:
+                self.assertEqual(response.headers['Content-Range'], 'bytes 731-5731/25600')
+                self.assertEqual(response.read(), data[731:5732])
+        self.assertFalse(proxy.errors)
+        self.assertEqual([call[1]['headers']['Range'] for call in session.calls], ['bytes=731-1754', 'bytes=1755-2778', 'bytes=2779-3802', 'bytes=3803-4826', 'bytes=4827-5731'])
+        self.assertEqual(proxy.bytes_requested, 5001)
+        self.assertEqual(proxy.report()['conservative_response_bytes_upper_bound'], 5001)
+        self.assertEqual(proxy.bytes_read, 5001)
+
+    def test_open_ended_downstream_is_bounded_upstream(self):
+        session = FakeSession(self.data)
+        proxy = RangeProxy(session, self.obj, len(self.data), page_bytes=32768)
+        with proxy:
+            with urlopen(proxy.url) as response:
+                self.assertEqual(response.read(), self.data)
+        self.assertFalse(proxy.errors)
+        self.assertEqual(len(session.calls), 4)
+        self.assertTrue(all(call[1]['headers']['Range'].split('-')[1] for call in session.calls))
+        self.assertEqual(proxy.bytes_requested, len(self.data))
+
+    def test_cancelled_response_overfetch_is_bounded_by_one_page(self):
+        import socket
+        data = b'x' * 20000000
+        session = FakeSession(data)
+        proxy = RangeProxy(session, dict(self.obj, size=str(len(data))), len(data), page_bytes=65536)
+        with proxy:
+            sock = socket.create_connection(('127.0.0.1', proxy.server.server_port))
+            sock.sendall(f'GET {proxy.path} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n'.encode())
+            sock.recv(100)
+            sock.close()
+        self.assertTrue(proxy.receipts[0]['cancelled'])
+        self.assertGreater(proxy.bytes_requested, 0)
+        self.assertLessEqual(proxy.bytes_requested - proxy.bytes_read, 65536)
+        self.assertLess(proxy.bytes_requested, len(data))
+        self.assertEqual(proxy.report()['conservative_response_bytes_upper_bound'], proxy.bytes_requested)
+
+    def test_bad_range_metadata_fails_before_body_read(self):
+        class WrongSession(FakeSession):
+            def get(self, url, **kwargs):
+                response = super().get(url, **kwargs)
+                response.headers['Content-Range'] = 'bytes 1-2/3'
+                return response
+        proxy = RangeProxy(WrongSession(self.data), self.obj, len(self.data), page_bytes=1024)
+        with proxy:
+            with self.assertRaises(Exception):
+                urlopen(proxy.url)
+        self.assertEqual(proxy.bytes_read, 0)
+        self.assertTrue(any('mismatched Content-Range' in e for e in proxy.errors))
+
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
     def test_real_ffmpeg_range_seek_keeps_picture_audio_and_duration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -147,7 +202,7 @@ class ProxyTests(unittest.TestCase):
             subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=160x90:rate=10', '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', '40', '-c:v', 'libx264', '-c:a', 'aac', '-movflags', '+faststart', str(source)], check=True, capture_output=True)
             data = source.read_bytes()
             obj = dict(self.obj, size=str(len(data)))
-            proxy = RangeProxy(FakeSession(data), obj, len(data) * 2)
+            proxy = RangeProxy(FakeSession(data), obj, len(data) * 2, page_bytes=8192)
             with proxy:
                 subprocess.run(['ffmpeg', '-v', 'error', '-ss', '10', '-i', proxy.url, '-t', '20', '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-c:a', 'aac', str(output)], check=True, capture_output=True)
             info = json.loads(subprocess.check_output(['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', str(output)]))
@@ -156,6 +211,8 @@ class ProxyTests(unittest.TestCase):
             self.assertEqual(info['streams'][0]['width'], 160)
             self.assertGreater(proxy.bytes_read, 0)
             self.assertFalse(proxy.errors)
+            self.assertGreater(sum(len(r['pages']) for r in proxy.receipts), 1)
+            self.assertTrue(all(p['requested_bytes'] <= 8192 for r in proxy.receipts for p in r['pages']))
 
     def test_ignored_range_never_downloads_body(self):
         session = FakeSession(self.data, status=200)

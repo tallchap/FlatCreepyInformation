@@ -98,8 +98,10 @@ def load_inputs(args):
 
 class RangeProxy:
     """Single-object, loopback-only authenticated proxy; no arbitrary URLs accepted."""
-    def __init__(self, session, obj, max_bytes):
+    def __init__(self, session, obj, max_bytes, page_bytes=1024 * 1024):
         self.session, self.obj, self.max_bytes = session, obj, max_bytes
+        require(max_bytes > 0 and page_bytes > 0, 'Transfer/page budgets must be positive')
+        self.page_bytes, self.bytes_requested = page_bytes, 0
         self.receipts, self.bytes_read, self.errors = [], 0, []
         self.lock = threading.Lock()
         self.path = '/' + secrets.token_hex(24) + '.mp4'
@@ -126,38 +128,64 @@ class RangeProxy:
                 if not re.fullmatch(r'bytes=\d+-\d*', requested):
                     self.send_error(416)
                     return
-                receipt = {'range': requested, 'bytes_read': 0, 'cancelled': False, 'started_at': audit.now()}
+                lo, hi = requested[6:].split('-')
+                start, size = int(lo), int(owner.obj['size'])
+                end = min(int(hi), size - 1) if hi else size - 1
+                if start >= size or start > end:
+                    self.send_error(416)
+                    return
+                receipt = {'range': requested, 'content_range': f'bytes {start}-{end}/{size}', 'bytes_read': 0, 'cancelled': False, 'started_at': audit.now(), 'pages': [], 'upstream_response_content_length': 0}
                 with owner.lock:
                     owner.receipts.append(receipt)
                 self.close_connection = True
                 self.connection.settimeout(30)
                 response = None
                 try:
-                    with owner.lock:
-                        require(owner.bytes_read < owner.max_bytes, 'Transfer budget exhausted; no automatic fallback')
-                    response = owner.session.get(owner.api, params={'alt': 'media', 'generation': owner.obj['generation'], 'ifGenerationMatch': owner.obj['generation']}, headers={'Range': requested, 'Accept-Encoding': 'identity'}, stream=True, timeout=(15, 45))
-                    receipt['status'] = response.status_code
-                    require(response.status_code == 206, 'GCS did not honor range; refusing full-download fallback')
-                    receipt['content_range'] = response.headers.get('Content-Range')
-                    receipt['upstream_response_content_length'] = int(response.headers.get('Content-Length', 0))
-                    self.send_response(206)
-                    for key in ('Content-Length', 'Content-Range', 'Content-Type'):
-                        if key in response.headers:
-                            self.send_header(key, response.headers[key])
-                    self.send_header('Accept-Ranges', 'bytes')
-                    self.send_header('Connection', 'close')
-                    self.end_headers()
-                    while True:
-                        # Lock covers reservation/read to keep concurrent requests below cap.
+                    cursor = start
+                    sent_headers = False
+                    while cursor <= end:
+                        # Reserve the entire bounded response before requesting it. This
+                        # caps potential egress even if GCS fills unread socket buffers.
                         with owner.lock:
-                            remaining = owner.max_bytes - owner.bytes_read
+                            remaining = owner.max_bytes - owner.bytes_requested
                             require(remaining > 0, 'Transfer budget exhausted; no automatic fallback')
-                            chunk = response.raw.read(min(16384, remaining), decode_content=False)
-                            owner.bytes_read += len(chunk)
-                            receipt['bytes_read'] += len(chunk)
-                        if not chunk:
-                            break
-                        self.wfile.write(chunk)
+                            page_end = min(end, cursor + owner.page_bytes - 1, cursor + remaining - 1)
+                            requested_size = page_end - cursor + 1
+                            owner.bytes_requested += requested_size
+                        page = {'range': f'bytes={cursor}-{page_end}', 'bytes_read': 0, 'requested_bytes': requested_size}
+                        receipt['pages'].append(page)
+                        response = owner.session.get(owner.api, params={'alt': 'media', 'generation': owner.obj['generation'], 'ifGenerationMatch': owner.obj['generation']}, headers={'Range': page['range'], 'Accept-Encoding': 'identity'}, stream=True, timeout=(15, 45))
+                        page['status'] = response.status_code
+                        page['content_range'] = response.headers.get('Content-Range')
+                        page['response_content_length'] = int(response.headers.get('Content-Length', 0))
+                        receipt['upstream_response_content_length'] += page['response_content_length']
+                        require(response.status_code == 206, 'GCS did not honor range; refusing full-download fallback')
+                        require(page['content_range'] == f'bytes {cursor}-{page_end}/{size}', 'GCS returned mismatched Content-Range')
+                        require(page['response_content_length'] == requested_size, 'GCS returned mismatched Content-Length')
+                        require(response.headers.get('Content-Encoding', 'identity') == 'identity', 'Compressed response cannot be byte-counted safely')
+                        require(response.headers.get('x-goog-generation', owner.obj['generation']) == owner.obj['generation'], 'GCS generation changed')
+                        if not sent_headers:
+                            # FFmpeg sees its full requested range; pages are invisible
+                            # to its demuxer and every upstream request has an explicit end.
+                            self.send_response(206)
+                            self.send_header('Content-Length', str(end - start + 1))
+                            self.send_header('Content-Range', receipt['content_range'])
+                            self.send_header('Content-Type', response.headers.get('Content-Type', 'video/mp4'))
+                            self.send_header('Accept-Ranges', 'bytes')
+                            self.send_header('Connection', 'close')
+                            self.end_headers()
+                            sent_headers = True
+                        while page['bytes_read'] < requested_size:
+                            chunk = response.raw.read(min(16384, requested_size - page['bytes_read']), decode_content=False)
+                            require(chunk, 'GCS response ended before promised range')
+                            with owner.lock:
+                                owner.bytes_read += len(chunk)
+                                receipt['bytes_read'] += len(chunk)
+                                page['bytes_read'] += len(chunk)
+                            self.wfile.write(chunk)
+                        response.close()
+                        response = None
+                        cursor = page_end + 1
                 except (BrokenPipeError, ConnectionResetError):
                     receipt['cancelled'] = True
                 except Exception as exc:
@@ -187,7 +215,7 @@ class RangeProxy:
         self.thread.join()
 
     def report(self):
-        return {'upstream_body_bytes_read': self.bytes_read, 'conservative_response_bytes_upper_bound': sum(r.get('upstream_response_content_length', 0) for r in self.receipts), 'source_object_bytes': int(self.obj['size']), 'source_generation': self.obj['generation'], 'max_bytes': self.max_bytes, 'measurement': 'HTTP body bytes actually read from upstream, includes read-ahead/cancelled requests; excludes HTTP/TLS overhead and unread socket buffers; not a billing measurement', 'requests': self.receipts, 'errors': self.errors}
+        return {'upstream_body_bytes_read': self.bytes_read, 'upstream_requested_bytes': self.bytes_requested, 'upstream_page_bytes': self.page_bytes, 'conservative_response_bytes_upper_bound': sum(r.get('upstream_response_content_length', 0) for r in self.receipts), 'source_object_bytes': int(self.obj['size']), 'source_generation': self.obj['generation'], 'max_bytes': self.max_bytes, 'budget_basis': 'sum of bounded upstream range lengths, including unread cancelled response bytes', 'measurement': 'HTTP body bytes actually read from upstream, includes read-ahead/cancelled requests; excludes HTTP/TLS overhead and unread socket buffers; not a billing measurement', 'requests': self.receipts, 'errors': self.errors}
 
 
 def run(command, log):
