@@ -4,12 +4,14 @@ import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
+  messageIndex?: number;
   content: string;
   isStreaming?: boolean;
   onVideoLinkClick?: (payload: {
     videoId: string;
     startSec: number;
     title?: string;
+    citationIndex: number;
   }) => void;
   onSuggestionClick?: (suggestion: string) => void;
 }
@@ -75,6 +77,7 @@ function formatContent(text: string): string {
 
 export function MessageBubble({
   role,
+  messageIndex,
   content,
   isStreaming,
   onVideoLinkClick,
@@ -110,11 +113,15 @@ export function MessageBubble({
     const title = encodedTitle
       ? decodeURIComponent(encodedTitle)
       : link.textContent || undefined;
-    onVideoLinkClick({ videoId, startSec, title });
+    const citationIndex = Array.from(
+      e.currentTarget.querySelectorAll("a[data-video-id]"),
+    ).indexOf(link);
+    onVideoLinkClick({ videoId, startSec, title, citationIndex });
   }
 
   return (
     <div
+      data-chat-message-index={messageIndex}
       className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div

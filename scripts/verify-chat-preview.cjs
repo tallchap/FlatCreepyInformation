@@ -178,6 +178,63 @@ const fs = require("node:fs");
     return document.activeElement === e && box.top >= 0 && box.bottom <= innerHeight;
   }));
   console.log("PASS Mobile citation reveals timestamped preview; Back to chat restores quote and focus");
+  // Keep a real response stream open so citations can be selected while tokens
+  // arrive. Repeated citations verify both message and link-occurrence identity.
+  await mobile.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      if (input !== "/api/chat") return originalFetch(input, init);
+      return Promise.resolve(new Response(new ReadableStream({
+        start(controller) {
+          window.emitChatToken = (text, done = false) => {
+            controller.enqueue(new TextEncoder().encode(
+              "data: " + JSON.stringify({ type: "text_delta", text }) + "\n\n",
+            ));
+            if (done) controller.close();
+          };
+        },
+      }), { headers: { "Content-Type": "text/event-stream" } }));
+    };
+    const scrollIntoView = Element.prototype.scrollIntoView;
+    window.messageScrollCalls = 0;
+    Element.prototype.scrollIntoView = function (...args) {
+      if (this.parentElement?.getAttribute("role") === "log")
+        window.messageScrollCalls++;
+      return scrollIntoView.apply(this, args);
+    };
+  });
+  await mobile.goto(base + "/chat");
+  await mobile.locator("#clip-prompt").fill("First search");
+  await mobile.locator("#clip-prompt").press("Enter");
+  await mobile.waitForFunction(() => typeof window.emitChatToken === "function");
+  const repeated = "[Repeated quote](youtube:Q3E5fagbcsA:20)";
+  await mobile.evaluate((text) => window.emitChatToken(text, true), repeated);
+  await mobile.locator("#clip-prompt:not([disabled])").waitFor();
+  await mobile.evaluate(() => { window.emitChatToken = null; });
+  await mobile.locator("#clip-prompt").fill("Find two more moments");
+  await mobile.locator("#clip-prompt").press("Enter");
+  await mobile.waitForFunction(() => typeof window.emitChatToken === "function");
+  await mobile.evaluate((text) => window.emitChatToken(text),
+    repeated + "\n\n" + "More context.\n".repeat(20) + repeated);
+  const repeatedCitation = mobile.locator(
+    '[data-chat-message-index="3"] a[data-video-id]',
+  ).nth(1);
+  await repeatedCitation.tap();
+  await mobile.waitForFunction(() => {
+    const frame = document.querySelector("iframe")?.getBoundingClientRect();
+    return frame && frame.top >= 0 && frame.bottom <= innerHeight;
+  });
+  await mobile.evaluate(() => {
+    window.messageScrollCalls = 0;
+    window.emitChatToken(" A streaming update.");
+  });
+  await mobile.getByText("A streaming update.", { exact: false }).waitFor();
+  await mobile.waitForTimeout(150);
+  assert.equal(await mobile.evaluate(() => window.messageScrollCalls), 0);
+  await mobile.getByRole("button", { name: "Back to chat" }).tap();
+  assert(await repeatedCitation.evaluate((e) => document.activeElement === e));
+  await mobile.evaluate(() => window.emitChatToken("", true));
+  console.log("PASS Streaming preserves mobile preview; return restores exact repeated citation after HTML updates");
   await p.goto(base);
   await p.waitForTimeout(500);
   const dir = ".context/homepage-qa/home-chat-flow";

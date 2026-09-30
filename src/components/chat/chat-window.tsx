@@ -24,6 +24,7 @@ type SelectedVideo = {
   videoId: string;
   startSec: number;
   title?: string;
+  source: { messageIndex: number; citationIndex: number };
 } | null;
 
 const PREVIEW_MESSAGES: Message[] = [
@@ -58,7 +59,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   >(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const videoPreviewRef = useRef<HTMLDivElement>(null);
-  const returnToVideoRef = useRef<string | null>(null);
+  const returnToVideoRef = useRef<NonNullable<SelectedVideo>["source"] | null>(null);
   const sendingRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
 
@@ -95,15 +96,21 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   }, []);
 
   useEffect(() => {
+    // Streaming tokens must not pull a mobile viewer away from the open player.
+    if (returnToVideoRef.current) return;
+    if (selectedVideo && window.matchMedia("(max-width: 1199px)").matches) return;
     if (messages.length && !preview) scrollToBottom();
-  }, [messages, scrollToBottom, preview]);
+  }, [messages, scrollToBottom, preview, selectedVideo]);
 
   useEffect(() => {
     if (!selectedVideo) {
       if (returnToVideoRef.current) {
-        const source = document.querySelector<HTMLAnchorElement>(
-          `a[data-video-id="${returnToVideoRef.current}"]`,
-        );
+        const { messageIndex, citationIndex } = returnToVideoRef.current;
+        // Resolve again after streaming replaces the message HTML. A video can
+        // appear at several timestamps, or repeatedly across follow-up replies.
+        const source = document
+          .querySelector(`[data-chat-message-index="${messageIndex}"]`)
+          ?.querySelectorAll<HTMLAnchorElement>("a[data-video-id]")[citationIndex];
         returnToVideoRef.current = null;
         source?.focus({ preventScroll: true });
         source?.scrollIntoView({ block: "center", behavior: "instant" });
@@ -121,7 +128,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   }, [selectedVideo]);
 
   function closeVideoPreview() {
-    returnToVideoRef.current = selectedVideo?.videoId ?? null;
+    returnToVideoRef.current = selectedVideo?.source ?? null;
     setSelectedVideo(null);
   }
 
@@ -379,6 +386,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
             {messages.map((msg, i) => (
               <MessageBubble
                 key={i}
+                messageIndex={i}
                 role={msg.role}
                 content={msg.content}
                 isStreaming={
@@ -386,7 +394,12 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
                   i === messages.length - 1 &&
                   msg.role === "assistant"
                 }
-                onVideoLinkClick={setSelectedVideo}
+                onVideoLinkClick={({ citationIndex, ...video }) =>
+                  setSelectedVideo({
+                    ...video,
+                    source: { messageIndex: i, citationIndex },
+                  })
+                }
                 onSuggestionClick={(text) => handleSend(text)}
               />
             ))}
