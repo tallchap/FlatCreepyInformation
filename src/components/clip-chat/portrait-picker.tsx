@@ -38,6 +38,10 @@ export function PortraitPicker({
     let position = current();
     let target = position;
     let velocity = 0;
+    let pickup = 0;
+    let pickupVelocity = 0;
+    let lean = 0;
+    let leanVelocity = 0;
     let frame = 0;
     let lastFrame = 0;
     let suppressClickUntil = 0;
@@ -57,9 +61,9 @@ export function PortraitPicker({
         const distance = nearest(index, position) - position;
         const abs = Math.abs(distance);
         const active = Math.max(0, 1 - abs);
-        const lift = drag?.axis === "x" ? 8 * active : 0;
-        const tilt = motion.matches ? 0 : clamp(velocity * -1.4, 9) * active;
-        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 15 - lift}px) rotate(${distance * 12 - 5 + tilt}deg) scale(${Math.max(0.5, 1 - abs * 0.25)})`;
+        const lift = pickup * active;
+        const tilt = lean * active;
+        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 15 - lift}px) rotate(${distance * 12 - 5 + tilt}deg) scale(${Math.max(0.5, 1 - abs * 0.25) + lift * 0.002})`;
         card.style.opacity = String(Math.max(0, 1 - abs * 0.65));
         card.style.boxShadow = `0 ${7 + lift}px ${18 + lift}px rgba(32,53,43,${0.09 * active})`;
         card.style.zIndex = String(10 - Math.round(abs * 2));
@@ -73,14 +77,35 @@ export function PortraitPicker({
     function tick(time: number) {
       const dt = Math.min((time - lastFrame) / 1000, 0.032);
       lastFrame = time;
-      // Damped spring: release speed carries into the snap, then settles softly.
-      velocity += ((target - position) * 240 - velocity * 23) * dt;
-      position += velocity * dt;
+      const pulling = drag?.axis === "x";
+      // Track the pointer directly; carry its momentum into the release spring.
+      if (!drag) {
+        velocity += ((target - position) * 240 - velocity * 23) * dt;
+        position += velocity * dt;
+      }
+      // Pickup and lean keep their own spring state across release. Switching these
+      // off with a boolean caused the old one-frame vertical drop and rotation snap.
+      const pickupTarget = pulling ? 6 : 0;
+      const leanTarget =
+        drag?.axis === "x" && time - drag.lastTime > 100
+          ? 0
+          : clamp(velocity * -1.1, 7);
+      pickupVelocity +=
+        ((pickupTarget - pickup) * 300 - pickupVelocity * 28) * dt;
+      pickup += pickupVelocity * dt;
+      leanVelocity += ((leanTarget - lean) * 260 - leanVelocity * 26) * dt;
+      lean += leanVelocity * dt;
       const settled =
-        Math.abs(target - position) < 0.001 && Math.abs(velocity) < 0.01;
+        !drag &&
+        Math.abs(target - position) < 0.001 &&
+        Math.abs(velocity) < 0.01 &&
+        Math.abs(pickup) < 0.04 &&
+        Math.abs(pickupVelocity) < 0.4 &&
+        Math.abs(lean) < 0.04 &&
+        Math.abs(leanVelocity) < 0.4;
       if (settled) {
         position = target;
-        velocity = 0;
+        velocity = pickup = pickupVelocity = lean = leanVelocity = 0;
       }
       paint();
       frame = settled ? 0 : requestAnimationFrame(tick);
@@ -90,7 +115,7 @@ export function PortraitPicker({
       frame = 0;
       if (motion.matches) {
         position = target;
-        velocity = 0;
+        velocity = pickup = pickupVelocity = lean = leanVelocity = 0;
         paint();
       } else {
         lastFrame = performance.now();
@@ -184,6 +209,10 @@ export function PortraitPicker({
             (1 + (1 - Math.exp(-(Math.abs(pull) - 1))) * 0.28);
       position = drag.origin - resisted;
       velocity = drag.velocity;
+      if (!frame && !motion.matches) {
+        lastFrame = performance.now();
+        frame = requestAnimationFrame(tick);
+      }
       paint();
     };
     stage.onpointerup = (event) => finish(event);

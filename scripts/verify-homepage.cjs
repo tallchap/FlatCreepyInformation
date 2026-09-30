@@ -124,6 +124,11 @@ fs.mkdirSync(out, { recursive: true });
   const stage = page.getByRole("group", { name: "Choose a speaker" });
   const activeCard = page.locator('[data-portrait="1"]');
   assert.equal(await activeCard.evaluate((e) => e.offsetWidth), 180);
+  await page.waitForFunction(
+    () =>
+      document.querySelector('[data-portrait="1"]').style.transform ===
+      "translateX(0px) translateY(0px) rotate(-5deg) scale(1)",
+  );
   const resting = await activeCard.evaluate((e) => e.style.transform);
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -131,10 +136,39 @@ fs.mkdirSync(out, { recursive: true });
   const pulled = await activeCard.evaluate((e) => e.style.transform);
   assert.notEqual(pulled, resting);
   await page.waitForTimeout(150); // A small held pull should return, not count as a flick.
+  await activeCard.evaluate((card) => {
+    const readY = () =>
+      Number(card.style.transform.match(/translateY\(([-.\d]+)px/)[1]);
+    window.releaseHeights = [];
+    card.parentElement.addEventListener(
+      "pointerup",
+      () => {
+        window.releaseHeights.push(readY());
+        const sample = () => {
+          window.releaseHeights.push(readY());
+          if (window.releaseHeights.length < 35) requestAnimationFrame(sample);
+        };
+        requestAnimationFrame(sample);
+      },
+      { once: true, capture: true },
+    );
+  });
   await page.mouse.up();
   await page.waitForTimeout(800);
   assert((await heading()).includes("Elon Musk"));
   assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
+  const releaseHeights = await page.evaluate(() => window.releaseHeights);
+  const releaseJump = Math.max(
+    ...releaseHeights.slice(1).map((y, i) => Math.abs(y - releaseHeights[i])),
+  );
+  assert(
+    releaseJump < 2.5,
+    `Release drops ${releaseJump.toFixed(2)}px in one frame`,
+  );
+  checks.push(
+    `PASS Drag release is continuous (largest vertical frame step ${releaseJump.toFixed(2)}px)`,
+  );
+
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x - 85, y, { steps: 6 });
