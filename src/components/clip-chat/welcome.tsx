@@ -1,4 +1,6 @@
 "use client";
+import type { ElonPortrait } from "./elon-portraits";
+
 import { PortraitPicker, type DragFeel } from "./portrait-picker";
 import { SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
@@ -15,7 +17,7 @@ export function Welcome({
   onSpeakerChange: (slug: string, name: string) => void;
   disabled?: boolean;
   feel?: DragFeel;
-  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
+  elonPortrait?: ElonPortrait;
 }) {
   return (
     <div className={styles.welcome}>

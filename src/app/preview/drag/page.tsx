@@ -1,8 +1,12 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ClipHomepage } from "@/components/clip-chat/homepage";
 import type { DragFeel } from "@/components/clip-chat/portrait-picker";
 import styles from "./preview.module.css";
+import {
+  ELON_PORTRAITS,
+  type ElonPortrait,
+} from "@/components/clip-chat/elon-portraits";
 const OPTIONS: { id: DragFeel; title: string; description: string }[] = [
   {
     id: "glide",
@@ -24,10 +28,15 @@ const OPTIONS: { id: DragFeel; title: string; description: string }[] = [
   },
 ];
 export default function DragPreview() {
-  const [photo, setPhoto] = useState<
-    "current" | "dark" | "stern" | "focused" | "shadow"
-  >("focused");
+  const [photo, setPhoto] = useState<ElonPortrait>("option-1");
   const [photoRevision, setPhotoRevision] = useState(0);
+  useEffect(() => {
+    const requested = new URLSearchParams(window.location.search).get(
+      "portrait",
+    );
+    const match = ELON_PORTRAITS.find((p) => p.id === requested);
+    if (match) setPhoto(match.id);
+  }, []);
   const [feel, setFeel] = useState<DragFeel>("spring");
   return (
     <>
@@ -67,35 +76,22 @@ export default function DragPreview() {
       </section>
       <div className={styles.photoChoices} aria-label="Compare Elon photos">
         <span>Elon’s photo</span>
-        {(["focused", "shadow", "dark", "current"] as const).map((id) => (
+        {ELON_PORTRAITS.map((option, index) => (
           <button
-            key={id}
-            aria-pressed={photo === id}
+            key={option.id}
+            aria-pressed={photo === option.id}
+            aria-label={`Elon option ${index + 1}: ${option.label}`}
             onClick={() => {
-              setPhoto(id);
+              setPhoto(option.id);
               setPhotoRevision((value) => value + 1);
             }}
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={
-                id === "current"
-                  ? "/speakers/elon-musk.jpg"
-                  : `/speakers/preview/elon-${id}.jpg`
-              }
-              alt=""
-            />
-            <span>
-              {id === "focused"
-                ? "1 · Intense focus"
-                : id === "shadow"
-                  ? "2 · Hard light"
-                  : id === "dark"
-                    ? "Previous option"
-                    : "Original"}
-            </span>
+            <img src={`/speakers/preview/elon-${option.id}.jpg`} alt="" />
+            <span>{index + 1}</span>
           </button>
         ))}
+        <a href="/preview/elon">Compare all 10 photos</a>
         <a
           href="/speakers/preview/credits.html"
           target="_blank"

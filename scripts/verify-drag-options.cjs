@@ -81,13 +81,10 @@ const assert = require("node:assert/strict");
   console.log(
     "PASS Spring accepts direct upward dragging and returns smoothly without changing speaker",
   );
-  for (const name of [
-    "1 · Intense focus",
-    "2 · Hard light",
-    "Previous option",
-    "Original",
-  ]) {
-    await p.getByRole("button", { name, exact: true }).click();
+  for (let number = 1; number <= 10; number++) {
+    await p
+      .getByRole("button", { name: new RegExp(`^Elon option ${number}:`) })
+      .click();
     await p.waitForFunction(() =>
       [...document.querySelectorAll('img[src^="/speakers/"]')].every(
         (i) => i.complete && i.naturalWidth,
@@ -95,7 +92,7 @@ const assert = require("node:assert/strict");
     );
   }
   await p
-    .getByRole("button", { name: "1 · Intense focus", exact: true })
+    .getByRole("button", { name: "Elon option 1: Direct gaze", exact: true })
     .click();
   await p.waitForTimeout(400);
   await p.screenshot({
@@ -104,7 +101,7 @@ const assert = require("node:assert/strict");
   });
   await stage.press("Home");
   await p
-    .getByRole("button", { name: "1 · Intense focus", exact: true })
+    .getByRole("button", { name: "Elon option 1: Direct gaze", exact: true })
     .click();
   assert((await p.locator("h1").last().innerText()).includes("Elon Musk"));
   const mobile = await b.newPage({

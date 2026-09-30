@@ -1,4 +1,6 @@
 "use client";
+import type { ElonPortrait } from "./elon-portraits";
+
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Composer } from "./composer";
@@ -12,7 +14,7 @@ export function ClipHomepage({
   initialSpeaker = SEARCH_SPEAKERS[0].slug,
 }: {
   feel?: DragFeel;
-  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
+  elonPortrait?: ElonPortrait;
   initialSpeaker?: string;
 }) {
   const router = useRouter();

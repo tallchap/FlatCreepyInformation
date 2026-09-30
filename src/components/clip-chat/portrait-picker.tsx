@@ -1,4 +1,6 @@
 "use client";
+import { elonPortraitStyle, type ElonPortrait } from "./elon-portraits";
+
 import { useEffect, useRef } from "react";
 import { Scissors, UsersRound } from "lucide-react";
 import { SEARCH_SPEAKERS, speakerPortrait } from "./speakers";
@@ -59,7 +61,7 @@ export function PortraitPicker({
   onChange: (slug: string, name: string) => void;
   disabled?: boolean;
   feel?: DragFeel;
-  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
+  elonPortrait?: ElonPortrait;
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const latest = useRef({ value, onChange, disabled });
@@ -412,6 +414,11 @@ export function PortraitPicker({
             <span className={styles.portraitImage}>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
+                style={
+                  person.slug === "elon-musk"
+                    ? elonPortraitStyle(elonPortrait)
+                    : undefined
+                }
                 data-speaker={person.slug}
                 data-variant={
                   person.slug === "elon-musk" ? elonPortrait : undefined

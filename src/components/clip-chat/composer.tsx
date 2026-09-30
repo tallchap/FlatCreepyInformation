@@ -1,4 +1,6 @@
 "use client";
+import type { ElonPortrait } from "./elon-portraits";
+
 import { ArrowUp, LoaderCircle, UsersRound } from "lucide-react";
 import { FEATURED_SPEAKERS, SUGGESTIONS, speakerPortrait } from "./speakers";
 import styles from "./clip-chat.module.css";
@@ -17,7 +19,7 @@ export function Composer({
   onChange: (value: string) => void;
   onSend: () => void;
   busy?: boolean;
-  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
+  elonPortrait?: ElonPortrait;
 }) {
   const featured = FEATURED_SPEAKERS.find((person) => person.slug === speaker);
   return (
