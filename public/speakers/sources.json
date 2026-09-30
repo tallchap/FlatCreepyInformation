@@ -12,12 +12,11 @@
   {
     "name": "Dario Amodei",
     "slug": "dario-amodei",
-    "source": "https://commons.wikimedia.org/wiki/File:Dario_Amodei_at_TechCrunch_Disrupt_2023_02_(cropped).jpg",
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/c/c5/Dario_Amodei_at_TechCrunch_Disrupt_2023_02_%28cropped%29.jpg/960px-Dario_Amodei_at_TechCrunch_Disrupt_2023_02_%28cropped%29.jpg",
-    "commons": "https://commons.wikimedia.org/wiki/File:Dario_Amodei_at_TechCrunch_Disrupt_2023_02_(cropped).jpg",
-    "author": "TechCrunch",
-    "license": "CC BY 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/2.0"
+    "source": "https://www.anthropic.com/company/leadership",
+    "image": "https://www-cdn.anthropic.com/images/4zrzovbb/website/b9f2de42abe07215bc6f3e1498765fa0d3d58eaf-640x800.webp",
+    "author": "Anthropic (official leadership portrait)",
+    "license": "Copyrighted \u2014 local design preview; reuse permission not verified",
+    "licenseUrl": null
   },
   {
     "name": "Demis Hassabis",
@@ -32,12 +31,12 @@
   {
     "name": "Geoffrey Hinton",
     "slug": "geoffrey-hinton",
-    "source": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_at_Collision_2024_in_Toronto_(cropped).jpg",
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Geoffrey_Hinton_at_Collision_2024_in_Toronto_%28cropped%29.jpg/960px-Geoffrey_Hinton_at_Collision_2024_in_Toronto_%28cropped%29.jpg",
-    "commons": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_at_Collision_2024_in_Toronto_(cropped).jpg",
-    "author": "Vaughn Ridley/Collision via Sportsfile - Collision Conf",
-    "license": "CC BY 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/2.0"
+    "source": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_in_2026.jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Geoffrey_Hinton_in_2026.jpg/960px-Geoffrey_Hinton_in_2026.jpg",
+    "commons": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_in_2026.jpg",
+    "author": "Cmichel67",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
   },
   {
     "name": "Yoshua Bengio",
@@ -52,12 +51,11 @@
   {
     "name": "Max Tegmark",
     "slug": "max-tegmark",
-    "source": "https://commons.wikimedia.org/wiki/File:Max_Tegmark_2024_(cropped).jpg",
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/2/23/Max_Tegmark_2024_%28cropped%29.jpg/960px-Max_Tegmark_2024_%28cropped%29.jpg",
-    "commons": "https://commons.wikimedia.org/wiki/File:Max_Tegmark_2024_(cropped).jpg",
-    "author": "Web Summit",
-    "license": "CC BY 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by/2.0"
+    "source": "https://www.wsj.com/tech/ai/ai-expert-max-tegmark-warns-that-humanity-is-failing-the-new-technologys-challenge-4d423bee",
+    "image": "https://images.wsj.net/im-837649?width=1000",
+    "author": "Alex Gagne for The Wall Street Journal",
+    "license": "Copyrighted \u2014 local design preview; reuse permission not verified",
+    "licenseUrl": null
   },
   {
     "name": "Eliezer Yudkowsky",

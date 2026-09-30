@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { Scissors, UsersRound } from "lucide-react";
-import { SEARCH_SPEAKERS } from "./speakers";
+import { SEARCH_SPEAKERS, speakerPortrait } from "./speakers";
 import styles from "./clip-chat.module.css";
 
 export function PortraitPicker({
@@ -276,7 +276,7 @@ export function PortraitPicker({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 data-speaker={person.slug}
-                src={`/speakers/${person.slug}.jpg`}
+                src={speakerPortrait(person.slug)}
                 alt={person.name}
                 draggable={false}
               />

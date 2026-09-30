@@ -54,3 +54,7 @@ export function readChatHandoff(
     return null;
   }
 }
+
+export function speakerPortrait(slug: string) {
+  return `/speakers/${slug}.${slug === "dario-amodei" ? "webp" : "jpg"}`;
+}

@@ -1,6 +1,6 @@
 "use client";
 import { ArrowUp, LoaderCircle, UsersRound } from "lucide-react";
-import { FEATURED_SPEAKERS, SUGGESTIONS } from "./speakers";
+import { FEATURED_SPEAKERS, SUGGESTIONS, speakerPortrait } from "./speakers";
 import styles from "./clip-chat.module.css";
 export function Composer({
   speaker,
@@ -52,7 +52,7 @@ export function Composer({
         <div className={styles.composerBottom}>
           <span className={styles.scope}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            {featured && <img src={`/speakers/${featured.slug}.jpg`} alt="" />}
+            {featured && <img src={speakerPortrait(featured.slug)} alt="" />}
             {speaker === "all" && <UsersRound size={23} aria-hidden="true" />}
             <span>
               Searching{" "}
