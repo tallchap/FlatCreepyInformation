@@ -373,7 +373,9 @@ class Usage:
             'checks': {'evidence_integrity': not self.errors, 'wave_finished':
                        ((status.get('experiment_id') or status.get('stream_id')) == self.experiment_id and status.get('phase') in ('experiment_completed', 'stream_completed'))
                        or (self.scope == 'first-shadow' and all(self.read(self.root / 'records' / (cid + '.json')).get('status') in ('published', 'already_published', 'awaiting_astra', 'failed') for cid in self.ids)),
-                       'scope_stopped': bool(status.get('drained_at')),
+                       'scope_stopped': bool(status.get('drained_at')) or
+                       ((status.get('experiment_id') or status.get('stream_id')) == self.experiment_id
+                        and status.get('phase') in ('experiment_completed', 'stream_completed')),
                        'bucket_metadata_verified': bucket_verified, 'query_billing_fields_complete': not unknown_jobs},
             'errors': self.errors, 'limitations': limits, 'evidence': list(self.evidence.values()),
             'references': {'bucket_metadata': 'https://docs.cloud.google.com/storage/docs/json_api/v1/buckets/get',

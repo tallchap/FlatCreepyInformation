@@ -117,6 +117,11 @@ class CloudUsageTests(unittest.TestCase):
             self.assertEqual(report['costs']['model_response_ids'], ['resp-tiny'])
             self.assertEqual(len(report['costs']['model_unknown_charge_paths']), 1)
             self.assertTrue(report['checks']['wave_finished'])
+            self.assertTrue(report['checks']['scope_stopped'])
+            audit.atomic(root / 'stream-status.json', {'stream_id': 'tiny-trial', 'phase': 'streaming'})
+            active = cloud.Usage(root, scope='stream').build()
+            self.assertFalse(active['checks']['wave_finished'])
+            self.assertFalse(active['checks']['scope_stopped'])
 
     def test_aggregate_output_metadata_is_scoped_and_generation_bound(self):
         with tempfile.TemporaryDirectory() as tmp:
