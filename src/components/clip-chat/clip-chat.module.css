@@ -436,7 +436,7 @@
 }
 .portraitImage img[data-speaker="max-tegmark"] {
   transform: scale(1.95);
-  transform-origin: 50% 22%;
+  transform-origin: 43% 22%;
 }
 .portraitImage img[data-speaker="eliezer-yudkowsky"] {
   transform: scale(2.15);
