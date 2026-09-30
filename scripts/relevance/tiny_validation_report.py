@@ -220,6 +220,40 @@ class TinyReporter:
                         revisions[vid].append({'pass': row.get('pass'), 'ledger_path': str(path)})
         return requests, responses, intervals, unknown, cancelled, revisions
 
+    def trim_render_receipts(self, slots):
+        """Count completed physical trims, not review passes or metadata copies."""
+        renders, copies = defaultdict(dict), defaultdict(list)
+        for slot in slots:
+            for path in sorted((self.root / 'batches' / slot['batch_name'] / 'trimmed').glob('*/result.json')):
+                result = self.read(path) or {}
+                vid = result.get('candidate_id')
+                if vid not in slot['candidate_ids']:
+                    self.error('trim_receipt_outside_frozen_group', path, candidate_id=vid)
+                    continue
+                if result.get('metadata_only') is True:
+                    copies[vid].append(str(path))
+                    continue  # A copied trim.json/attempt/source pointer is not a render.
+                if not (path.parent / 'trim.json').exists():
+                    continue
+                original = result.get('original_source_render_result')
+                try:
+                    render_path = self.path(original) if original else path.resolve()
+                except ValueError:
+                    self.error('trim_source_receipt_outside_run', path)
+                    continue
+                if original:
+                    source = self.read(render_path) or {}
+                    if source.get('candidate_id') != vid or source.get('output_sha256') != result.get('output_sha256'):
+                        self.error('trim_original_source_receipt_drift', path)
+                render = renders[vid].setdefault(render_path, {
+                    'render_result_path': str(render_path),
+                    'kind': 'original_source_trim' if original else 'encoded_parent_trim',
+                    'output_sha256': result.get('output_sha256'), 'trim_receipt_paths': []})
+                if render['output_sha256'] != result.get('output_sha256'):
+                    self.error('conflicting_physical_trim_receipts', path)
+                render['trim_receipt_paths'].append(str(path))
+        return {vid: list(items.values()) for vid, items in renders.items()}, copies
+
     def run(self):
         plan_path = self.root / 'stream-plan.json'
         plan, status = self.read(plan_path) or {}, self.read(self.root / 'stream-status.json', optional=True) or {}
@@ -274,6 +308,7 @@ class TinyReporter:
             self.error('baseline_record_missing', candidate_id=vid)
         stages = self.stage_events(set(ids), status.get('started_at') or plan.get('created_at'))
         requests, responses, intervals, unknown, cancelled, revisions = self.requests(slots)
+        trim_renders, metadata_copies = self.trim_render_receipts(slots)
         coverage = []
         for vid in ids:
             record = records.get(vid, {})
@@ -293,7 +328,12 @@ class TinyReporter:
                 'stage_events': stages.get(vid, []), 'stage_times': times,
                 'preparation_wall_seconds': elapsed(times.get('preparing'), times.get('prepared')),
                 'review_to_disposition_seconds': elapsed(times.get('reviewing'), record.get('updated_at')),
-                'revision_rounds': revisions.get(vid, []), 'final_evidence': evidence})
+                'review_passes': revisions.get(vid, []), 'review_pass_count': len(revisions.get(vid, [])),
+                'physical_trim_renders': trim_renders.get(vid, []),
+                'physical_trim_render_count': len(trim_renders.get(vid, [])),
+                'source_trim_render_count': sum(r['kind'] == 'original_source_trim' for r in trim_renders.get(vid, [])),
+                'metadata_only_copy_count': len(metadata_copies.get(vid, [])),
+                'metadata_only_copy_receipts': metadata_copies.get(vid, []), 'final_evidence': evidence})
         witnesses = []
         for interval in intervals:
             for row in coverage:
@@ -321,6 +361,11 @@ class TinyReporter:
             'phase': status.get('phase'), 'counts': {k: counts[k] for k in ('published', 'held', 'failed', 'pending')},
             'attempted': sum(r['attempted'] for r in coverage), 'pending_ids': [r['candidate_id'] for r in coverage if r['outcome'] == 'pending'],
             'overrun_ids': overrun, 'coverage': coverage, 'checks': checks, 'errors': self.errors,
+            'work_counts': {'review_passes': sum(r['review_pass_count'] for r in coverage),
+                'physical_trim_renders': sum(r['physical_trim_render_count'] for r in coverage),
+                'source_trim_renders': sum(r['source_trim_render_count'] for r in coverage),
+                'metadata_only_copies': sum(r['metadata_only_copy_count'] for r in coverage),
+                'definition': 'Review passes count Luna ledger rounds per candidate. Physical source trims are deduplicated by original_source_render_result. Metadata-only copies and nested duplicate render receipts do not add physical renders.'},
             'passed': all(checks.values()), 'all_selected_published': counts['published'] == count,
             'timing': {'started_at': status.get('started_at'), 'finished_at': status.get('finished_at'),
                 'total_wall_seconds': elapsed(status.get('started_at'), status.get('finished_at')), 'attempts': status.get('attempts', [])},
@@ -345,11 +390,12 @@ class TinyReporter:
             f"Receipt verification: **{'PASS' if report['passed'] else 'INCOMPLETE / FLAGGED'}**. Outcomes: {report['counts']}.",
             f"Trial wall: {report['timing']['total_wall_seconds']} seconds. Luna usage-derived cost: ${report['api']['usage_derived_cost_usd']:.9f}; not an invoice.",
             f"Measured review/preparation overlap: {report['streaming_overlap']['observed']}. Prior baseline records checked: {report['baseline_record_count']}.", '',
-            '| Candidate | Lane | Outcome | Revision rounds | Final evidence |', '|---|---|---|---:|---|']
+            f"Review passes: {report['work_counts']['review_passes']}; physical source-trim renders: {report['work_counts']['source_trim_renders']}; metadata-only copies: {report['work_counts']['metadata_only_copies']}.", '',
+            '| Candidate | Lane | Outcome | Review passes | Physical trims | Metadata copies | Final evidence |', '|---|---|---|---:|---:|---:|---|']
         for row in report['coverage']:
             evidence = row['final_evidence']
             verdict = 'PASS' if evidence.get('checked') and all(evidence.get('checks', {}).values()) else 'Required / missing' if evidence.get('required') else 'Not reached'
-            lines.append(f"| {row['candidate_id']} | {row['lane']} | {row['status']} | {len(row['revision_rounds'])} | {verdict} |")
+            lines.append(f"| {row['candidate_id']} | {row['lane']} | {row['status']} | {row['review_pass_count']} | {row['physical_trim_render_count']} | {row['metadata_only_copy_count']} | {verdict} |")
         lines += ['', *[f"- {key}: {'PASS' if value else 'FAIL'}" for key, value in report['checks'].items()]]
         if report['errors']:
             lines += ['', *[f"- {error['code']}: {error.get('candidate_id') or error.get('path', '')}" for error in report['errors']]]

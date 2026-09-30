@@ -209,6 +209,29 @@ class TinyTests(unittest.TestCase):
         self.assertFalse(report['streaming_overlap']['observed'])
         self.assertTrue(all(r['preparation_wall_seconds'] is None for r in report['coverage']))
 
+    def test_source_trim_copies_and_nested_receipts_do_not_double_count_renders(self):
+        vid = self.ids[0]
+        source = self.write(f'batches/tiny-eligible/trimmed/{vid}-trim/original-source/{vid}-render/result.json',
+            {'candidate_id': vid, 'output_sha256': 'a' * 64})
+        rendered = {'candidate_id': vid, 'output_sha256': 'a' * 64, 'attempt': 1,
+                    'original_source_render_result': str(source)}
+        for name, metadata in (('trim', False), ('duplicate-wrapper', False), ('metadata-one', True), ('metadata-two', True)):
+            self.write(f'batches/tiny-eligible/trimmed/{vid}-{name}/result.json', {**rendered, 'metadata_only': metadata})
+            self.write(f'batches/tiny-eligible/trimmed/{vid}-{name}/trim.json', {'attempt': 1})
+        report = self.report()
+        self.assertTrue(report['passed'], report['errors'])
+        row = report['coverage'][0]
+        self.assertEqual(row['review_pass_count'], 1)
+        self.assertEqual(row['physical_trim_render_count'], 1)
+        self.assertEqual(row['source_trim_render_count'], 1)
+        self.assertEqual(row['metadata_only_copy_count'], 2)
+        self.assertEqual(len(row['physical_trim_renders'][0]['trim_receipt_paths']), 2)
+        self.assertEqual(report['work_counts']['physical_trim_renders'], 1)
+        self.assertEqual(report['work_counts']['review_passes'], 5)
+        markdown = (self.root / 'tiny-validation-report.md').read_text()
+        self.assertIn('Review passes', markdown)
+        self.assertNotIn('Revision rounds', markdown)
+
 
 if __name__ == '__main__':
     unittest.main()

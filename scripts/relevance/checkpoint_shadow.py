@@ -36,7 +36,7 @@ ROOT_FILES = {'status.json', 'verification.json', 'checkpoint-import.json', 'che
               'cloud-usage-stream.json', 'cloud-usage-stream.md', 'code-verification-optimized.json',
               'code-verification-delivery.json', 'small-driver.json', 'driver-attempt-1.json',
               'STOP-large-wave.json', 'STOP-before-small-attempt-1.json',
-              'tiny-failure-analysis.json', 'tiny-failure-analysis.md'}
+              'tiny-failure-analysis.json', 'tiny-failure-analysis.md', 'tiny-sampled-picture-review.json'}
 RENDER_FILES = {'recipe.json', 'parent-recipe.json', 'result.json', 'qa.json', 'final-qa.json',
                 'source.json', 'source-ffprobe.json', 'transfer.json', 'trim.json',
                 'contact.jpg', 'contact.png', 'clip.json', 'evidence.json'}
