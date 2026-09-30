@@ -9,6 +9,7 @@ export function Composer({
   onChange,
   onSend,
   busy = false,
+  elonPortrait,
 }: {
   speaker: string;
   name: string;
@@ -16,6 +17,7 @@ export function Composer({
   onChange: (value: string) => void;
   onSend: () => void;
   busy?: boolean;
+  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
 }) {
   const featured = FEATURED_SPEAKERS.find((person) => person.slug === speaker);
   return (
@@ -52,7 +54,9 @@ export function Composer({
         <div className={styles.composerBottom}>
           <span className={styles.scope}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            {featured && <img src={speakerPortrait(featured.slug)} alt="" />}
+            {featured && (
+              <img src={speakerPortrait(featured.slug, elonPortrait)} alt="" />
+            )}
             {speaker === "all" && <UsersRound size={23} aria-hidden="true" />}
             <span>
               Searching{" "}

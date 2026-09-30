@@ -1,0 +1,34 @@
+[
+  {
+    "slug": "elon-dark",
+    "source": "https://commons.wikimedia.org/wiki/File:Elon_Musk_Colorado_2022_(cropped).jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/9/93/Elon_Musk_Colorado_2022_%28cropped%29.jpg",
+    "author": "(U.S. Air Force photo by Trevor cokley)",
+    "license": "Public domain",
+    "licenseUrl": "https://commons.wikimedia.org/wiki/File:Elon_Musk_Colorado_2022_(cropped).jpg"
+  },
+  {
+    "slug": "elon-stern",
+    "source": "https://commons.wikimedia.org/wiki/File:Elon_Musk_(3x4_close_cropped).jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/e/eb/Elon_Musk_%283x4_close_cropped%29.jpg/960px-Elon_Musk_%283x4_close_cropped%29.jpg",
+    "author": "Gage Skidmore",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
+    "slug": "elon-focused",
+    "source": "https://www.gq.com.mx/articulo/elon-musk-peor-habito-en-el-trabajo-como-eliminarlo",
+    "image": "https://media.gq.com.mx/photos/65cfd58bd0ca5713b9b28fdb/16%3A9/w_1000%2Cc_limit/Elon%2520Musk%2520%281%29.jpg",
+    "author": "Photo via GQ M\u00e9xico",
+    "license": "Copyrighted \u2014 local design preview; reuse permission not verified",
+    "licenseUrl": null
+  },
+  {
+    "slug": "elon-shadow",
+    "source": "https://www.bbc.com/news/technology-44571671",
+    "image": "https://c.files.bbci.co.uk/D827/production/_102153355_whatsubject.jpg",
+    "author": "Photo via BBC News",
+    "license": "Copyrighted \u2014 local design preview; reuse permission not verified",
+    "licenseUrl": null
+  }
+]

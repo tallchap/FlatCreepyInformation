@@ -56,6 +56,11 @@ export function readChatHandoff(
   }
 }
 
-export function speakerPortrait(slug: string) {
+export function speakerPortrait(
+  slug: string,
+  elonPortrait: "current" | "dark" | "stern" | "focused" | "shadow" = "current",
+) {
+  if (slug === "elon-musk" && elonPortrait !== "current")
+    return `/speakers/preview/elon-${elonPortrait}.jpg`;
   return `/speakers/${slug}.${slug === "dario-amodei" ? "webp" : "jpg"}`;
 }

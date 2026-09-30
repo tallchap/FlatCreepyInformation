@@ -4,14 +4,62 @@ import { Scissors, UsersRound } from "lucide-react";
 import { SEARCH_SPEAKERS, speakerPortrait } from "./speakers";
 import styles from "./clip-chat.module.css";
 
+export type DragFeel = "classic" | "glide" | "spring" | "loose";
+const FEELS = {
+  classic: {
+    stiffness: 240,
+    damping: 23,
+    lift: 6,
+    lean: 7,
+    gain: 1,
+    momentum: 0,
+    vertical: 0,
+    scale: 0.002,
+  },
+  glide: {
+    stiffness: 150,
+    damping: 24,
+    lift: 14,
+    lean: 10,
+    gain: 1,
+    momentum: 0.28,
+    vertical: 0.12,
+    scale: 0.0025,
+  },
+  spring: {
+    stiffness: 210,
+    damping: 17,
+    lift: 22,
+    lean: 17,
+    gain: 1.12,
+    momentum: 0.13,
+    vertical: 0.9,
+    scale: 0.003,
+  },
+  loose: {
+    stiffness: 180,
+    damping: 21,
+    lift: 22,
+    lean: 21,
+    gain: 1,
+    momentum: 0.2,
+    vertical: 0.9,
+    scale: 0.0035,
+  },
+} as const;
+
 export function PortraitPicker({
   value,
   onChange,
   disabled = false,
+  feel = "classic",
+  elonPortrait = "current",
 }: {
   value: string;
   onChange: (slug: string, name: string) => void;
   disabled?: boolean;
+  feel?: DragFeel;
+  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
 }) {
   const stageRef = useRef<HTMLDivElement>(null);
   const latest = useRef({ value, onChange, disabled });
@@ -19,6 +67,8 @@ export function PortraitPicker({
   const repaint = useRef<() => void>(() => {});
   useEffect(() => {
     const stage = stageRef.current!;
+    const tuning = FEELS[feel];
+    const free = feel !== "classic";
     const cards = Array.from(
       stage.querySelectorAll<HTMLButtonElement>("[data-portrait]"),
     );
@@ -42,6 +92,9 @@ export function PortraitPicker({
     let pickupVelocity = 0;
     let lean = 0;
     let leanVelocity = 0;
+    let sway = 0;
+    let swayVelocity = 0;
+    let grabbed = current();
     let frame = 0;
     let lastFrame = 0;
     let suppressClickUntil = 0;
@@ -50,6 +103,7 @@ export function PortraitPicker({
       x: number;
       y: number;
       dx: number;
+      dy: number;
       origin: number;
       axis: "x" | "y" | null;
       lastX: number;
@@ -61,10 +115,13 @@ export function PortraitPicker({
         const distance = nearest(index, position) - position;
         const abs = Math.abs(distance);
         const active = Math.max(0, 1 - abs);
-        const lift = pickup * active;
-        const tilt = lean * active;
-        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 15 - lift}px) rotate(${distance * 12 - 5 + tilt}deg) scale(${Math.max(0.5, 1 - abs * 0.25) + lift * 0.002})`;
-        card.style.opacity = String(Math.max(0, 1 - abs * 0.65));
+        const grip = feel === "loose" ? Number(index === grabbed) : active;
+        const lift = pickup * grip;
+        const tilt = lean * grip;
+        card.style.transform = `translateX(${distance * step()}px) translateY(${Math.min(abs, 2) * 15 - lift + sway * grip}px) rotate(${distance * 12 - 5 + tilt}deg) scale(${Math.max(0.5, 1 - abs * 0.25) + lift * tuning.scale})`;
+        card.style.opacity = String(
+          Math.max(0, 1 - abs * (free ? 0.48 : 0.65)),
+        );
         card.style.boxShadow = `0 ${7 + lift}px ${18 + lift}px rgba(32,53,43,${0.09 * active})`;
         card.style.zIndex = String(10 - Math.round(abs * 2));
         card.style.pointerEvents = abs < 1.4 ? "auto" : "none";
@@ -80,16 +137,26 @@ export function PortraitPicker({
       const pulling = drag?.axis === "x";
       // Track the pointer directly; carry its momentum into the release spring.
       if (!drag) {
-        velocity += ((target - position) * 240 - velocity * 23) * dt;
+        velocity +=
+          ((target - position) * tuning.stiffness - velocity * tuning.damping) *
+          dt;
         position += velocity * dt;
       }
       // Pickup and lean keep their own spring state across release. Switching these
       // off with a boolean caused the old one-frame vertical drop and rotation snap.
-      const pickupTarget = pulling ? 6 : 0;
+      const pickupTarget = pulling ? tuning.lift : 0;
       const leanTarget =
         drag?.axis === "x" && time - drag.lastTime > 100
           ? 0
-          : clamp(velocity * -1.1, 7);
+          : clamp(
+              velocity * -1.1 +
+                (free && drag?.axis === "x" ? (-drag.dx / step()) * 5 : 0),
+              tuning.lean,
+            );
+      const swayTarget =
+        drag?.axis === "x" ? clamp(drag.dy * tuning.vertical, 160) : 0;
+      swayVelocity += ((swayTarget - sway) * 260 - swayVelocity * 26) * dt;
+      sway += swayVelocity * dt;
       pickupVelocity +=
         ((pickupTarget - pickup) * 300 - pickupVelocity * 28) * dt;
       pickup += pickupVelocity * dt;
@@ -102,10 +169,19 @@ export function PortraitPicker({
         Math.abs(pickup) < 0.04 &&
         Math.abs(pickupVelocity) < 0.4 &&
         Math.abs(lean) < 0.04 &&
-        Math.abs(leanVelocity) < 0.4;
+        Math.abs(leanVelocity) < 0.4 &&
+        Math.abs(sway) < 0.04 &&
+        Math.abs(swayVelocity) < 0.4;
       if (settled) {
         position = target;
-        velocity = pickup = pickupVelocity = lean = leanVelocity = 0;
+        velocity =
+          pickup =
+          pickupVelocity =
+          lean =
+          leanVelocity =
+          sway =
+          swayVelocity =
+            0;
       }
       paint();
       frame = settled ? 0 : requestAnimationFrame(tick);
@@ -115,7 +191,14 @@ export function PortraitPicker({
       frame = 0;
       if (motion.matches) {
         position = target;
-        velocity = pickup = pickupVelocity = lean = leanVelocity = 0;
+        velocity =
+          pickup =
+          pickupVelocity =
+          lean =
+          leanVelocity =
+          sway =
+          swayVelocity =
+            0;
         paint();
       } else {
         lastFrame = performance.now();
@@ -150,7 +233,17 @@ export function PortraitPicker({
         !latest.current.disabled &&
         (Math.abs(gesture.dx) > step() * 0.32 || flick)
       ) {
-        choose(current() + (gesture.dx < 0 ? 1 : -1));
+        if (free) {
+          let destination = Math.round(
+            position + clamp(velocity, 7) * tuning.momentum,
+          );
+          if (
+            wrap(destination) === current() &&
+            Math.abs(gesture.dx) > step() * 0.32
+          )
+            destination += gesture.dx < 0 ? 1 : -1;
+          choose(destination);
+        } else choose(current() + (gesture.dx < 0 ? 1 : -1));
       } else {
         target = nearest(current(), position);
         if (cancelled) velocity = 0;
@@ -167,11 +260,13 @@ export function PortraitPicker({
         return;
       cancelAnimationFrame(frame);
       frame = 0;
+      grabbed = current();
       drag = {
         id: event.pointerId,
         x: event.clientX,
         y: event.clientY,
         dx: 0,
+        dy: 0,
         origin: position,
         axis: null,
         lastX: event.clientX,
@@ -184,7 +279,10 @@ export function PortraitPicker({
       const dx = event.clientX - drag.x,
         dy = event.clientY - drag.y;
       if (!drag.axis && Math.max(Math.abs(dx), Math.abs(dy)) > 7) {
-        drag.axis = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+        drag.axis =
+          feel === "spring" || feel === "loose" || Math.abs(dx) > Math.abs(dy)
+            ? "x"
+            : "y";
         if (drag.axis === "x") {
           stage.setPointerCapture(event.pointerId);
           stage.classList.add(styles.dragging);
@@ -194,16 +292,21 @@ export function PortraitPicker({
       const elapsed = event.timeStamp - drag.lastTime;
       if (elapsed > 0) {
         const instantaneous =
-          -(event.clientX - drag.lastX) / step() / (elapsed / 1000);
-        drag.velocity = clamp(drag.velocity * 0.35 + instantaneous * 0.65, 7);
+          (-(event.clientX - drag.lastX) / step() / (elapsed / 1000)) *
+          tuning.gain;
+        drag.velocity = clamp(
+          drag.velocity * 0.35 + instantaneous * 0.65,
+          free ? 12 : 7,
+        );
       }
       drag.lastX = event.clientX;
       drag.lastTime = event.timeStamp;
       drag.dx = dx;
+      drag.dy = dy;
       // Direct tracking near the center; resistance keeps a long pull playful and bounded.
-      const pull = dx / step();
+      const pull = (dx / step()) * tuning.gain;
       const resisted =
-        Math.abs(pull) <= 1
+        free || Math.abs(pull) <= 1
           ? pull
           : Math.sign(pull) *
             (1 + (1 - Math.exp(-(Math.abs(pull) - 1))) * 0.28);
@@ -272,12 +375,17 @@ export function PortraitPicker({
           null;
       stage.ondragstart = stage.onclick = stage.onkeydown = null;
     };
-  }, []);
+  }, [feel]);
   useEffect(() => repaint.current(), [value]);
   return (
     <div
       ref={stageRef}
-      className={styles.portraitStage}
+      className={`${styles.portraitStage} ${feel !== "classic" ? styles.playfulStage : ""}`}
+      data-drag-feel={feel}
+      style={{
+        touchAction:
+          feel === "spring" || feel === "loose" ? "none" : "pan-y pinch-zoom",
+      }}
       tabIndex={disabled ? -1 : 0}
       role="group"
       aria-roledescription="carousel"
@@ -305,7 +413,10 @@ export function PortraitPicker({
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 data-speaker={person.slug}
-                src={speakerPortrait(person.slug)}
+                data-variant={
+                  person.slug === "elon-musk" ? elonPortrait : undefined
+                }
+                src={speakerPortrait(person.slug, elonPortrait)}
                 alt={person.name}
                 draggable={false}
               />

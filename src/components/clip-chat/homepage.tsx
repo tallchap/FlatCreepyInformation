@@ -5,9 +5,18 @@ import { Composer } from "./composer";
 import { Welcome } from "./welcome";
 import { CHAT_HANDOFF_KEY, SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
-export function ClipHomepage() {
+import type { DragFeel } from "./portrait-picker";
+export function ClipHomepage({
+  feel,
+  elonPortrait,
+  initialSpeaker = SEARCH_SPEAKERS[0].slug,
+}: {
+  feel?: DragFeel;
+  elonPortrait?: "current" | "dark" | "stern" | "focused" | "shadow";
+  initialSpeaker?: string;
+}) {
   const router = useRouter();
-  const [speaker, setSpeaker] = useState<string>(SEARCH_SPEAKERS[0].slug);
+  const [speaker, setSpeaker] = useState<string>(initialSpeaker);
   const [input, setInput] = useState("");
   const [navigating, setNavigating] = useState(false);
   const [error, setError] = useState("");
@@ -33,12 +42,15 @@ export function ClipHomepage() {
   return (
     <section className={`${styles.surface} ${styles.homepage}`}>
       <Welcome
+        feel={feel}
+        elonPortrait={elonPortrait}
         speaker={speaker}
         name={person.name}
         onSpeakerChange={setSpeaker}
         disabled={navigating}
       />
       <Composer
+        elonPortrait={elonPortrait}
         speaker={speaker}
         name={person.name}
         value={input}

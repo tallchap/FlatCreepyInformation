@@ -447,3 +447,40 @@
   transform: scale(1.65);
   transform-origin: 53% 34%;
 }
+
+/* Extra room for the local interaction comparison; the selected homepage is unchanged. */
+.playfulStage {
+  width: 680px;
+  height: 320px;
+  overflow-x: clip;
+  overflow-y: visible;
+}
+.playfulStage .portraitCard {
+  top: 58px;
+}
+@media (max-width: 650px) {
+  .playfulStage {
+    width: 100%;
+    height: 285px;
+  }
+  .playfulStage .portraitCard {
+    top: 58px;
+  }
+}
+
+.portraitImage img[data-speaker="elon-musk"][data-variant="dark"],
+.portraitImage img[data-speaker="elon-musk"][data-variant="stern"] {
+  transform: scale(1.06);
+  transform-origin: 50% 25%;
+}
+
+.portraitImage img[data-speaker="elon-musk"][data-variant="focused"] {
+  object-position: 52% 25%;
+  transform: scale(1.22);
+  transform-origin: 50% 10%;
+}
+.portraitImage img[data-speaker="elon-musk"][data-variant="shadow"] {
+  object-position: 80% 25%;
+  transform: scale(1);
+  transform-origin: 50% 25%;
+}
