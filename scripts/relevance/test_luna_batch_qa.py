@@ -41,7 +41,7 @@ class BatchTests(unittest.TestCase):
 
     def decision(self, p=None, status='approve', **kw):
         e = (p or self.p)['evidence']
-        return {**{k: e[k] for k in qa.IDENTITIES}, 'retained_speaker': e['recipe']['speaker'], 'final_title': e['recipe']['title'], 'final_description': e.get('publication_metadata', {}).get('description', e['recipe'].get('reason', 'A substantive AI claim.')), 'metadata_status': 'pass', 'status': status, 'reason': 'Complete claim', 'preserves_meaning': True, 'keep_start_seconds': None, 'keep_end_seconds': None, 'picture_status': 'pass', 'dialogue_status': 'pass', 'boundaries_status': 'pass', **kw}
+        return {**{k: e[k] for k in qa.IDENTITIES}, 'retained_speaker': e['recipe']['speaker'], 'final_title': e['recipe']['title'], 'final_description': e.get('publication_metadata', {}).get('description', e['recipe'].get('reason', 'A substantive AI claim.')), 'metadata_status': 'pass', 'release_confidence': .99, 'escalation_reasons': [], 'status': status, 'reason': 'Complete claim', 'preserves_meaning': True, 'keep_start_seconds': None, 'keep_end_seconds': None, 'picture_status': 'pass', 'dialogue_status': 'pass', 'boundaries_status': 'pass', **kw}
 
     def raw(self, decisions):
         return {'id': 'r1', 'status': 'completed', 'usage': {'input_tokens': 100, 'output_tokens': 10}, 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps({'decisions': [{k: v for k, v in d.items() if k in qa.PROPS} for d in decisions]})}]}]}
@@ -111,6 +111,18 @@ class BatchTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 qa.trim_plan(self.p['evidence'], start, end)
 
+    def test_low_confidence_current_clip_can_receive_fixable_trim(self):
+        d = self.decision(status='adjust', release_confidence=.4,
+                          boundaries_status='fail', keep_start_seconds=5,
+                          keep_end_seconds=25)
+        result = self.normalize(self.raw([d]), [self.p], self.root / 'out')
+        decision = result['decisions'][0]
+        self.assertEqual(decision['status'], 'adjust')
+        self.assertTrue(Path(decision['trim_path']).exists())
+        self.assertFalse(decision['automatic_release_eligible'])
+        self.assertFalse(decision['release_gate']['passed'])
+        self.assertEqual(decision['release_gate']['escalation_reasons'], [])
+
     def test_invalid_trim_isolated_from_valid_neighbor(self):
         other = self.root / 'other'
         shutil.copytree(self.clip, other)
@@ -154,7 +166,7 @@ class BatchTests(unittest.TestCase):
                 self.assertEqual((self.clip / 'recipe.json').read_bytes(), original_recipe)
 
     def test_invalid_action_cannot_pass_even_if_verifier_approves_current_media(self):
-        def reviewer(packages, output, role):
+        def reviewer(packages, output, role, **kwargs):
             decision = self.decision(packages[0], status='review' if role == 'finalizer' else 'approve')
             decision['automatic_release_eligible'] = role == 'verifier'
             if role == 'finalizer': decision['action_validation_error'] = 'Invalid timestamp'
@@ -362,7 +374,7 @@ class BatchTests(unittest.TestCase):
 
     def test_only_verifier_pass_completes_and_cached_pipeline_does_not_call(self):
         calls = []
-        def reviewer(packages, output, role):
+        def reviewer(packages, output, role, **kwargs):
             calls.append(role)
             p = packages[0]
             return {'response_id': role, 'cost_usd': .1, 'decisions': [{**self.decision(p, status='review' if role == 'finalizer' else 'approve'), 'automatic_release_eligible': role == 'verifier'}]}
@@ -380,7 +392,7 @@ class BatchTests(unittest.TestCase):
 
     def test_five_failed_verifier_rounds_escalate_never_complete(self):
         calls = []
-        def reviewer(packages, output, role):
+        def reviewer(packages, output, role, **kwargs):
             calls.append(role)
             p = packages[0]
             return {'response_id': str(len(calls)), 'cost_usd': .1, 'decisions': [{**self.decision(p, status='approve' if role == 'finalizer' else 'review'), 'automatic_release_eligible': role == 'finalizer'}]}
@@ -392,6 +404,159 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(len(result['decisions'][0]['history']), 5)
         self.assertTrue(Path(result['decisions'][0]['astra_escalation_path']).exists())
         self.assertFalse((self.clip / 'final-qa.json').exists())
+
+    def test_confidence_and_hard_flags_fail_closed(self):
+        for fields in ({'release_confidence': .94}, {'release_confidence': 1.0, 'escalation_reasons': ['caveat_uncertain']}, {'release_confidence': 1.0, 'boundaries_status': 'uncertain'}, {'release_confidence': 1.0, 'metadata_status': 'uncertain'}):
+            with self.subTest(fields=fields):
+                result = self.normalize(self.raw([self.decision(**fields)]), [self.p], self.root / 'out')
+                decision = result['decisions'][0]
+                self.assertEqual(decision['status'], 'review')
+                self.assertFalse(decision['automatic_release_eligible'])
+                self.assertFalse(decision['release_gate']['passed'])
+        raw = self.raw([self.decision()])
+        payload = json.loads(raw['output'][0]['content'][0]['text'])
+        del payload['decisions'][0]['release_confidence']
+        raw['output'][0]['content'][0]['text'] = json.dumps(payload)
+        with self.assertRaises(Exception):
+            self.normalize(raw, [self.p], self.root / 'out')
+        self.assertFalse(qa.release_gate_passed(None))
+        self.assertFalse(qa.release_gate_passed({'passed': True, 'release_confidence': 1}))
+
+    def test_approval_receipt_rechecks_gate_not_boolean_claim(self):
+        for fields in ({'release_confidence': .2}, {'escalation_reasons': ['context_missing']}, {'dialogue_status': 'uncertain'}):
+            decision = {**self.decision(**fields), 'automatic_release_eligible': True}
+            with self.assertRaisesRegex(ValueError, 'Release gate failed'):
+                qa.approval_receipt(decision, self.clip)
+            self.assertFalse((self.clip / 'final-qa.json').exists())
+        good = {**self.decision(), 'automatic_release_eligible': True}
+        qa.approval_receipt(good, self.clip)
+        receipt = qa.read(self.clip / 'final-qa.json')
+        self.assertTrue(qa.release_gate_passed(receipt['release_gate']))
+        self.assertFalse(qa.release_gate_passed(receipt['release_gate'], 1.0))
+
+    def test_mixed_pass_and_early_astra_handoff_finishes_after_one_round(self):
+        other = self.root / 'other'
+        shutil.copytree(self.clip, other)
+        vid = 'lmnopqrstuv'
+        for name in ('recipe.json', 'result.json'):
+            value = qa.read(other / name)
+            value['candidate_id'] = vid
+            self.write(other / name, value)
+        self.write(self.packets / f'{vid}.json', {**qa.read(self.packets / f'{self.vid}.json'), 'candidate_id': vid})
+        args = self.args()
+        args.clips.append(other)
+        calls = []
+        def reviewer(packages, output, role, **kwargs):
+            calls.append(role)
+            decisions = []
+            for p in packages:
+                d = self.decision(p)
+                d['automatic_release_eligible'] = True
+                if role == 'verifier' and d['candidate_id'] == vid:
+                    d.update(release_confidence=1.0, escalation_reasons=['attribution_uncertain'])
+                decisions.append(d)
+            return {'response_id': role, 'cost_usd': 0, 'decisions': decisions}
+        with patch.object(qa, 'review_packages', side_effect=reviewer):
+            result = qa.pipeline(args)
+        self.assertEqual(calls, ['finalizer', 'verifier'])
+        self.assertFalse(result['all_complete'])
+        by_id = {d['candidate_id']: d for d in result['decisions']}
+        self.assertTrue(by_id[self.vid]['complete'])
+        self.assertFalse(by_id[vid]['complete'])
+        self.assertEqual(by_id[vid]['attempts'], 1)
+        queue = qa.read(result['astra_queue_path'])
+        self.assertEqual(queue['items'][0]['status'], 'awaiting_astra')
+        self.assertFalse(queue['auto_invoked'])
+        handoff = qa.read(queue['items'][0]['json_path'])
+        self.assertEqual(handoff['artifacts']['media_sha256'], by_id[vid]['media_sha256'])
+        self.assertEqual(handoff['release_gate']['min_release_confidence'], .95)
+        self.assertFalse((other / 'final-qa.json').exists())
+
+    def test_low_confidence_attempted_approval_routes_immediately(self):
+        calls = []
+        def reviewer(packages, output, role, **kwargs):
+            calls.append(role)
+            d = self.decision(packages[0], release_confidence=.9 if role == 'verifier' else .99)
+            d['automatic_release_eligible'] = True
+            return {'response_id': role, 'cost_usd': 0, 'decisions': [d]}
+        with patch.object(qa, 'review_packages', side_effect=reviewer):
+            result = qa.pipeline(self.args())
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(result['decisions'][0]['status'], 'escalated')
+        self.assertEqual(result['decisions'][0]['attempts'], 1)
+        self.assertFalse(result['all_complete'])
+
+    def test_finalizer_hard_flags_skip_edit_and_verifier_for_held_clip(self):
+        for mixed in (False, True):
+            with self.subTest(mixed=mixed):
+                args = self.args()
+                args.output = self.root / ('mixed' if mixed else 'held')
+                other = self.root / 'other-finalizer'
+                if mixed:
+                    shutil.copytree(self.clip, other)
+                    for name in ('recipe.json', 'result.json'):
+                        value = qa.read(other / name); value['candidate_id'] = 'lmnopqrstuv'
+                        self.write(other / name, value)
+                    self.write(self.packets / 'lmnopqrstuv.json', {**qa.read(self.packets / f'{self.vid}.json'), 'candidate_id': 'lmnopqrstuv'})
+                    args.clips.append(other)
+                calls = []
+                def reviewer(packages, output, role, **kwargs):
+                    calls.append((role, [p['evidence']['candidate_id'] for p in packages]))
+                    ds = []
+                    for p in packages:
+                        d = self.decision(p)
+                        d['automatic_release_eligible'] = True
+                        if role == 'finalizer' and d['candidate_id'] == self.vid:
+                            d.update(status='review', release_confidence=.5, escalation_reasons=['boundary_uncertain'])
+                        ds.append(d)
+                    return {'response_id': role, 'cost_usd': 0, 'decisions': ds}
+                with patch.object(qa, 'review_packages', side_effect=reviewer), patch.object(qa, 'execute_trim') as trim:
+                    result = qa.pipeline(args)
+                trim.assert_not_called()
+                self.assertEqual(len(calls), 2 if mixed else 1)
+                if mixed:
+                    self.assertEqual(calls[1], ('verifier', ['lmnopqrstuv']))
+                self.assertFalse(result['all_complete'])
+                held = next(d for d in result['decisions'] if d['candidate_id'] == self.vid)
+                self.assertEqual(held['media_sha256'], self.p['evidence']['media_sha256'])
+                self.assertEqual(held['recipe_hash'], self.p['evidence']['recipe_hash'])
+                self.assertNotIn('verifier', held['history'][0])
+                self.assertFalse((self.clip / 'final-qa.json').exists())
+                handoff = qa.read(Path(held['astra_escalation_path']).with_suffix('.json'))
+                self.assertEqual(handoff['release_gate']['escalation_reasons'], ['boundary_uncertain'])
+
+    def test_low_confidence_review_routes_unless_concrete_repair_identified(self):
+        for concrete in (False, True):
+            with self.subTest(concrete=concrete):
+                args = self.args(); args.output = self.root / ('repair' if concrete else 'unclear')
+                calls = []
+                def reviewer(packages, output, role, **kwargs):
+                    calls.append(role)
+                    d = self.decision(packages[0])
+                    d['automatic_release_eligible'] = role == 'finalizer'
+                    if role == 'verifier':
+                        d.update(status='review', release_confidence=.5, metadata_status='fail' if concrete else 'pass')
+                    return {'response_id': str(len(calls)), 'cost_usd': 0, 'decisions': [d]}
+                with patch.object(qa, 'review_packages', side_effect=reviewer):
+                    result = qa.pipeline(args)
+                self.assertEqual(len(calls), 10 if concrete else 2)
+                self.assertEqual(result['decisions'][0]['attempts'], 5 if concrete else 1)
+                self.assertFalse(result['all_complete'])
+
+    def test_changed_threshold_cannot_reuse_old_pipeline_pass(self):
+        calls = []
+        def reviewer(packages, output, role, **kwargs):
+            calls.append(kwargs['min_release_confidence'])
+            return {'response_id': str(len(calls)), 'cost_usd': 0, 'decisions': [{**self.decision(packages[0], release_confidence=1.0), 'automatic_release_eligible': True}]}
+        args = self.args()
+        with patch.object(qa, 'review_packages', side_effect=reviewer):
+            first = qa.pipeline(args)
+            args.min_release_confidence = .99
+            second = qa.pipeline(args)
+        self.assertNotEqual(first['run_hash'], second['run_hash'])
+        self.assertEqual(calls, [.95, .95, .99, .99])
+        request1, request2 = qa.build_request([self.p], .95), qa.build_request([self.p], .99)
+        self.assertNotEqual(audit.digest(request1), audit.digest(request2))
 
     def test_fresh_run_id_changes_review_round_input(self):
         first = qa.current_package(self.clip, self.packets, review_round=1, experiment_id='one')

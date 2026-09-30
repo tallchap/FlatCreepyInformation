@@ -8,17 +8,20 @@ from google.auth.transport.requests import AuthorizedSession
 from google.cloud import bigquery
 import requests
 import audit
+from luna_batch_qa import release_gate_passed
 
 TABLE='youtubetranscripts-429803.reptranscripts.snippets_auto'
 BUCKET='snippysaurus-clips'
 
-def publish(recipe_path,media_path,qa_path,out):
+def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95):
     recipe=json.loads(recipe_path.read_text());qa=json.loads(qa_path.read_text())
     if recipe['decision'] not in ('approve','revise') or not recipe['clip_worthy']:raise ValueError('Not approved')
     sha=hashlib.sha256(media_path.read_bytes()).hexdigest();rh=audit.digest(recipe)
     if not qa.get('passed') or qa.get('media_sha256')!=sha or qa.get('recipe_hash')!=rh:raise ValueError('QA is absent, failed, or stale')
     required=['picture_verified','dialogue_verified','boundaries_verified','duration_verified']
     if not all(qa.get('checks',{}).get(k) is True for k in required):raise ValueError('Incomplete audiovisual QA')
+    if str(qa.get('reviewer','')).startswith('gpt-6-luna') and not release_gate_passed(qa.get('release_gate'), min_release_confidence):
+        raise ValueError('Luna confidence gate missing or failed; fresh Luna/Astra QA required')
     vid=recipe['candidate_id'];sid='astra_'+vid+'_'+rh[:12];name=f'clips/astra/{vid}/{rh[:16]}.mp4'
     b=audit.bq_client();jobs=[]
     def query(sql, **kwargs):
@@ -51,4 +54,4 @@ def publish(recipe_path,media_path,qa_path,out):
     audit.atomic(out,receipt);print(json.dumps(receipt,indent=2))
 
 if __name__=='__main__':
-    p=argparse.ArgumentParser();p.add_argument('--recipe',type=Path,required=True);p.add_argument('--media',type=Path,required=True);p.add_argument('--qa',type=Path,required=True);p.add_argument('--out',type=Path,required=True);a=p.parse_args();publish(a.recipe,a.media,a.qa,a.out)
+    p=argparse.ArgumentParser();p.add_argument('--recipe',type=Path,required=True);p.add_argument('--media',type=Path,required=True);p.add_argument('--qa',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--min-release-confidence',type=float,default=0.95);a=p.parse_args();publish(a.recipe,a.media,a.qa,a.out,a.min_release_confidence)

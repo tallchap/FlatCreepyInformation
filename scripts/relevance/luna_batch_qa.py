@@ -23,15 +23,58 @@ from process_astra import require, sha, probe, run
 PROMPT = Path(__file__).with_name('luna-batch-qa-prompt.txt')
 VERIFIER_PROMPT = Path(__file__).with_name('luna-batch-verifier-prompt.txt')
 MAX_PASSES = 5
+RELEASE_POLICY_VERSION = 'snippy-luna-release-v1'
+DEFAULT_MIN_RELEASE_CONFIDENCE = .95
+ESCALATION_REASONS = ['boundary_uncertain', 'critical_transcript_disagreement', 'context_missing', 'attribution_uncertain', 'caveat_uncertain', 'evidence_missing']
 IDENTITIES = ['candidate_id', 'source_input_hash', 'media_sha256', 'recipe_hash', 'evidence_hash']
 PROPS = {'candidate_id': {'type': 'string'}}
 PROPS['retained_speaker'] = {'type': 'string'}
 PROPS['final_title'] = {'type': 'string'}
 PROPS['final_description'] = {'type': 'string'}
+PROPS['release_confidence'] = {'type': 'number', 'minimum': 0, 'maximum': 1}
+PROPS['escalation_reasons'] = {'type': 'array', 'items': {'type': 'string', 'enum': ESCALATION_REASONS}}
 PROPS.update(status={'type': 'string', 'enum': ['approve', 'adjust', 'review', 'reject']}, reason={'type': 'string'}, preserves_meaning={'type': 'boolean'}, keep_start_seconds={'type': ['number', 'null']}, keep_end_seconds={'type': ['number', 'null']})
 for key in ('picture_status', 'dialogue_status', 'boundaries_status', 'metadata_status'):
     PROPS[key] = {'type': 'string', 'enum': ['pass', 'fail', 'uncertain']}
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions'], 'properties': {'decisions': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False, 'required': list(PROPS), 'properties': PROPS}}}}
+
+
+def validate_threshold(value):
+    require(type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1, 'Release threshold must be a finite number in [0,1]')
+    return float(value)
+
+
+def release_gate(decision, min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
+    threshold = validate_threshold(min_release_confidence)
+    confidence = decision.get('release_confidence')
+    confidence_valid = type(confidence) in (int, float) and math.isfinite(confidence) and 0 <= confidence <= 1
+    flags = decision.get('escalation_reasons')
+    flags_valid = isinstance(flags, list) and all(flag in ESCALATION_REASONS for flag in flags)
+    reasons = set(flags if flags_valid else ['evidence_missing'])
+    derived = {'picture_status': 'evidence_missing', 'dialogue_status': 'critical_transcript_disagreement', 'boundaries_status': 'boundary_uncertain', 'metadata_status': 'attribution_uncertain'}
+    for field, reason in derived.items():
+        if decision.get(field) == 'uncertain':
+            reasons.add(reason)
+        elif decision.get(field) not in ('pass', 'fail'):
+            reasons.add('evidence_missing')
+    if not confidence_valid:
+        reasons.add('evidence_missing')
+    if decision.get('preserves_meaning') is False:
+        reasons.add('caveat_uncertain')
+    passed = decision.get('status') in ('approve', 'pass') and decision.get('preserves_meaning') is True and all(decision.get(field) == 'pass' for field in derived) and confidence_valid and confidence >= threshold and flags_valid and not reasons
+    return {'policy_version': RELEASE_POLICY_VERSION, 'min_release_confidence': threshold, 'release_confidence': confidence if confidence_valid else None, 'escalation_reasons': sorted(reasons), 'passed': bool(passed)}
+
+
+def release_gate_passed(gate, min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
+    if not isinstance(gate, dict) or gate.get('policy_version') != RELEASE_POLICY_VERSION or gate.get('passed') is not True:
+        return False
+    threshold, confidence = gate.get('min_release_confidence'), gate.get('release_confidence')
+    try:
+        threshold = validate_threshold(threshold)
+        requested = validate_threshold(min_release_confidence)
+    except ValueError:
+        return False
+    return threshold >= requested and type(confidence) in (int, float) and math.isfinite(confidence) and threshold <= confidence <= 1 and gate.get('escalation_reasons') == []
 
 
 def read(path):
@@ -93,17 +136,18 @@ def model_evidence(value):
     return value
 
 
-def bind_request(body, packages):
-    body['metadata'] = {'qa_schema': 'snippy-luna-batch-qa-v2', 'batch_evidence_hash': audit.digest([p['evidence'] for p in packages])}
+def bind_request(body, packages, min_release_confidence=None):
+    threshold = validate_threshold(min_release_confidence if min_release_confidence is not None else float(body.get('metadata', {}).get('min_release_confidence', DEFAULT_MIN_RELEASE_CONFIDENCE)))
+    body['metadata'] = {'qa_schema': 'snippy-luna-batch-qa-v3', 'release_policy_version': RELEASE_POLICY_VERSION, 'min_release_confidence': str(threshold), 'batch_evidence_hash': audit.digest([p['evidence'] for p in packages])}
     body['metadata']['request_fingerprint'] = audit.digest(body)
     return body
 
 
-def build_request(packages):
+def build_request(packages, min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
     require(1 <= len(packages) <= 8, 'Batch must contain 1–8 clips')
     ids = [p['evidence']['candidate_id'] for p in packages]
     require(len(ids) == len(set(ids)), 'Duplicate candidates')
-    content = []
+    content = [{'type': 'input_text', 'text': json.dumps({'release_policy_version': RELEASE_POLICY_VERSION, 'min_release_confidence': validate_threshold(min_release_confidence), 'confidence_is_not_calibrated_accuracy': True})}]
     for p in packages:
         content.append({'type': 'input_text', 'text': json.dumps(model_evidence(p['evidence']), ensure_ascii=False)})
         if p['image_path']:
@@ -112,7 +156,7 @@ def build_request(packages):
             require(len(data) <= 8 * 1024 * 1024, 'Contact sheet exceeds 8 MiB')
             mime = 'image/png' if data.startswith(b'\x89PNG') else 'image/jpeg'
             content.append({'type': 'input_image', 'image_url': f'data:{mime};base64,' + base64.b64encode(data).decode(), 'detail': 'low'})
-    return bind_request({'model': 'gpt-6-luna', 'instructions': PROMPT.read_text(), 'input': [{'role': 'user', 'content': content}], 'text': {'format': {'type': 'json_schema', 'name': 'snippy_luna_batch_qa_v1', 'schema': SCHEMA, 'strict': True}}, 'max_output_tokens': 10000}, packages)
+    return bind_request({'model': 'gpt-6-luna', 'instructions': PROMPT.read_text(), 'input': [{'role': 'user', 'content': content}], 'text': {'format': {'type': 'json_schema', 'name': 'snippy_luna_batch_qa_v1', 'schema': SCHEMA, 'strict': True}}, 'max_output_tokens': 10000}, packages, min_release_confidence)
 
 
 def recheck(p):
@@ -207,7 +251,9 @@ def normalize(raw, packages, output, request=None):
     persisted = Path(output) / 'request.json'
     require(persisted.exists() and audit.digest(read(persisted)) == audit.digest(request), 'Persisted request mismatch')
     expected_metadata = request.get('metadata', {})
-    require(expected_metadata.get('qa_schema') == 'snippy-luna-batch-qa-v2', 'Response binding schema mismatch')
+    require(expected_metadata.get('qa_schema') == 'snippy-luna-batch-qa-v3', 'Response binding schema mismatch')
+    require(expected_metadata.get('release_policy_version') == RELEASE_POLICY_VERSION, 'Legacy release policy: fresh confidence review required')
+    threshold = validate_threshold(float(expected_metadata.get('min_release_confidence', 'nan')))
     require(expected_metadata.get('batch_evidence_hash') == audit.digest([p['evidence'] for p in packages]), 'Request batch evidence binding mismatch')
     fingerprint_body = copy.deepcopy(request)
     fingerprint = fingerprint_body['metadata'].pop('request_fingerprint', None)
@@ -230,6 +276,9 @@ def normalize(raw, packages, output, request=None):
         evidence = p['evidence']
         require(decision['reason'].strip(), 'Decision reason required')
         decision = {**copy.deepcopy(decision), **{key: evidence[key] for key in IDENTITIES}}
+        decision['proposed_status'] = decision['status']
+        if not evidence['asr_words'] or not evidence['image_sha256']:
+            decision['escalation_reasons'] = list(set(decision['escalation_reasons']) | {'evidence_missing'})
         try:
             decision['final_title'], decision['final_description'] = validate_publication_metadata(decision['final_title'], decision['final_description'])
             decision['retained_speaker'] = validate_speaker(decision['retained_speaker'], speaker_labels(evidence))
@@ -239,6 +288,7 @@ def normalize(raw, packages, output, request=None):
             normalized.append({**decision, 'status': 'review', 'keep_start_seconds': None, 'keep_end_seconds': None, 'action_validation_error': 'Invalid proposed metadata: ' + str(exc), 'reason': decision['reason'] + ' [Invalid proposed metadata; media and recipe unchanged: ' + str(exc) + ']', 'attempt': evidence['attempt'], 'automatic_release_eligible': False, 'published': False})
             continue
         status = decision['status']
+        decision['proposed_status'] = status
         action = None
         if status == 'adjust':
             try:
@@ -255,6 +305,12 @@ def normalize(raw, packages, output, request=None):
             decision.update(status='review', reason=decision['reason'] + ' [Automatic guard: missing or failed verification evidence.]')
         if request['instructions'] == VERIFIER_PROMPT.read_text() and decision['status'] == 'approve' and decision['retained_speaker'] != evidence['recipe']['speaker']:
             decision.update(status='review', reason=decision['reason'] + ' [Stored speaker metadata does not match retained speaker.]')
+        if not evidence['asr_words'] or not evidence['image_sha256']:
+            decision['escalation_reasons'] = list(set(decision['escalation_reasons']) | {'evidence_missing'})
+        gate = release_gate(decision, threshold)
+        if decision['status'] == 'approve' and not gate['passed']:
+            decision.update(status='review', reason=decision['reason'] + ' [Release confidence/uncertainty gate did not pass.]')
+        decision['release_gate'] = gate
         record = {**decision, 'attempt': evidence['attempt'], 'automatic_release_eligible': decision['status'] == 'approve', 'published': False}
         if action:
             action.update(parent_clip_dir=p['clip_dir'], reason=decision['reason'])
@@ -364,9 +420,9 @@ def apply_speaker_metadata(directory, speaker, output):
     return apply_publication_metadata(directory, speaker, recipe['title'], recipe['reason'], output)
 
 
-def review_packages(packages, output, role='finalizer'):
+def review_packages(packages, output, role='finalizer', min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
     require(role in ('finalizer', 'verifier'), 'Unknown reviewer role')
-    body = build_request(packages)
+    body = build_request(packages, min_release_confidence)
     if role == 'verifier':
         body['instructions'] = VERIFIER_PROMPT.read_text()
         body['text']['format']['schema'] = copy.deepcopy(SCHEMA)
@@ -398,13 +454,17 @@ def contact_sheet(directory):
     run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-i', str(directory / 'clip.mp4'), '-vf', f'fps=6/{duration},scale=320:-1,tile=3x2', '-frames:v', '1', str(directory / 'contact.jpg')], directory / 'contact.log')
 
 
-def approval_receipt(decision, directory):
+def approval_receipt(decision, directory, min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
     directory = Path(directory)
     require(sha(directory / 'clip.mp4') == decision['media_sha256'], 'Approval media drift')
     require(audit.digest(read(directory / 'recipe.json')) == decision['recipe_hash'], 'Approval recipe drift')
     if decision['status'] != 'approve' or not decision['automatic_release_eligible']:
         return
-    audit.atomic(directory / 'final-qa.json', {'passed': True, 'time': audit.now(), 'media_sha256': decision['media_sha256'], 'recipe_hash': decision['recipe_hash'], 'checks': {'picture_verified': True, 'dialogue_verified': True, 'boundaries_verified': True, 'duration_verified': True, 'metadata_verified': True}, 'reviewer': 'gpt-6-luna', 'evidence_hash': decision['evidence_hash'], 'evidence': {'picture': 'contact.jpg: sampled stills reviewed by Luna', 'dialogue': 'asr/clip.json: independent rendered-audio ASR reviewed by Luna', 'boundaries': decision['reason'], 'technical': 'qa.json'}, 'limitations': 'Model review of sampled frames and ASR; not human listening or frame-complete visual review'})
+    gate = release_gate(decision, min_release_confidence)
+    require(release_gate_passed(gate, min_release_confidence), 'Release gate failed; no approval receipt written')
+    if decision.get('release_gate') is not None:
+        require(decision['release_gate'] == gate, 'Release gate receipt mismatch')
+    audit.atomic(directory / 'final-qa.json', {'passed': True, 'release_gate': gate, 'time': audit.now(), 'media_sha256': decision['media_sha256'], 'recipe_hash': decision['recipe_hash'], 'checks': {'picture_verified': True, 'dialogue_verified': True, 'boundaries_verified': True, 'duration_verified': True, 'metadata_verified': True}, 'reviewer': 'gpt-6-luna', 'evidence_hash': decision['evidence_hash'], 'evidence': {'picture': 'contact.jpg: sampled stills reviewed by Luna', 'dialogue': 'asr/clip.json: independent rendered-audio ASR reviewed by Luna', 'boundaries': decision['reason'], 'technical': 'qa.json'}, 'limitations': 'Model review of sampled frames and ASR; not human listening or frame-complete visual review'})
 
 
 def current_package(directory, packets, image=None, feedback=None, verifier=False, review_round=None, experiment_id=None):
@@ -447,12 +507,33 @@ def finalizer_package(original_directory, current_directory, packets, image=None
     return p
 
 
-def escalation(output, vid, history, p):
+def write_handoff_queue(output):
+    output = Path(output)
+    items = []
+    for path in sorted((output / 'astra-escalations').glob('*.json')):
+        handoff = read(path)
+        items.append({'candidate_id': handoff['candidate_id'], 'status': 'awaiting_astra', 'complete': False, 'reason': handoff['reason'], 'release_gate': handoff['release_gate'], 'media_sha256': handoff['artifacts']['media_sha256'], 'recipe_hash': handoff['artifacts']['recipe_hash'], 'json_path': str(path.resolve()), 'markdown_path': str(path.with_suffix('.md').resolve())})
+    queue = {'schema_version': 'snippy-astra-handoff-queue-v1', 'created_at': audit.now(), 'status': 'awaiting_astra' if items else 'empty', 'auto_invoked': False, 'items': items}
+    audit.atomic(output / 'astra-handoff-queue.json', queue)
+    lines = ['# Pending Astra review', '', 'This is a durable handoff queue, not a running agent or publication approval.', '']
+    lines.extend(f"- [{item['candidate_id']}]({item['markdown_path']}): awaiting Astra — {item['reason']}" for item in items)
+    (output / 'astra-handoff-queue.md').write_text('\n'.join(lines) + '\n')
+    return queue
+
+
+def escalation(output, vid, history, p, reason=None, min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
     root = Path(output) / 'astra-escalations'
-    data = {'schema_version': 'snippy-astra-escalation-v1', 'candidate_id': vid, 'complete': False, 'reason': 'No independent verifier PASS within five rounds', 'history': history, 'current_evidence': p, 'next_reviewer': 'astra'}
+    recheck(p)
+    decision = (history[-1].get('verifier') or history[-1].get('finalizer') or {}) if history else {}
+    gate = release_gate(decision, min_release_confidence)
+    directory, evidence = Path(p['clip_dir']), p['evidence']
+    reason = reason or 'No independent verifier PASS within five rounds: ' + decision.get('reason', 'No verified decision')
+    artifacts = {'media_path': str((directory / 'clip.mp4').resolve()), 'media_sha256': evidence['media_sha256'], 'recipe_path': str((directory / 'recipe.json').resolve()), 'recipe_hash': evidence['recipe_hash'], 'asr_path': str((directory / 'asr/clip.json').resolve()), 'asr_sha256': evidence['asr_sha256'], 'contact_sheet_path': p.get('image_path'), 'contact_sheet_sha256': evidence['image_sha256'], 'source_context_path': (evidence.get('source_speaker_evidence') or {}).get('packet_path'), 'source_input_hash': evidence['source_input_hash']}
+    data = {'schema_version': 'snippy-astra-escalation-v2', 'candidate_id': vid, 'status': 'awaiting_astra', 'complete': False, 'reason': reason, 'release_gate': gate, 'confidence_is_not_calibrated_accuracy': True, 'artifacts': artifacts, 'history': history, 'current_evidence': p, 'next_reviewer': 'astra', 'auto_invoked': False, 'published': False}
     audit.atomic(root / f'{vid}.json', data)
     path = root / f'{vid}.md'
-    path.write_text('# Astra escalation: ' + vid + '\n\nFive Luna finalizer/verifier rounds exhausted. This clip is NOT complete or authorized for publication. Independently inspect the linked media, ASR, captions, and the full failure history. Resolve missing context or specify an exact executable repair; do not inherit prior approval claims.\n\n```json\n' + json.dumps(data, ensure_ascii=False, indent=2) + '\n```\n')
+    path.write_text('# Astra handoff: ' + vid + '\n\nAwaiting Astra; no agent has been invoked. This clip is NOT complete or authorized for publication.\n\nReason: ' + reason + '\n\nIndependently inspect the exact media, ASR, source context and metadata below. Resolve the flagged uncertainty or return a concrete repair. Confidence is a model estimate, not calibrated accuracy.\n\n```json\n' + json.dumps(data, ensure_ascii=False, indent=2) + '\n```\n')
+    write_handoff_queue(output)
     return str(path.resolve())
 
 
@@ -473,6 +554,7 @@ def ensure_asr(directory, whisper_cli):
 
 def pipeline(args):
     started = time.monotonic()
+    threshold = validate_threshold(getattr(args, 'min_release_confidence', DEFAULT_MIN_RELEASE_CONFIDENCE))
     images = dict(item.split('=', 1) for item in args.images)
     originals, directories, outcomes, history, feedback = {}, {}, {}, {}, {}
     for directory in args.clips:
@@ -487,12 +569,15 @@ def pipeline(args):
         directories[vid], history[vid] = directory, []
     require(1 <= len(originals) <= 8, 'Pipeline batch must contain 1–8 clips')
     # A dedicated run directory prevents unrelated batches overwriting resume state.
-    run_hash = audit.digest({'inputs': {vid: p['evidence']['evidence_hash'] for vid, p in originals.items()}, 'finalizer_prompt': sha(PROMPT), 'verifier_prompt': sha(VERIFIER_PROMPT), 'max_passes': MAX_PASSES, 'experiment_id': args.run_id})
+    run_hash = audit.digest({'inputs': {vid: p['evidence']['evidence_hash'] for vid, p in originals.items()}, 'finalizer_prompt': sha(PROMPT), 'verifier_prompt': sha(VERIFIER_PROMPT), 'max_passes': MAX_PASSES, 'experiment_id': args.run_id, 'release_policy_version': RELEASE_POLICY_VERSION, 'min_release_confidence': threshold, 'decision_schema_hash': audit.digest(SCHEMA), 'finalizer_hard_flag_routing': True})
     run_dir = args.output / 'pipelines' / run_hash
     saved_result = run_dir / 'pipeline-results.json'
     if saved_result.exists():
         result = read(saved_result)
+        require(result.get('release_policy_version') == RELEASE_POLICY_VERSION and result.get('min_release_confidence') == threshold, 'Cached legacy release policy requires fresh review')
         for decision in result['decisions']:
+            if decision.get('complete'):
+                require(release_gate_passed(decision.get('release_gate'), threshold), 'Cached PASS missing confidence release gate')
             require(sha(decision['media_path']) == decision['media_sha256'], 'Completed pipeline media drift')
             require(audit.digest(read(decision['recipe_path'])) == decision['recipe_hash'], 'Completed pipeline recipe drift')
         result.update(cache_hit=True, new_cost_usd=0, api_calls_this_invocation=0)
@@ -506,13 +591,25 @@ def pipeline(args):
         ledger['rounds'].append(row)
         audit.atomic(run_dir / 'ledger.json', ledger)
         finalizer_packages = [finalizer_package(originals[vid]['clip_dir'], directories[vid], args.packets, images.get(vid), feedback.get(vid), review_round=pass_number, experiment_id=args.run_id) for vid in active]
-        finalized = review_packages(finalizer_packages, args.output, 'finalizer')
+        finalized = review_packages(finalizer_packages, args.output, 'finalizer', min_release_confidence=threshold)
         calls[finalized['response_id']] = finalized
         row['finalizer'] = finalized
         audit.atomic(run_dir / 'ledger.json', ledger)
         round_errors = {}
+        finalizer_holds = []
         for decision in finalized['decisions']:
             vid = decision['candidate_id']
+            gate = release_gate(decision, threshold)
+            if gate['escalation_reasons']:
+                # Unresolved hard evidence risks cannot be erased by an independent
+                # verifier that never saw the concern. Preserve the current cut.
+                directory = directories[vid]
+                p = current_package(directory, args.packets, images.get(vid) if directory == Path(originals[vid]['clip_dir']) else None)
+                history[vid].append({'pass': pass_number, 'finalizer': decision, 'finalizer_response_id': finalized['response_id'], 'verifier_skipped': 'Finalizer hard escalation flag'})
+                path = escalation(run_dir, vid, history[vid], p, 'Finalizer requires Astra: ' + decision['reason'], threshold)
+                outcomes[vid] = {**decision, **{key: p['evidence'][key] for key in IDENTITIES}, 'status': 'escalated', 'handoff_status': 'awaiting_astra', 'complete': False, 'attempts': pass_number, 'release_gate': gate, 'media_path': str(directory / 'clip.mp4'), 'recipe_path': str(directory / 'recipe.json'), 'render_directory': str(directory), 'history': history[vid], 'astra_escalation_path': path, 'automatic_release_eligible': False}
+                finalizer_holds.append(vid)
+                continue
             if decision.get('action_validation_error'):
                 round_errors[vid] = decision['action_validation_error']
                 continue
@@ -533,11 +630,17 @@ def pipeline(args):
                 directories[vid] = directory
             except Exception as exc:
                 round_errors[vid] = str(exc)
+        row['finalizer_astra_candidates'] = finalizer_holds
+        active = [vid for vid in active if vid not in finalizer_holds]
+        if not active:
+            row.update(passed_candidates=[], early_astra_candidates=finalizer_holds, render_errors=round_errors)
+            audit.atomic(run_dir / 'ledger.json', ledger)
+            break
         # Independent call gets current media evidence only; no finalizer output.
         verification_packages = [current_package(directories[vid], args.packets, images.get(vid) if directories[vid] == Path(originals[vid]['clip_dir']) else None, verifier=True, review_round=pass_number, experiment_id=args.run_id) for vid in active]
         row['verifier_pending'] = True
         audit.atomic(run_dir / 'ledger.json', ledger)
-        verified = review_packages(verification_packages, args.output, 'verifier')
+        verified = review_packages(verification_packages, args.output, 'verifier', min_release_confidence=threshold)
         calls[verified['response_id']] = verified
         row.update(verifier=verified, render_errors=round_errors)
         next_active = []
@@ -545,15 +648,23 @@ def pipeline(args):
             vid = decision['candidate_id']
             finalizer_decision = next(d for d in finalized['decisions'] if d['candidate_id'] == vid)
             history[vid].append({'pass': pass_number, 'finalizer': finalizer_decision, 'verifier': decision, 'render_error': round_errors.get(vid), 'finalizer_response_id': finalized['response_id'], 'verifier_response_id': verified['response_id']})
-            passed = decision['status'] == 'approve' and decision['automatic_release_eligible'] and vid not in round_errors
+            gate = release_gate(decision, threshold)
+            decision['release_gate'] = gate
+            passed = decision['status'] == 'approve' and decision['automatic_release_eligible'] and gate['passed'] and vid not in round_errors
             directory = directories[vid]
             if passed:
-                approval_receipt(decision, directory)
+                approval_receipt(decision, directory, threshold)
                 outcomes[vid] = {**decision, 'status': 'pass', 'complete': True, 'attempts': pass_number, 'render_directory': str(directory), 'media_path': str(directory / 'clip.mp4'), 'recipe_path': str(directory / 'recipe.json'), 'history': history[vid]}
+            elif gate['escalation_reasons'] or ((decision.get('proposed_status', decision['status']) == 'approve' or all(decision.get(key) == 'pass' for key in ('picture_status', 'dialogue_status', 'boundaries_status', 'metadata_status'))) and (gate['release_confidence'] is None or gate['release_confidence'] < threshold)):
+                p = next(p for p in verification_packages if p['evidence']['candidate_id'] == vid)
+                reason = 'Verifier requires Astra: ' + decision['reason']
+                escalation_path = escalation(run_dir, vid, history[vid], p, reason, threshold)
+                outcomes[vid] = {**decision, 'status': 'escalated', 'handoff_status': 'awaiting_astra', 'complete': False, 'attempts': pass_number, 'release_gate': gate, 'media_path': str(directory / 'clip.mp4'), 'recipe_path': str(directory / 'recipe.json'), 'render_directory': str(directory), 'history': history[vid], 'astra_escalation_path': escalation_path, 'automatic_release_eligible': False}
             else:
                 next_active.append(vid)
                 feedback[vid] = {'verifier_failure': decision, 'render_error': round_errors.get(vid)}
-        row['passed_candidates'] = [vid for vid in active if vid not in next_active]
+        row['passed_candidates'] = [vid for vid in active if outcomes.get(vid, {}).get('complete') is True]
+        row['early_astra_candidates'] = finalizer_holds + [vid for vid in active if outcomes.get(vid, {}).get('handoff_status') == 'awaiting_astra']
         audit.atomic(run_dir / 'ledger.json', ledger)
         active = next_active
         if not active:
@@ -561,9 +672,10 @@ def pipeline(args):
     for vid in active:
         p = current_package(directories[vid], args.packets)
         evidence = p['evidence']
-        escalation_path = escalation(run_dir, vid, history[vid], p)
-        outcomes[vid] = {'candidate_id': vid, 'status': 'escalated', 'complete': False, 'attempts': MAX_PASSES, 'media_sha256': evidence['media_sha256'], 'recipe_hash': evidence['recipe_hash'], 'media_path': str(directories[vid] / 'clip.mp4'), 'recipe_path': str(directories[vid] / 'recipe.json'), 'render_directory': str(directories[vid]), 'history': history[vid], 'astra_escalation_path': escalation_path, 'automatic_release_eligible': False}
-    result = {'schema_version': 'snippy-luna-pipeline-v1', 'run_hash': run_hash, 'created_at': audit.now(), 'decisions': list(outcomes.values()), 'max_passes': MAX_PASSES, 'all_complete': not active, 'batch_response_ids': list(calls), 'cost_usd': sum(r['cost_usd'] for r in calls.values()), 'ledger_path': str((run_dir / 'ledger.json').resolve()), 'elapsed_seconds': time.monotonic() - started, 'cache_hit': False, 'new_cost_usd': sum(r['cost_usd'] for r in calls.values() if r.get('api_called')), 'api_calls_this_invocation': sum(bool(r.get('api_called')) for r in calls.values()), 'published': False}
+        escalation_path = escalation(run_dir, vid, history[vid], p, min_release_confidence=threshold)
+        outcomes[vid] = {'candidate_id': vid, 'status': 'escalated', 'handoff_status': 'awaiting_astra', 'complete': False, 'release_gate': release_gate(history[vid][-1]['verifier'], threshold), 'attempts': MAX_PASSES, 'media_sha256': evidence['media_sha256'], 'recipe_hash': evidence['recipe_hash'], 'media_path': str(directories[vid] / 'clip.mp4'), 'recipe_path': str(directories[vid] / 'recipe.json'), 'render_directory': str(directories[vid]), 'history': history[vid], 'astra_escalation_path': escalation_path, 'automatic_release_eligible': False}
+    write_handoff_queue(run_dir)
+    result = {'release_policy_version': RELEASE_POLICY_VERSION, 'min_release_confidence': threshold, 'confidence_is_not_calibrated_accuracy': True, 'astra_queue_path': str((run_dir / 'astra-handoff-queue.json').resolve()), 'schema_version': 'snippy-luna-pipeline-v1', 'run_hash': run_hash, 'created_at': audit.now(), 'decisions': list(outcomes.values()), 'max_passes': MAX_PASSES, 'all_complete': all(decision.get('complete') is True for decision in outcomes.values()) and len(outcomes) == len(originals), 'batch_response_ids': list(calls), 'cost_usd': sum(r['cost_usd'] for r in calls.values()), 'ledger_path': str((run_dir / 'ledger.json').resolve()), 'elapsed_seconds': time.monotonic() - started, 'cache_hit': False, 'new_cost_usd': sum(r['cost_usd'] for r in calls.values() if r.get('api_called')), 'api_calls_this_invocation': sum(bool(r.get('api_called')) for r in calls.values()), 'published': False}
     audit.atomic(saved_result, result)
     audit.atomic(args.output / 'pipeline-results.json', result)
     return result
@@ -575,6 +687,7 @@ def main():
     parser.add_argument('--clips', nargs='+', type=Path)
     parser.add_argument('--render-dir', action='append', type=Path, default=[])
     parser.add_argument('--audit-run', type=Path, help='Accepted for shared runner compatibility; packets supply caption context')
+    parser.add_argument('--min-release-confidence', type=float, default=DEFAULT_MIN_RELEASE_CONFIDENCE)
     parser.add_argument('--run-id', default='default', help='Explicit experiment ID; change it for a fresh paid experiment, keep it to resume')
     parser.add_argument('--whisper-cli', default='/opt/homebrew/bin/whisper')
     parser.add_argument('--packets', type=Path, default=Path('.context/astra-clips/candidates'))
@@ -605,7 +718,7 @@ def main():
             p['evidence'].pop('evidence_hash')
             p['evidence']['evidence_hash'] = audit.digest(p['evidence'])
         packages.append(p)
-    body = build_request(packages)
+    body = build_request(packages, args.min_release_confidence)
     h = audit.digest(body)
     out = args.output / h
     audit.atomic(out / 'packages.json', packages)
