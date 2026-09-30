@@ -8,13 +8,17 @@ Nothing uploads, publishes, writes a database, or modifies original footage.
 import argparse
 import base64
 import copy
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 import hashlib
 import json
 import math
+import os
 import shutil
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 
 import audit
@@ -25,6 +29,8 @@ VERIFIER_PROMPT = Path(__file__).with_name('luna-batch-verifier-prompt.txt')
 MAX_PASSES = 5
 RELEASE_POLICY_VERSION = 'snippy-luna-release-v1'
 DEFAULT_MIN_RELEASE_CONFIDENCE = .95
+ASR_LOCK = threading.Lock()
+RENDER_LOCK = threading.BoundedSemaphore(2)
 ESCALATION_REASONS = ['boundary_uncertain', 'critical_transcript_disagreement', 'context_missing', 'attribution_uncertain', 'caveat_uncertain', 'evidence_missing']
 IDENTITIES = ['candidate_id', 'source_input_hash', 'media_sha256', 'recipe_hash', 'evidence_hash']
 PROPS = {'candidate_id': {'type': 'string'}}
@@ -353,7 +359,8 @@ def execute_trim(plan_path, output, whisper_python=None):
         require(sha(media) == cached['output_sha256'], 'Cached trim corrupt')
         return cached
     duration = plan['keep_end_seconds'] - plan['keep_start_seconds']
-    run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-ss', str(plan['keep_start_seconds']), '-i', str(directory / 'clip.mp4'), '-t', str(duration), '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(media)], out / 'trim.log')
+    with RENDER_LOCK:
+        run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-ss', str(plan['keep_start_seconds']), '-i', str(directory / 'clip.mp4'), '-t', str(duration), '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(media)], out / 'trim.log')
     qa = probe(media, out / 'probe.log')
     source_qa = read(directory / 'qa.json')['ffprobe']
     video = next((s for s in qa['streams'] if s['codec_type'] == 'video'), {})
@@ -438,10 +445,63 @@ def review_packages(packages, output, role='finalizer', min_release_confidence=D
         require(not state.exists(), 'Prior API call has no durable response; inspect call-state before explicitly retrying (no automatic duplicate charges)')
         audit.atomic(state, {'role': role, 'status': 'started', 'time': audit.now()})
         import requests
-        response = requests.post('https://api.openai.com/v1/responses', headers={'Authorization': 'Bearer ' + audit.api_key()}, json=body, timeout=(15, 300))
-        response.raise_for_status()
-        audit.atomic(raw_path, response.json())
-        audit.atomic(state, {'role': role, 'status': 'response_saved', 'time': audit.now()})
+        for attempt in range(1, 4):
+            audit.atomic(state, {'role': role, 'status': 'started', 'time': audit.now(), 'attempt': attempt})
+            started_at, started_clock = audit.now(), time.monotonic()
+            event_base = {'role': role, 'model': body.get('model'), 'request_hash': out.name,
+                          'attempt': attempt, 'pid': os.getpid(), 'started_at': started_at,
+                          'interval_kind': 'client_http_request_lifetime'}
+
+            def transport_event(event, **values):
+                record = {**event_base, 'event': event, 'timestamp': audit.now(), **values}
+                with (out / 'transport-events.jsonl').open('a', encoding='utf-8') as stream:
+                    stream.write(json.dumps(record, ensure_ascii=False) + '\n')
+                    stream.flush()
+                    os.fsync(stream.fileno())
+
+            def request_end(**values):
+                transport_event('request_end', ended_at=http_ended_at,
+                                elapsed_seconds=http_ended_clock - started_clock, **values)
+
+            transport_event('request_start', start_event_is_dispatch_intent=True)
+            # The durable intent precedes the request. The end event carries
+            # exact client HTTP endpoints, excluding JSON parsing and disk writes.
+            event_base['started_at'], started_clock = audit.now(), time.monotonic()
+            try:
+                response = requests.post('https://api.openai.com/v1/responses', headers={'Authorization': 'Bearer ' + audit.api_key()}, json=body, timeout=(15, 300))
+                http_ended_at, http_ended_clock = audit.now(), time.monotonic()
+            except requests.RequestException as exc:
+                http_ended_at, http_ended_clock = audit.now(), time.monotonic()
+                request_end(status='unknown_charge', http_status=None, response_id=None, error_type=type(exc).__name__)
+                audit.atomic(state, {'role': role, 'status': 'unknown_charge', 'time': audit.now(), 'attempt': attempt, 'error_type': type(exc).__name__})
+                raise
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After', '2')
+                try:
+                    delay = max(0, float(retry_after))
+                except ValueError:
+                    delay = max(0, (parsedate_to_datetime(retry_after) - datetime.now(timezone.utc)).total_seconds())
+                request_end(status='rate_limited', http_status=429, response_id=None, retry_after_seconds=delay)
+                audit.atomic(state, {'role': role, 'status': 'rate_limited', 'time': audit.now(), 'attempt': attempt, 'retry_after_seconds': delay})
+                if attempt < 3:
+                    time.sleep(delay)
+                    continue
+            if response.status_code >= 400:
+                if response.status_code != 429:
+                    request_end(status='unknown_charge' if response.status_code >= 500 else 'rejected',
+                                http_status=response.status_code, response_id=None)
+                audit.atomic(state, {'role': role, 'status': 'unknown_charge' if response.status_code >= 500 else 'rejected', 'time': audit.now(), 'attempt': attempt, 'http_status': response.status_code})
+                response.raise_for_status()
+            try:
+                raw = response.json()
+                audit.atomic(raw_path, raw)
+            except (ValueError, OSError) as exc:
+                request_end(status='unknown_charge', http_status=response.status_code, response_id=None, error_type=type(exc).__name__)
+                audit.atomic(state, {'role': role, 'status': 'unknown_charge', 'time': audit.now(), 'attempt': attempt, 'error_type': type(exc).__name__})
+                raise
+            request_end(status='response_saved', http_status=response.status_code, response_id=raw.get('id'))
+            audit.atomic(state, {'role': role, 'status': 'response_saved', 'time': audit.now(), 'attempt': attempt})
+            break
     result = normalize(read(raw_path), packages, out, body)
     if role == 'verifier':
         require(all(d['status'] != 'adjust' for d in result['decisions']), 'Verifier is not allowed to edit')
@@ -546,7 +606,12 @@ def ensure_asr(directory, whisper_cli):
     imported = path.exists() and existing is None
     if not path.exists():
         path.parent.mkdir(exist_ok=True)
-        run([whisper_cli, str(directory / 'clip.mp4'), '--model', 'small.en', '--language', 'en', '--output_dir', str(path.parent), '--output_format', 'json', '--fp16', 'False', '--threads', '8', '--word_timestamps', 'True'], directory / 'whisper.log')
+        # Python adapters need an explicit interpreter on Windows. Serialize GPU
+        # calls across the two preparation threads without changing the ASR model.
+        command = ([os.environ.get('SNIPPY_WHISPER_PYTHON', sys.executable), '-X', 'utf8', whisper_cli]
+                   if str(whisper_cli).lower().endswith('.py') else [whisper_cli])
+        with ASR_LOCK:
+            run(command + [str(directory / 'clip.mp4'), '--model', 'small.en', '--language', 'en', '--output_dir', str(path.parent), '--output_format', 'json', '--fp16', 'False', '--threads', '8', '--word_timestamps', 'True'], directory / 'whisper.log')
     require(words_from(read(path)), 'ASR returned no word timings')
     if existing is None:
         audit.atomic(binding, {'media_sha256': media_hash, 'asr_sha256': sha(path), 'created_at': audit.now(), 'provenance': 'Previously generated ASR supplied alongside this rendered clip; first binding established now' if imported else 'Local Whisper run on this exact media hash'})

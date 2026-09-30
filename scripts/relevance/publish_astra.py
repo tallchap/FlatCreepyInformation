@@ -13,6 +13,16 @@ from luna_batch_qa import release_gate_passed
 TABLE='youtubetranscripts-429803.reptranscripts.snippets_auto'
 BUCKET='snippysaurus-clips'
 
+
+def existing_publication_matches(rows, expected):
+    """Permit exact idempotent replay; hold alternate/duplicate source rows."""
+    if not rows:
+        return False
+    if len(rows) != 1 or any(rows[0].get(key) != value for key, value in expected.items()):
+        raise ValueError('Existing Astra publication for source differs or is duplicated; reconciliation required before upload')
+    return True
+
+
 def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95):
     recipe=json.loads(recipe_path.read_text());qa=json.loads(qa_path.read_text())
     if recipe['decision'] not in ('approve','revise') or not recipe['clip_worthy']:raise ValueError('Not approved')
@@ -24,13 +34,27 @@ def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95):
         raise ValueError('Luna confidence gate missing or failed; fresh Luna/Astra QA required')
     vid=recipe['candidate_id'];sid='astra_'+vid+'_'+rh[:12];name=f'clips/astra/{vid}/{rh[:16]}.mp4'
     b=audit.bq_client();jobs=[]
+    attempt_path=out.parent.parent/'publication-attempts'/f'{vid}.json'
+    public=f'https://storage.googleapis.com/{BUCKET}/{name}'
+    row={'snippet_id':sid,'original_video_id':vid,'title':recipe['title'],'description':recipe['reason']+' '+recipe['edit_notes'],'category':'ai_safety','duration_ms':round(sum(e['end_seconds']-e['start_seconds'] for e in recipe['edits'])*1000),'transcript':' '.join(e['transcript'] for e in recipe['edits']),'gcs_url':public,'provider':'astra','speaker':recipe['speaker']}
     def query(sql, **kwargs):
-        job=b.query(sql, **kwargs);rows=list(job.result());jobs.append({'job_id':job.job_id,'bytes_billed':job.total_bytes_billed or 0,'cache_hit':job.cache_hit});return rows
+        job=b.query(sql, **kwargs)
+        try:
+            rows=list(job.result())
+        finally:
+            jobs.append({'job_id':job.job_id,'bytes_billed':job.total_bytes_billed or 0,'cache_hit':job.cache_hit})
+            audit.atomic(attempt_path,{'time':audit.now(),'candidate_id':vid,'snippet_id':sid,'recipe_hash':rh,'media_sha256':sha,'status':'in_progress','query_jobs':jobs})
+        return rows
     params=[bigquery.ScalarQueryParameter('vid','STRING',vid)]
     live=query('SELECT COUNT(*) n FROM `youtubetranscripts-429803.reptranscripts.youtube_videos` WHERE video_id=@vid',job_config=bigquery.QueryJobConfig(query_parameters=params))[0]['n']
     if not live:raise ValueError('Source not in live library')
     cull_ids={r['video_id'] for r in query('SELECT video_id FROM `youtubetranscripts-429803.snippy_history.cull_20260930_decisions`')}
     if vid in cull_ids:raise ValueError('Culled source forbidden')
+    # Recheck immediately before cloud writes, not only once at runner startup.
+    # The owning Relay worker remains the single writer: BigQuery has no unique
+    # source constraint that could replace that contract for unrelated writers.
+    existing=[dict(r) for r in query(f"SELECT * FROM `{TABLE}` WHERE original_video_id=@vid AND provider='astra'",job_config=bigquery.QueryJobConfig(query_parameters=params))]
+    existing_publication_matches(existing,row)
     s=AuthorizedSession(google.auth.default(scopes=['https://www.googleapis.com/auth/cloud-platform'])[0]);url='https://storage.googleapis.com/storage/v1/b/'+BUCKET+'/o/'+quote(name,safe='')
     meta=s.get(url,timeout=30)
     md5=base64.b64encode(hashlib.md5(media_path.read_bytes()).digest()).decode()
@@ -40,18 +64,17 @@ def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95):
         meta=s.get(url,timeout=30)
     meta.raise_for_status();stored=meta.json()
     if stored.get('md5Hash')!=md5 or int(stored['size'])!=media_path.stat().st_size:raise ValueError('Uploaded bytes mismatch')
-    public=f'https://storage.googleapis.com/{BUCKET}/{name}'
     response=requests.get(public,headers={'Range':'bytes=0-31'},timeout=30);response.raise_for_status()
     if response.status_code!=206 or response.content!=media_path.read_bytes()[:32]:raise ValueError('Public playback range verification failed')
-    row={'snippet_id':sid,'original_video_id':vid,'title':recipe['title'],'description':recipe['reason']+' '+recipe['edit_notes'],'category':'ai_safety','duration_ms':round(sum(e['end_seconds']-e['start_seconds'] for e in recipe['edits'])*1000),'transcript':' '.join(e['transcript'] for e in recipe['edits']),'gcs_url':public,'provider':'astra','speaker':recipe['speaker']}
     params=[bigquery.ScalarQueryParameter(k,'INT64' if k=='duration_ms' else 'STRING',v) for k,v in row.items()]
     cols=', '.join(row);vals=', '.join('@'+k for k in row)
     sql=f'MERGE `{TABLE}` T USING (SELECT @snippet_id snippet_id) S ON T.snippet_id=S.snippet_id WHEN NOT MATCHED THEN INSERT ({cols},created_at) VALUES ({vals},CURRENT_TIMESTAMP())'
     query(sql,job_config=bigquery.QueryJobConfig(query_parameters=params))
-    rows=[dict(r) for r in query(f'SELECT * FROM `{TABLE}` WHERE snippet_id=@id',job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('id','STRING',sid)]))]
+    rows=[dict(r) for r in query(f"SELECT * FROM `{TABLE}` WHERE original_video_id=@vid AND provider='astra'",job_config=bigquery.QueryJobConfig(query_parameters=[bigquery.ScalarQueryParameter('vid','STRING',vid)]))]
     if len(rows)!=1 or any(rows[0][k]!=v for k,v in row.items()):raise ValueError('DB receipt mismatch or duplicate')
     receipt={'passed':True,'time':audit.now(),'snippet_id':sid,'video_id':vid,'gcs_url':public,'gcs_generation':stored['generation'],'media_sha256':sha,'recipe_hash':rh,'uploaded_bytes':media_path.stat().st_size,'row':{k:str(v) for k,v in rows[0].items()},'query_jobs':jobs,'query_bytes_billed':sum(j['bytes_billed'] for j in jobs)}
     audit.atomic(out,receipt);print(json.dumps(receipt,indent=2))
+    audit.atomic(attempt_path,{'time':audit.now(),'candidate_id':vid,'status':'verified','receipt':str(out),'query_jobs':jobs})
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--recipe',type=Path,required=True);p.add_argument('--media',type=Path,required=True);p.add_argument('--qa',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--min-release-confidence',type=float,default=0.95);a=p.parse_args();publish(a.recipe,a.media,a.qa,a.out,a.min_release_confidence)
