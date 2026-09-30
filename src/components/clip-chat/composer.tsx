@@ -89,7 +89,7 @@ export function Composer({
               document.getElementById("clip-prompt")?.focus();
             }}
           >
-            <span aria-hidden="true">{suggestion.icon}</span> {suggestion.label}
+            {suggestion.label}
           </button>
         ))}
       </div>

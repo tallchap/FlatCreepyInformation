@@ -17,17 +17,14 @@ export const SUGGESTIONS = [
   {
     label: "AI could change everything",
     topic: "how AI could change everything",
-    icon: "✧",
   },
   {
     label: "The risks of superintelligence",
     topic: "the risks of superintelligence",
-    icon: "↗",
   },
   {
     label: "A surprising prediction",
     topic: "a surprising prediction",
-    icon: "⚡",
   },
 ];
 export function readChatHandoff(
