@@ -41,7 +41,7 @@ class BatchTests(unittest.TestCase):
 
     def decision(self, p=None, status='approve', **kw):
         e = (p or self.p)['evidence']
-        return {**{k: e[k] for k in qa.IDENTITIES}, 'retained_speaker': e['recipe']['speaker'], 'status': status, 'reason': 'Complete claim', 'preserves_meaning': True, 'keep_start_seconds': None, 'keep_end_seconds': None, 'picture_status': 'pass', 'dialogue_status': 'pass', 'boundaries_status': 'pass', **kw}
+        return {**{k: e[k] for k in qa.IDENTITIES}, 'retained_speaker': e['recipe']['speaker'], 'final_title': e['recipe']['title'], 'final_description': e.get('publication_metadata', {}).get('description', e['recipe'].get('reason', 'A substantive AI claim.')), 'metadata_status': 'pass', 'status': status, 'reason': 'Complete claim', 'preserves_meaning': True, 'keep_start_seconds': None, 'keep_end_seconds': None, 'picture_status': 'pass', 'dialogue_status': 'pass', 'boundaries_status': 'pass', **kw}
 
     def raw(self, decisions):
         return {'id': 'r1', 'status': 'completed', 'usage': {'input_tokens': 100, 'output_tokens': 10}, 'output': [{'type': 'message', 'content': [{'type': 'output_text', 'text': json.dumps({'decisions': [{k: v for k, v in d.items() if k in qa.PROPS} for d in decisions]})}]}]}
@@ -192,6 +192,37 @@ class BatchTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'invented name'):
             qa.apply_speaker_metadata(self.clip, 'Different Person', self.root / 'fixed')
 
+    def test_publication_metadata_fix_preserves_history_without_encoding(self):
+        original = qa.read(self.clip / 'recipe.json')
+        original.update(reason='Provisional envelope; include the interviewer question.', edit_notes='Trim later after review')
+        self.write(self.clip / 'recipe.json', original)
+        with patch.object(qa, 'run', side_effect=AssertionError('Metadata fix must not encode or call ASR')):
+            target = qa.apply_publication_metadata(self.clip, 'Expert', 'Expert explains AI oversight', 'The expert describes oversight challenges for increasingly capable AI.', self.root / 'fixed')
+        result = qa.read(target / 'recipe.json')
+        self.assertEqual(result['reason'], 'The expert describes oversight challenges for increasingly capable AI.')
+        self.assertEqual(result['edit_notes'], '')
+        self.assertEqual(qa.read(target / 'parent-recipe.json'), original)
+        self.assertEqual(qa.read(self.clip / 'recipe.json'), original)
+        self.assertEqual(qa.sha(target / 'clip.mp4'), qa.sha(self.clip / 'clip.mp4'))
+        p = qa.current_package(target, self.packets, feedback={'reason': 'PRIVATE APPROVAL RATIONALE'}, verifier=True)
+        self.assertEqual(p['evidence']['publication_metadata']['description'], result['reason'])
+        self.assertNotIn('PRIVATE APPROVAL RATIONALE', json.dumps(p['evidence']))
+        self.assertNotIn('Provisional envelope', json.dumps(p['evidence']))
+
+    def test_metadata_fail_or_meaning_uncertainty_blocks_approval(self):
+        for changes in ({'metadata_status': 'fail'}, {'preserves_meaning': False}):
+            result = self.normalize(self.raw([self.decision(**changes)]), [self.p], self.root / 'out')
+            self.assertEqual(result['decisions'][0]['status'], 'review')
+            self.assertFalse(result['decisions'][0]['automatic_release_eligible'])
+
+    def test_trim_plan_carries_publishable_metadata_separate_from_rationale(self):
+        decision = self.decision(status='adjust', keep_start_seconds=5, keep_end_seconds=25, final_title='A retained claim', final_description='The expert explains the retained claim.', reason='Remove the broken question')
+        result = self.normalize(self.raw([decision]), [self.p], self.root / 'out')
+        plan = qa.read(result['decisions'][0]['trim_path'])
+        self.assertEqual(plan['final_description'], 'The expert explains the retained claim.')
+        self.assertEqual(plan['reason'], 'Remove the broken question')
+        self.assertNotEqual(plan['final_description'], plan['reason'])
+
     def test_verifier_cannot_approve_wrong_stored_speaker(self):
         recipe = qa.read(self.clip / 'recipe.json')
         recipe['speaker'] = 'Gary Marcus and interviewer'
@@ -225,8 +256,10 @@ class BatchTests(unittest.TestCase):
     def test_verifier_does_not_receive_finalizer_opinion(self):
         p = qa.current_package(self.clip, self.packets, feedback={'private': 'bad verdict'}, verifier=True, review_round=2, experiment_id='test')
         text = json.dumps(p['evidence'])
-        self.assertNotIn('FINALIZER SECRET', text)
-        self.assertNotIn('FINALIZER NOTES', text)
+        self.assertNotIn('reason', p['evidence']['recipe'])
+        self.assertNotIn('edit_notes', p['evidence']['recipe'])
+        self.assertEqual(p['evidence']['publication_metadata']['description'], 'FINALIZER SECRET')
+        self.assertEqual(p['evidence']['publication_metadata']['publication_edit_notes'], 'FINALIZER NOTES')
         self.assertNotIn('bad verdict', text)
         qa.recheck(p)
 
@@ -285,7 +318,7 @@ class BatchTests(unittest.TestCase):
         result['output_sha256'] = qa.sha(video)
         self.write(self.clip / 'result.json', result)
         p = qa.package(self.clip, self.packets)
-        plan = qa.trim_plan(p['evidence'], 5, 25)
+        plan = qa.trim_plan(p['evidence'], 5, 25, final_title='Actual retained title', final_description='Actual retained dialogue description.')
         plan.update(parent_clip_dir=str(self.clip), reason='Remove incomplete edges')
         path = self.root / 'trim.json'
         self.write(path, plan)
@@ -293,6 +326,9 @@ class BatchTests(unittest.TestCase):
         directory = Path(trimmed['clip_path']).parent
         revised = qa.read(directory / 'recipe.json')
         self.assertEqual(revised['edits'], [{'start_seconds': 105, 'end_seconds': 125, 'transcript': 'word1 word2 word3 word4'}])
+        self.assertEqual(revised['title'], 'Actual retained title')
+        self.assertEqual(revised['reason'], 'Actual retained dialogue description.')
+        self.assertEqual(revised['edit_notes'], '')
         self.assertEqual(trimmed['additional_gcs_bytes_read'], 0)
         self.assertTrue(all(trimmed['automated_qa'].values()))
         self.assertEqual(qa.execute_trim(path, self.root / 'trimmed')['output_sha256'], trimmed['output_sha256'])

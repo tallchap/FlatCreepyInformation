@@ -26,8 +26,10 @@ MAX_PASSES = 5
 IDENTITIES = ['candidate_id', 'source_input_hash', 'media_sha256', 'recipe_hash', 'evidence_hash']
 PROPS = {'candidate_id': {'type': 'string'}}
 PROPS['retained_speaker'] = {'type': 'string'}
+PROPS['final_title'] = {'type': 'string'}
+PROPS['final_description'] = {'type': 'string'}
 PROPS.update(status={'type': 'string', 'enum': ['approve', 'adjust', 'review', 'reject']}, reason={'type': 'string'}, preserves_meaning={'type': 'boolean'}, keep_start_seconds={'type': ['number', 'null']}, keep_end_seconds={'type': ['number', 'null']})
-for key in ('picture_status', 'dialogue_status', 'boundaries_status'):
+for key in ('picture_status', 'dialogue_status', 'boundaries_status', 'metadata_status'):
     PROPS[key] = {'type': 'string', 'enum': ['pass', 'fail', 'uncertain']}
 SCHEMA = {'type': 'object', 'additionalProperties': False, 'required': ['decisions'], 'properties': {'decisions': {'type': 'array', 'items': {'type': 'object', 'additionalProperties': False, 'required': list(PROPS), 'properties': PROPS}}}}
 
@@ -133,8 +135,15 @@ def validate_speaker(speaker, provided):
     return speaker.strip()
 
 
-def trim_plan(evidence, start, end, speaker=None):
+def validate_publication_metadata(title, description):
+    require(isinstance(title, str) and 1 <= len(title.strip()) <= 240, 'Final title must be nonempty and at most 240 characters')
+    require(isinstance(description, str) and 1 <= len(description.strip()) <= 4000, 'Final description must be nonempty and at most 4000 characters')
+    return title.strip(), description.strip()
+
+
+def trim_plan(evidence, start, end, speaker=None, final_title=None, final_description=None):
     speaker = validate_speaker(speaker or evidence['recipe']['speaker'], evidence['recipe']['speaker'])
+    final_title, final_description = validate_publication_metadata(final_title if final_title is not None else evidence['recipe']['title'], final_description if final_description is not None else evidence['recipe']['reason'])
     require(all(type(v) in (int, float) and math.isfinite(v) for v in (start, end)), 'Trim timestamps must be finite')
     require(0 <= start < end <= evidence['duration_seconds'] and 15 <= end - start <= 240, 'Trim outside existing media or duration bounds')
     require(start > 0 or end < evidence['duration_seconds'] or evidence.get('current_cut'), 'Adjustment must trim or restore an earlier cut')
@@ -159,7 +168,7 @@ def trim_plan(evidence, start, end, speaker=None):
             mapped.append({'start_seconds': edit['start_seconds'] + lo - offset, 'end_seconds': edit['start_seconds'] + hi - offset})
         offset += length
     require(abs(sum(e['end_seconds'] - e['start_seconds'] for e in mapped) - (end - start)) < 0.05, 'Trim exceeds recipe timeline')
-    return {'schema_version': 'snippy-luna-trim-v1', **{k: evidence[k] for k in IDENTITIES}, 'source_generation': evidence['source_generation'], 'asr_sha256': evidence['asr_sha256'], 'retained_speaker': speaker, 'keep_start_seconds': start, 'keep_end_seconds': end, 'selected_word_start_seconds': selected_start, 'selected_word_end_seconds': selected_end, 'boundary_handles': {'opening_seconds': round(selected_start - start, 6), 'closing_seconds': round(end - selected_end, 6), 'policy': 'up to 120ms opening and 150ms closing, at most half the ASR gap; no neighboring words'}, 'source_ranges': mapped, 'retained_asr_words': retained, 'transcript': ' '.join(w['text'] for w in retained), 'transcript_provenance': evidence['asr_provenance'], 'attempt': evidence.get('attempt', 0) + 1, 'restores_original_range': bool(evidence.get('current_cut'))}
+    return {'schema_version': 'snippy-luna-trim-v1', **{k: evidence[k] for k in IDENTITIES}, 'source_generation': evidence['source_generation'], 'asr_sha256': evidence['asr_sha256'], 'retained_speaker': speaker, 'final_title': final_title, 'final_description': final_description, 'keep_start_seconds': start, 'keep_end_seconds': end, 'selected_word_start_seconds': selected_start, 'selected_word_end_seconds': selected_end, 'boundary_handles': {'opening_seconds': round(selected_start - start, 6), 'closing_seconds': round(end - selected_end, 6), 'policy': 'up to 120ms opening and 150ms closing, at most half the ASR gap; no neighboring words'}, 'source_ranges': mapped, 'retained_asr_words': retained, 'transcript': ' '.join(w['text'] for w in retained), 'transcript_provenance': evidence['asr_provenance'], 'attempt': evidence.get('attempt', 0) + 1, 'restores_original_range': bool(evidence.get('current_cut'))}
 
 
 def normalize(raw, packages, output, request=None):
@@ -191,13 +200,14 @@ def normalize(raw, packages, output, request=None):
         evidence = p['evidence']
         require(decision['reason'].strip(), 'Decision reason required')
         decision = {**copy.deepcopy(decision), **{key: evidence[key] for key in IDENTITIES}}
+        decision['final_title'], decision['final_description'] = validate_publication_metadata(decision['final_title'], decision['final_description'])
         decision['retained_speaker'] = validate_speaker(decision['retained_speaker'], evidence['recipe']['speaker'])
         status = decision['status']
         action = None
         if status == 'adjust':
             try:
                 require(decision['preserves_meaning'], 'Trim must preserve meaning')
-                action = trim_plan(evidence, decision['keep_start_seconds'], decision['keep_end_seconds'], decision['retained_speaker'])
+                action = trim_plan(evidence, decision['keep_start_seconds'], decision['keep_end_seconds'], decision['retained_speaker'], decision['final_title'], decision['final_description'])
             except ValueError as exc:
                 decision.update(status='review', keep_start_seconds=None, keep_end_seconds=None, action_validation_error=str(exc), reason=decision['reason'] + ' [Invalid proposed edit; media unchanged: ' + str(exc) + ']')
             if evidence['attempt'] >= MAX_PASSES or not evidence['technical_pass']:
@@ -205,7 +215,7 @@ def normalize(raw, packages, output, request=None):
                 action = None
         else:
             require(decision['keep_start_seconds'] is None and decision['keep_end_seconds'] is None, 'Only adjust may contain a trim')
-        if status == 'approve' and (not evidence['technical_pass'] or not evidence['asr_words'] or not evidence['image_sha256'] or not decision['preserves_meaning'] or any(decision[k] != 'pass' for k in ('picture_status', 'dialogue_status', 'boundaries_status'))):
+        if status == 'approve' and (not evidence['technical_pass'] or not evidence['asr_words'] or not evidence['image_sha256'] or not decision['preserves_meaning'] or any(decision[k] != 'pass' for k in ('picture_status', 'dialogue_status', 'boundaries_status', 'metadata_status'))):
             decision.update(status='review', reason=decision['reason'] + ' [Automatic guard: missing or failed verification evidence.]')
         if request['instructions'] == VERIFIER_PROMPT.read_text() and decision['status'] == 'approve' and decision['retained_speaker'] != evidence['recipe']['speaker']:
             decision.update(status='review', reason=decision['reason'] + ' [Stored speaker metadata does not match retained speaker.]')
@@ -238,7 +248,7 @@ def execute_trim(plan_path, output, whisper_python=None):
     require(sha(asr_path) == plan['asr_sha256'], 'ASR evidence drift')
     result = read(directory / 'result.json')
     evidence = {**{k: plan[k] for k in IDENTITIES}, 'source_generation': plan['source_generation'], 'asr_sha256': plan['asr_sha256'], 'recipe': recipe, 'duration_seconds': result['duration_seconds'], 'asr_words': words_from(read(asr_path)), 'asr_provenance': plan['transcript_provenance'], 'attempt': parent_attempt, 'current_cut': plan.get('restores_original_range', False)}
-    expected = trim_plan(evidence, plan.get('selected_word_start_seconds', plan['keep_start_seconds']), plan.get('selected_word_end_seconds', plan['keep_end_seconds']), plan.get('retained_speaker'))
+    expected = trim_plan(evidence, plan.get('selected_word_start_seconds', plan['keep_start_seconds']), plan.get('selected_word_end_seconds', plan['keep_end_seconds']), plan.get('retained_speaker'), plan.get('final_title'), plan.get('final_description'))
     require(all(plan[k] == v for k, v in expected.items()), 'Trim plan altered after validation')
     out = Path(output) / f"{plan['candidate_id']}-{audit.digest(plan)[:20]}"
     out.mkdir(parents=True, exist_ok=True)
@@ -260,7 +270,7 @@ def execute_trim(plan_path, output, whisper_python=None):
     require(all(checks.values()), 'Trim technical QA failed')
     audit.atomic(out / 'parent-recipe.json', recipe)
     revised = copy.deepcopy(recipe)
-    revised.update(decision='revise', speaker=plan['retained_speaker'], edit_notes=plan['reason'], transcript_provenance=plan['transcript_provenance'], timing_evidence_sha256=plan['asr_sha256'], parent_media_sha256=plan['media_sha256'])
+    revised.update(decision='revise', speaker=plan['retained_speaker'], title=plan['final_title'], reason=plan['final_description'], edit_notes='', transcript_provenance=plan['transcript_provenance'], timing_evidence_sha256=plan['asr_sha256'], parent_media_sha256=plan['media_sha256'])
     revised_edits, offset = [], 0
     for edit in recipe['edits']:
         length = edit['end_seconds'] - edit['start_seconds']
@@ -280,17 +290,20 @@ def execute_trim(plan_path, output, whisper_python=None):
     return trimmed
 
 
-def apply_speaker_metadata(directory, speaker, output):
+def apply_publication_metadata(directory, speaker, title, description, output):
     directory = Path(directory)
     recipe, result = read(directory / 'recipe.json'), read(directory / 'result.json')
     speaker = validate_speaker(speaker, recipe['speaker'])
-    if speaker == recipe['speaker']:
+    title, description = validate_publication_metadata(title, description)
+    updated = {**recipe, 'speaker': speaker, 'title': title, 'reason': description, 'edit_notes': ''}
+    if updated == recipe:
         return directory
-    identity = audit.digest({'media_sha256': result['output_sha256'], 'recipe_hash': audit.digest(recipe), 'speaker': speaker})
-    target = Path(output) / f"{result['candidate_id']}-speaker-{identity[:20]}"
+    identity = audit.digest({'media_sha256': result['output_sha256'], 'recipe_hash': audit.digest(recipe), 'publication_metadata': {'speaker': speaker, 'title': title, 'description': description}})
+    target = Path(output) / f"{result['candidate_id']}-metadata-{identity[:20]}"
     target.mkdir(parents=True, exist_ok=True)
     if (target / 'result.json').exists():
-        require(sha(target / 'clip.mp4') == read(target / 'result.json')['output_sha256'], 'Cached metadata-only media drift')
+        cached = read(target / 'result.json')
+        require(sha(target / 'clip.mp4') == cached['output_sha256'] and audit.digest(read(target / 'recipe.json')) == cached['recipe_hash'], 'Cached metadata-only rendition drift')
         return target
     for name in ('clip.mp4', 'qa.json', 'contact.jpg', 'trim.json'):
         if (directory / name).exists():
@@ -298,10 +311,15 @@ def apply_speaker_metadata(directory, speaker, output):
     if (directory / 'asr').exists():
         shutil.copytree(directory / 'asr', target / 'asr', dirs_exist_ok=True)
     audit.atomic(target / 'parent-recipe.json', recipe)
-    recipe['speaker'] = speaker
-    audit.atomic(target / 'recipe.json', recipe)
-    audit.atomic(target / 'result.json', {**result, 'recipe_hash': audit.digest(recipe), 'clip_path': str((target / 'clip.mp4').resolve()), 'metadata_only': True, 'additional_gcs_bytes_read': 0, 'uploaded': False, 'database_written': False})
+    audit.atomic(target / 'recipe.json', updated)
+    audit.atomic(target / 'result.json', {**result, 'recipe_hash': audit.digest(updated), 'clip_path': str((target / 'clip.mp4').resolve()), 'metadata_only': True, 'additional_gcs_bytes_read': 0, 'uploaded': False, 'database_written': False})
     return target
+
+
+def apply_speaker_metadata(directory, speaker, output):
+    # Compatibility for speaker-only callers; new finalizer uses all three fields.
+    recipe = read(Path(directory) / 'recipe.json')
+    return apply_publication_metadata(directory, speaker, recipe['title'], recipe['reason'], output)
 
 
 def review_packages(packages, output, role='finalizer'):
@@ -344,7 +362,7 @@ def approval_receipt(decision, directory):
     require(audit.digest(read(directory / 'recipe.json')) == decision['recipe_hash'], 'Approval recipe drift')
     if decision['status'] != 'approve' or not decision['automatic_release_eligible']:
         return
-    audit.atomic(directory / 'final-qa.json', {'passed': True, 'time': audit.now(), 'media_sha256': decision['media_sha256'], 'recipe_hash': decision['recipe_hash'], 'checks': {'picture_verified': True, 'dialogue_verified': True, 'boundaries_verified': True, 'duration_verified': True}, 'reviewer': 'gpt-6-luna', 'evidence_hash': decision['evidence_hash'], 'evidence': {'picture': 'contact.jpg: sampled stills reviewed by Luna', 'dialogue': 'asr/clip.json: independent rendered-audio ASR reviewed by Luna', 'boundaries': decision['reason'], 'technical': 'qa.json'}, 'limitations': 'Model review of sampled frames and ASR; not human listening or frame-complete visual review'})
+    audit.atomic(directory / 'final-qa.json', {'passed': True, 'time': audit.now(), 'media_sha256': decision['media_sha256'], 'recipe_hash': decision['recipe_hash'], 'checks': {'picture_verified': True, 'dialogue_verified': True, 'boundaries_verified': True, 'duration_verified': True, 'metadata_verified': True}, 'reviewer': 'gpt-6-luna', 'evidence_hash': decision['evidence_hash'], 'evidence': {'picture': 'contact.jpg: sampled stills reviewed by Luna', 'dialogue': 'asr/clip.json: independent rendered-audio ASR reviewed by Luna', 'boundaries': decision['reason'], 'technical': 'qa.json'}, 'limitations': 'Model review of sampled frames and ASR; not human listening or frame-complete visual review'})
 
 
 def current_package(directory, packets, image=None, feedback=None, verifier=False, review_round=None, experiment_id=None):
@@ -359,7 +377,9 @@ def current_package(directory, packets, image=None, feedback=None, verifier=Fals
     if feedback and not verifier:
         p['evidence']['verifier_feedback'] = feedback
     if verifier:
-        # The verifier gets footage/ASR/context, never the finalizer's opinion.
+        # Published description is a claim to fact-check, not an approval rationale.
+        p['evidence']['publication_metadata'] = {'title': p['evidence']['recipe']['title'], 'speaker': p['evidence']['recipe']['speaker'], 'description': p['evidence']['recipe']['reason'], 'publication_edit_notes': p['evidence']['recipe'].get('edit_notes', '')}
+        # The verifier gets footage/ASR/context, never the finalizer's decision.
         p['evidence']['recipe'] = {k: v for k, v in p['evidence']['recipe'].items() if k not in ('decision', 'reason', 'edit_notes')}
     p['evidence'].pop('evidence_hash')
     p['evidence']['evidence_hash'] = audit.digest(p['evidence'])
@@ -378,7 +398,7 @@ def finalizer_package(original_directory, current_directory, packets, image=None
     else:
         start, end = 0, p['evidence']['duration_seconds']
     p['evidence']['planning_timeline'] = 'All proposed keep endpoints refer to ORIGINAL local media/ASR above; approve keeps current_cut unchanged'
-    p['evidence']['current_cut'] = {'original_start_seconds': start, 'original_end_seconds': end, 'media_sha256': current['evidence']['media_sha256'], 'recipe_hash': current['evidence']['recipe_hash'], 'asr_sha256': current['evidence']['asr_sha256'], 'asr_words_relative_to_current_clip': current['evidence']['asr_words'] if original_directory != current_directory else [], 'same_as_original': original_directory == current_directory}
+    p['evidence']['current_cut'] = {'original_start_seconds': start, 'original_end_seconds': end, 'media_sha256': current['evidence']['media_sha256'], 'recipe_hash': current['evidence']['recipe_hash'], 'asr_sha256': current['evidence']['asr_sha256'], 'asr_words_relative_to_current_clip': current['evidence']['asr_words'] if original_directory != current_directory else [], 'same_as_original': original_directory == current_directory, 'publication_metadata': {'title': current['evidence']['recipe']['title'], 'speaker': current['evidence']['recipe']['speaker'], 'description': current['evidence']['recipe']['reason'], 'publication_edit_notes': current['evidence']['recipe'].get('edit_notes', '')}}
     p['evidence'].pop('evidence_hash')
     p['evidence']['evidence_hash'] = audit.digest(p['evidence'])
     p['current_render_package'] = current
@@ -456,7 +476,7 @@ def pipeline(args):
                 continue
             if decision['status'] == 'approve':
                 try:
-                    directories[vid] = apply_speaker_metadata(directories[vid], decision['retained_speaker'], args.output / 'trimmed')
+                    directories[vid] = apply_publication_metadata(directories[vid], decision['retained_speaker'], decision['final_title'], decision['final_description'], args.output / 'trimmed')
                 except Exception as exc:
                     round_errors[vid] = str(exc)
                 continue
