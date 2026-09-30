@@ -1,5 +1,7 @@
 import type { CSSProperties } from "react";
 
+export const DEFAULT_ELON_PORTRAIT = "option-6" as const;
+
 export const ELON_PORTRAITS = [
   {
     id: "option-1",

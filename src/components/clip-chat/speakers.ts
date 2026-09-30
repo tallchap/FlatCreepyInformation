@@ -1,4 +1,4 @@
-import type { ElonPortrait } from "./elon-portraits";
+import { DEFAULT_ELON_PORTRAIT, type ElonPortrait } from "./elon-portraits";
 export const FEATURED_SPEAKERS = [
   { name: "Sam Altman", slug: "sam-altman", color: "#ddebba" },
   { name: "Elon Musk", slug: "elon-musk", color: "#d3dee9" },
@@ -56,7 +56,7 @@ export function readChatHandoff(
 
 export function speakerPortrait(
   slug: string,
-  elonPortrait: ElonPortrait = "current",
+  elonPortrait: ElonPortrait = DEFAULT_ELON_PORTRAIT,
 ) {
   if (slug === "elon-musk" && elonPortrait !== "current")
     return `/speakers/preview/elon-${elonPortrait}.jpg`;

@@ -1,5 +1,9 @@
 "use client";
-import { elonPortraitStyle, type ElonPortrait } from "./elon-portraits";
+import {
+  DEFAULT_ELON_PORTRAIT,
+  elonPortraitStyle,
+  type ElonPortrait,
+} from "./elon-portraits";
 
 import { useEffect, useRef } from "react";
 import { Scissors, UsersRound } from "lucide-react";
@@ -55,7 +59,7 @@ export function PortraitPicker({
   onChange,
   disabled = false,
   feel = "classic",
-  elonPortrait = "current",
+  elonPortrait = DEFAULT_ELON_PORTRAIT,
 }: {
   value: string;
   onChange: (slug: string, name: string) => void;

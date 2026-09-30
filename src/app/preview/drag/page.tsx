@@ -4,6 +4,7 @@ import { ClipHomepage } from "@/components/clip-chat/homepage";
 import type { DragFeel } from "@/components/clip-chat/portrait-picker";
 import styles from "./preview.module.css";
 import {
+  DEFAULT_ELON_PORTRAIT,
   ELON_PORTRAITS,
   type ElonPortrait,
 } from "@/components/clip-chat/elon-portraits";
@@ -28,7 +29,7 @@ const OPTIONS: { id: DragFeel; title: string; description: string }[] = [
   },
 ];
 export default function DragPreview() {
-  const [photo, setPhoto] = useState<ElonPortrait>("option-1");
+  const [photo, setPhoto] = useState<ElonPortrait>(DEFAULT_ELON_PORTRAIT);
   const [photoRevision, setPhotoRevision] = useState(0);
   useEffect(() => {
     const requested = new URLSearchParams(window.location.search).get(
