@@ -93,6 +93,25 @@ def load_inputs(args):
     return recipe, packet, validate(recipe, packet, source, forbidden)
 
 
+class _LocalClientDisconnected(Exception):
+    """A disconnect observed only while writing the loopback HTTP response."""
+    def __init__(self, operation, error):
+        super().__init__(str(error))
+        self.operation, self.error = operation, error
+
+
+def _downstream_io(operation, function, *args):
+    try:
+        return function(*args)
+    except OSError as exc:
+        # Python maps ECONNABORTED to ConnectionAbortedError; native Windows
+        # socket writers can also expose WSAECONNABORTED (10053) on OSError.
+        # This wrapper is never applied to upstream GCS requests or reads.
+        if isinstance(exc, (BrokenPipeError, ConnectionResetError, ConnectionAbortedError)) or getattr(exc, 'winerror', None) == 10053:
+            raise _LocalClientDisconnected(operation, exc) from exc
+        raise
+
+
 class RangeProxy:
     """Single-object, loopback-only authenticated proxy; no arbitrary URLs accepted."""
     def __init__(self, session, obj, max_bytes, page_bytes=1024 * 1024):
@@ -170,7 +189,7 @@ class RangeProxy:
                             self.send_header('Content-Type', response.headers.get('Content-Type', 'video/mp4'))
                             self.send_header('Accept-Ranges', 'bytes')
                             self.send_header('Connection', 'close')
-                            self.end_headers()
+                            _downstream_io('headers', self.end_headers)
                             sent_headers = True
                         while page['bytes_read'] < requested_size:
                             chunk = response.raw.read(min(16384, requested_size - page['bytes_read']), decode_content=False)
@@ -179,12 +198,16 @@ class RangeProxy:
                                 owner.bytes_read += len(chunk)
                                 receipt['bytes_read'] += len(chunk)
                                 page['bytes_read'] += len(chunk)
-                            self.wfile.write(chunk)
+                            _downstream_io('body', self.wfile.write, chunk)
                         response.close()
                         response = None
                         cursor = page_end + 1
-                except (BrokenPipeError, ConnectionResetError):
+                    _downstream_io('flush', self.wfile.flush)
+                except _LocalClientDisconnected as exc:
                     receipt['cancelled'] = True
+                    receipt['downstream_disconnect'] = {'operation': exc.operation,
+                        'error_type': type(exc.error).__name__, 'errno': exc.error.errno,
+                        'winerror': getattr(exc.error, 'winerror', None), 'message': str(exc.error)}
                 except Exception as exc:
                     receipt['error'] = str(exc)
                     with owner.lock:

@@ -6,6 +6,7 @@ import tempfile
 import shutil
 import subprocess
 import unittest
+from unittest.mock import Mock
 from urllib.request import Request, urlopen
 
 import audit
@@ -222,6 +223,73 @@ class ProxyTests(unittest.TestCase):
                 urlopen(proxy.url)
         self.assertEqual(proxy.bytes_read, 0)
         self.assertTrue(proxy.errors)
+
+    def direct_handler(self, session=None):
+        """Exercise the real handler with controlled local socket failures."""
+        session = session or FakeSession(self.data)
+        proxy = RangeProxy(session, self.obj, len(self.data), page_bytes=32768)
+        self.addCleanup(proxy.server.server_close)
+        handler = proxy.server.RequestHandlerClass.__new__(proxy.server.RequestHandlerClass)
+        handler.path, handler.headers = proxy.path, {'Range': 'bytes=0-'}
+        handler.connection, handler.wfile = Mock(), Mock()
+        handler.send_response, handler.send_header, handler.end_headers = Mock(), Mock(), Mock()
+        return proxy, handler, session
+
+    def test_local_windows_abort_stops_transfer_without_upstream_failure_or_retry(self):
+        error = OSError('Native local socket abort')
+        error.winerror = 10053
+        proxy, handler, session = self.direct_handler()
+        handler.wfile.write.side_effect = error
+        handler.do_GET()
+        receipt = proxy.receipts[0]
+        self.assertTrue(receipt['cancelled'])
+        self.assertEqual(receipt['downstream_disconnect']['operation'], 'body')
+        self.assertEqual(receipt['downstream_disconnect']['winerror'], 10053)
+        self.assertEqual(proxy.errors, [])
+        self.assertEqual(len(session.calls), 1)
+        self.assertEqual(proxy.bytes_read, 16384)
+        self.assertEqual(proxy.bytes_requested, 32768)
+        self.assertEqual(proxy.report()['conservative_response_bytes_upper_bound'], 32768)
+
+    def test_local_header_and_flush_aborts_are_cancellations(self):
+        for operation in ('headers', 'flush'):
+            with self.subTest(operation=operation):
+                proxy, handler, session = self.direct_handler()
+                writer = handler.end_headers if operation == 'headers' else handler.wfile.flush
+                writer.side_effect = ConnectionAbortedError('Local client closed')
+                handler.do_GET()
+                self.assertTrue(proxy.receipts[0]['cancelled'])
+                self.assertEqual(proxy.receipts[0]['downstream_disconnect']['operation'], operation)
+                self.assertEqual(proxy.errors, [])
+                self.assertEqual(proxy.bytes_read, 0 if operation == 'headers' else len(self.data))
+
+    def test_upstream_connection_aborts_and_resets_remain_failures(self):
+        for error_type in (ConnectionAbortedError, ConnectionResetError, BrokenPipeError):
+            for location in ('request', 'read'):
+                with self.subTest(error_type=error_type.__name__, location=location):
+                    session = FakeSession(self.data)
+                    if location == 'request':
+                        session.get = Mock(side_effect=error_type('Upstream failed'))
+                    else:
+                        original = session.get
+                        def get(*args, **kwargs):
+                            response = original(*args, **kwargs)
+                            response.raw.read = Mock(side_effect=error_type('Upstream failed'))
+                            return response
+                        session.get = get
+                    proxy, handler, _ = self.direct_handler(session)
+                    handler.do_GET()
+                    self.assertFalse(proxy.receipts[0]['cancelled'])
+                    self.assertEqual(proxy.errors, ['Upstream failed'])
+                    self.assertEqual(proxy.bytes_read, 0)
+                    self.assertNotIn('downstream_disconnect', proxy.receipts[0])
+
+    def test_other_local_write_errors_still_fail_closed(self):
+        proxy, handler, _ = self.direct_handler()
+        handler.wfile.write.side_effect = TimeoutError('Local write timed out')
+        handler.do_GET()
+        self.assertFalse(proxy.receipts[0]['cancelled'])
+        self.assertEqual(proxy.errors, ['Local write timed out'])
 
 
 if __name__ == '__main__':
