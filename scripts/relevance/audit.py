@@ -289,12 +289,18 @@ def verify(run):
     all_inputs=list(inputs(run)); ids={r['video_id'] for r in all_inputs}
     actual={p.stem for p in (run/'results').glob('*.json')}
     checks={'all_snapshot_videos_accounted_for':ids==actual,'no_failed_or_pending_calls':not any(summary['counts'].get(k,0) for k in ('error','pending')),
-        'protected_metadata_never_called_or_rejected':True,'source_hashes_match':True,'eligible_evidence_passes':True}
+        'protected_metadata_never_called_or_rejected':True,'source_hashes_match':True,'snapshot_hashes_match':True,'full_transcript_request_hashes_match':True,
+        'negative_decisions_consistent':True,'eligible_evidence_passes':True}
     for row in all_inputs:
         p=run/'results'/f"{row['video_id']}.json"
         if not p.exists():continue
         r=json.loads(p.read_text())
         checks['source_hashes_match'] &= r['input_hash']==row['input_hash']
+        checks['snapshot_hashes_match'] &= digest({k:v for k,v in row.items() if k!='input_hash'})==row['input_hash']
+        if r.get('api_called'):
+            checks['full_transcript_request_hashes_match'] &= r['request_hash']==digest(request_body(row))
+        if r['status']=='no_passage':
+            checks['negative_decisions_consistent'] &= not r['assessment']['eligible'] and not r['assessment']['has_self_contained_ai_passage'] and not r['protected_matches']
         if row['protected_matches']:
             checks['protected_metadata_never_called_or_rejected'] &= r['status']=='preserved' and not r.get('api_called')
         if r['status']=='eligible':checks['eligible_evidence_passes'] &= all(r['evidence_checks'].values()) and r['assessment']['eligible'] and r['assessment']['original']
