@@ -344,6 +344,21 @@ def normalize(raw, packages, output, request=None):
     return result
 
 
+def revised_trim_recipe(recipe, plan):
+    revised = copy.deepcopy(recipe)
+    revised.update(speaker_evidence=plan.get('source_speaker_evidence'), decision='revise', speaker=plan['retained_speaker'], title=plan['final_title'], reason=plan['final_description'], edit_notes='', transcript_provenance=plan['transcript_provenance'], timing_evidence_sha256=plan['asr_sha256'], parent_media_sha256=plan['media_sha256'])
+    revised_edits, offset = [], 0
+    for edit in recipe['edits']:
+        length = edit['end_seconds'] - edit['start_seconds']
+        lo, hi = max(plan['keep_start_seconds'], offset), min(plan['keep_end_seconds'], offset + length)
+        if lo < hi:
+            retained = [w['text'] for w in plan['retained_asr_words'] if lo <= w['start'] and w['end'] <= hi]
+            revised_edits.append({'start_seconds': edit['start_seconds'] + lo - offset, 'end_seconds': edit['start_seconds'] + hi - offset, 'transcript': ' '.join(retained)})
+        offset += length
+    revised['edits'] = revised_edits
+    return revised
+
+
 def execute_trim(plan_path, output, whisper_python=None):
     started = time.monotonic()
     plan = read(plan_path)
@@ -363,41 +378,83 @@ def execute_trim(plan_path, output, whisper_python=None):
     if 'source_speaker_evidence' not in plan:
         expected.pop('source_speaker_evidence', None)  # Legacy plans retain their original hash/cache identity.
     require(all(plan[k] == v for k, v in expected.items()), 'Trim plan altered after validation')
-    out = Path(output) / f"{plan['candidate_id']}-{audit.digest(plan)[:20]}"
+    # Preserve already receipted legacy CPU cuts when no encoder change is
+    # requested. Explicit optimization always uses the new binary-bound identity.
+    legacy = Path(output) / f"{plan['candidate_id']}-{audit.digest(plan)[:20]}"
+    if not any(os.environ.get(k) for k in ('SNIPPY_ENCODER_PROFILE', 'SNIPPY_FFMPEG', 'SNIPPY_ORIGINAL_RANGE_CACHE')) and (legacy / 'result.json').exists():
+        cached = read(legacy / 'result.json')
+        require(sha(legacy / 'clip.mp4') == cached['output_sha256'], 'Cached legacy trim corrupt')
+        binding = (plan.get('source_speaker_evidence') or {}).get('packet_path')
+        if binding and (Path(binding).parent.parent / 'manifest.json').exists():
+            from bounded_window_cache import open_window
+            open_window(legacy, Path(binding).parent.parent)
+            from process_astra import verify_current_source
+            verify_current_source(read(binding)['gcs_object'])
+        return cached
+    import encoding
+    codec = encoding.selected()
+    packet_path = (plan.get('source_speaker_evidence') or {}).get('packet_path')
+    input_root = Path(packet_path).parent.parent if packet_path else None
+    if packet_path:
+        input_root = Path(packet_path).parent.parent
+        if (input_root / 'manifest.json').exists():
+            from bounded_window_cache import open_window
+            open_window(directory, input_root)
+    original_source = bool(os.environ.get('SNIPPY_ORIGINAL_RANGE_CACHE'))
+    if original_source:
+        require(input_root is not None and (input_root / 'manifest.json').exists(), 'Original-range render requires manifest/cull-bound source packet')
+    render_identity = audit.digest({'trim_plan': plan, 'encoding': codec['identity'], 'original_source': original_source})
+    out = Path(output) / f"{plan['candidate_id']}-{render_identity[:20]}"
     out.mkdir(parents=True, exist_ok=True)
     media = out / 'clip.mp4'
     if (out / 'result.json').exists():
         cached = read(out / 'result.json')
+        require(cached.get('encoding_identity') == codec['identity'] and cached.get('render_identity') == render_identity, 'Cached trim encoding identity drift')
         require(sha(media) == cached['output_sha256'], 'Cached trim corrupt')
+        if packet_path and (input_root / 'manifest.json').exists():
+            open_window(out, input_root)
+            from process_astra import verify_current_source
+            verify_current_source(read(packet_path)['gcs_object'])
         return cached
     duration = plan['keep_end_seconds'] - plan['keep_start_seconds']
+    revised = revised_trim_recipe(recipe, plan)
+    source_render = None
     with RENDER_LOCK:
         check_stop(output)
-        run(['ffmpeg', '-nostdin', '-v', 'error', '-y', '-ss', str(plan['keep_start_seconds']), '-i', str(directory / 'clip.mp4'), '-t', str(duration), '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'libx264', '-crf', '18', '-preset', 'slow', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(media)], out / 'trim.log')
+        if original_source:
+            import process_astra
+            from types import SimpleNamespace
+            packet = read(packet_path)
+            # Trim-plan validation above proves the source-relative ASR ranges;
+            # do not reapply original caption-boundary validation to ASR edits.
+            source_render = process_astra.render(SimpleNamespace(output=out / 'original-source',
+                max_transfer_bytes=int(result.get('transfer', {}).get('max_bytes', 256 * 1024 * 1024))),
+                revised, packet, {'renderable': True, 'duration_seconds': duration})
+            require(source_render.get('encoding_identity') == codec['identity'], 'Encoder changed during original-source trim')
+            shutil.copy2(source_render['clip_path'], media)
+        else:
+            run([codec['binary_path'], '-nostdin', '-v', 'error', '-y', '-ss', str(plan['keep_start_seconds']), '-i', str(directory / 'clip.mp4'), '-t', str(duration), '-map', '0:v:0', '-map', '0:a:0', *encoding.output_args(codec), str(media)], out / 'trim.log')
     qa = probe(media, out / 'probe.log')
     source_qa = read(directory / 'qa.json')['ffprobe']
     video = next((s for s in qa['streams'] if s['codec_type'] == 'video'), {})
     source_video = next(s for s in source_qa['streams'] if s['codec_type'] == 'video')
+    if not source_video.get('r_frame_rate'):
+        source_video = next(s for s in probe(directory / 'clip.mp4', out / 'parent-fps-probe.log')['streams'] if s['codec_type'] == 'video')
     checks = {'video': bool(video), 'audio': any(s['codec_type'] == 'audio' for s in qa['streams']), 'native_dimensions': (video.get('width'), video.get('height')) == (source_video['width'], source_video['height']), 'duration': abs(float(qa['format']['duration']) - duration) < .3}
+    checks['native_fps'] = encoding.native_fps(video, source_video)
     run(['ffmpeg', '-nostdin', '-v', 'error', '-xerror', '-i', str(media), '-f', 'null', '-'], out / 'decode.log')
     checks['full_decode'] = True
     audit.atomic(out / 'qa.json', {'checks': checks, 'ffprobe': qa})
     require(all(checks.values()), 'Trim technical QA failed')
     audit.atomic(out / 'parent-recipe.json', recipe)
-    revised = copy.deepcopy(recipe)
-    revised.update(speaker_evidence=plan.get('source_speaker_evidence'), decision='revise', speaker=plan['retained_speaker'], title=plan['final_title'], reason=plan['final_description'], edit_notes='', transcript_provenance=plan['transcript_provenance'], timing_evidence_sha256=plan['asr_sha256'], parent_media_sha256=plan['media_sha256'])
-    revised_edits, offset = [], 0
-    for edit in recipe['edits']:
-        length = edit['end_seconds'] - edit['start_seconds']
-        lo, hi = max(plan['keep_start_seconds'], offset), min(plan['keep_end_seconds'], offset + length)
-        if lo < hi:
-            retained = [w['text'] for w in plan['retained_asr_words'] if lo <= w['start'] and w['end'] <= hi]
-            revised_edits.append({'start_seconds': edit['start_seconds'] + lo - offset, 'end_seconds': edit['start_seconds'] + hi - offset, 'transcript': ' '.join(retained)})
-        offset += length
-    revised['edits'] = revised_edits
     audit.atomic(out / 'recipe.json', revised)
     audit.atomic(out / 'trim.json', plan)
     trimmed = {**result, 'clip_path': str(media.resolve()), 'output_sha256': sha(media), 'duration_seconds': float(qa['format']['duration']), 'output_bytes': media.stat().st_size, 'automated_qa': checks, 'attempt': plan['attempt'], 'recipe_hash': audit.digest(revised), 'elapsed_seconds': time.monotonic() - started, 'additional_gcs_bytes_read': 0, 'transfer_note': 'Parent transfer receipt retained; this local trim fetched zero additional GCS bytes', 'source_ranges': plan['source_ranges'], 'uploaded': False, 'database_written': False, 'human_picture_and_dialogue_review': 'pending', 'created_at': audit.now()}
+    trimmed.update(encoding=codec, encoding_identity=codec['identity'], render_identity=render_identity, original_source=original_source)
+    if source_render is not None:
+        trimmed.update(transfer=source_render['transfer'], additional_gcs_bytes_read=source_render['transfer']['upstream_body_bytes_read'],
+            original_source_render_result=str(Path(source_render['clip_path']).parent / 'result.json'),
+            transfer_note='Fresh original-generation range receipt; cached original bytes and additional GCS reads are reported separately; no encoded parent used as render input.')
     if whisper_python:
         (out / 'asr').mkdir(exist_ok=True)
         with ASR_LOCK:

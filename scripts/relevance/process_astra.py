@@ -9,6 +9,7 @@ import hashlib
 import http.server
 import json
 import math
+import os
 from pathlib import Path
 import re
 import secrets
@@ -18,6 +19,7 @@ import time
 from urllib.parse import quote
 
 import audit
+import encoding
 from captions import parse_captions
 
 
@@ -114,11 +116,14 @@ def _downstream_io(operation, function, *args):
 
 class RangeProxy:
     """Single-object, loopback-only authenticated proxy; no arbitrary URLs accepted."""
-    def __init__(self, session, obj, max_bytes, page_bytes=1024 * 1024):
+    def __init__(self, session, obj, max_bytes, page_bytes=1024 * 1024, cache_root=None):
         self.session, self.obj, self.max_bytes = session, obj, max_bytes
         require(max_bytes > 0 and page_bytes > 0, 'Transfer/page budgets must be positive')
         self.page_bytes, self.bytes_requested = page_bytes, 0
         self.receipts, self.bytes_read, self.errors = [], 0, []
+        self.cache_bytes_read, self.cache_hits = 0, 0
+        from range_cache import OriginalRangeCache
+        self.cache = OriginalRangeCache(cache_root, obj) if cache_root else None
         self.lock = threading.Lock()
         self.path = '/' + secrets.token_hex(24) + '.mp4'
         self.api = 'https://storage.googleapis.com/storage/v1/b/' + quote(obj['bucket'], safe='') + '/o/' + quote(obj['name'], safe='')
@@ -160,21 +165,34 @@ class RangeProxy:
                     cursor = start
                     sent_headers = False
                     while cursor <= end:
+                        page_end = min(end, cursor + owner.page_bytes - 1)
+                        cached = owner.cache.load(cursor, page_end) if owner.cache else None
                         # Reserve the entire bounded response before requesting it. This
                         # caps potential egress even if GCS fills unread socket buffers.
                         with owner.lock:
                             remaining = owner.max_bytes - owner.bytes_requested
-                            require(remaining > 0, 'Transfer budget exhausted; no automatic fallback')
-                            page_end = min(end, cursor + owner.page_bytes - 1, cursor + remaining - 1)
+                            require(cached is not None or remaining > 0, 'Transfer budget exhausted; no automatic fallback')
+                            if cached is None:
+                                page_end = min(page_end, cursor + remaining - 1)
                             requested_size = page_end - cursor + 1
-                            owner.bytes_requested += requested_size
-                        page = {'range': f'bytes={cursor}-{page_end}', 'bytes_read': 0, 'requested_bytes': requested_size}
+                            if cached is None:
+                                owner.bytes_requested += requested_size
+                            else:
+                                owner.cache_hits += 1
+                        page = {'range': f'bytes={cursor}-{page_end}', 'bytes_read': 0,
+                                'requested_bytes': requested_size if cached is None else 0, 'cache_hit': cached is not None}
                         receipt['pages'].append(page)
-                        response = owner.session.get(owner.api, params={'alt': 'media', 'generation': owner.obj['generation'], 'ifGenerationMatch': owner.obj['generation']}, headers={'Range': page['range'], 'Accept-Encoding': 'identity'}, stream=True, timeout=(15, 45))
+                        if cached is None:
+                            response = owner.session.get(owner.api, params={'alt': 'media', 'generation': owner.obj['generation'], 'ifGenerationMatch': owner.obj['generation']}, headers={'Range': page['range'], 'Accept-Encoding': 'identity'}, stream=True, timeout=(15, 45))
+                        else:
+                            from range_cache import CachedResponse
+                            response = CachedResponse(cached, owner.obj, cursor, page_end)
                         page['status'] = response.status_code
                         page['content_range'] = response.headers.get('Content-Range')
                         page['response_content_length'] = int(response.headers.get('Content-Length', 0))
-                        receipt['upstream_response_content_length'] += page['response_content_length']
+                        if cached is None:
+                            receipt['upstream_response_content_length'] += page['response_content_length']
+                        captured = bytearray()
                         require(response.status_code == 206, 'GCS did not honor range; refusing full-download fallback')
                         require(page['content_range'] == f'bytes {cursor}-{page_end}/{size}', 'GCS returned mismatched Content-Range')
                         require(page['response_content_length'] == requested_size, 'GCS returned mismatched Content-Length')
@@ -195,10 +213,17 @@ class RangeProxy:
                             chunk = response.raw.read(min(16384, requested_size - page['bytes_read']), decode_content=False)
                             require(chunk, 'GCS response ended before promised range')
                             with owner.lock:
-                                owner.bytes_read += len(chunk)
-                                receipt['bytes_read'] += len(chunk)
+                                if cached is None:
+                                    owner.bytes_read += len(chunk)
+                                    receipt['bytes_read'] += len(chunk)
+                                    if owner.cache:
+                                        captured.extend(chunk)
+                                else:
+                                    owner.cache_bytes_read += len(chunk)
                                 page['bytes_read'] += len(chunk)
                             _downstream_io('body', self.wfile.write, chunk)
+                        if owner.cache and cached is None:
+                            owner.cache.save(cursor, page_end, bytes(captured))
                         response.close()
                         response = None
                         cursor = page_end + 1
@@ -235,7 +260,7 @@ class RangeProxy:
         self.thread.join()
 
     def report(self):
-        return {'upstream_body_bytes_read': self.bytes_read, 'upstream_requested_bytes': self.bytes_requested, 'upstream_page_bytes': self.page_bytes, 'conservative_response_bytes_upper_bound': sum(r.get('upstream_response_content_length', 0) for r in self.receipts), 'source_object_bytes': int(self.obj['size']), 'source_generation': self.obj['generation'], 'max_bytes': self.max_bytes, 'budget_basis': 'sum of bounded upstream range lengths, including unread cancelled response bytes', 'measurement': 'HTTP body bytes actually read from upstream, includes read-ahead/cancelled requests; excludes HTTP/TLS overhead and unread socket buffers; not a billing measurement', 'requests': self.receipts, 'errors': self.errors}
+        return {'original_cache_covered_range_hits': self.cache.covered_range_hits if self.cache else 0, 'original_cache_exact_range_hits': self.cache.exact_range_hits if self.cache else 0, 'original_cache_body_bytes_read': self.cache_bytes_read, 'original_cache_page_hits': self.cache_hits, 'original_cache_enabled': self.cache is not None, 'upstream_body_bytes_read': self.bytes_read, 'upstream_requested_bytes': self.bytes_requested, 'upstream_page_bytes': self.page_bytes, 'conservative_response_bytes_upper_bound': sum(r.get('upstream_response_content_length', 0) for r in self.receipts), 'source_object_bytes': int(self.obj['size']), 'source_generation': self.obj['generation'], 'max_bytes': self.max_bytes, 'budget_basis': 'sum of bounded upstream range lengths, including unread cancelled response bytes', 'measurement': 'HTTP body bytes actually read from upstream, includes read-ahead/cancelled requests; excludes HTTP/TLS overhead and unread socket buffers; not a billing measurement', 'requests': self.receipts, 'errors': self.errors}
 
 
 def run(command, log):
@@ -249,39 +274,68 @@ def probe(path, log):
     return json.loads(run(['ffprobe', '-v', 'error', '-show_format', '-show_streams', '-of', 'json', str(path)], log))
 
 
+def verify_current_source(obj):
+    """Revalidate generation and size using metadata only, including cache hits."""
+    import google.auth
+    from google.auth.transport.requests import AuthorizedSession
+    credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/devstorage.read_only'])
+    with AuthorizedSession(credentials) as session:
+        api = f"https://storage.googleapis.com/storage/v1/b/{quote(obj['bucket'], safe='')}/o/{quote(obj['name'], safe='')}"
+        response = session.get(api, timeout=45)
+        response.raise_for_status()
+        current = response.json()
+    require(current['generation'] == obj['generation'] and current['size'] == obj['size'], 'Source generation/size changed since review packet')
+    return current
+
+
 def render(args, recipe, packet, validation):
     require(validation['renderable'], 'Rejected/unresolved candidates never render')
+    obj = packet['gcs_object']
+    codec = encoding.selected()
+    identity = audit.digest({'recipe': recipe, 'generation': obj['generation'], 'encoding': codec['identity']})
+    out = args.output / f"{recipe['candidate_id']}-{identity[:20]}"
+    result_path, video = out / 'result.json', out / 'clip.mp4'
+    current = verify_current_source(obj)
+    if not any(os.environ.get(k) for k in ('SNIPPY_ENCODER_PROFILE', 'SNIPPY_FFMPEG', 'SNIPPY_ORIGINAL_RANGE_CACHE')):
+        legacy_identity = audit.digest({'recipe': recipe, 'generation': obj['generation'], 'encoding': 'h264-crf18-slow-aac192-v1'})
+        legacy = args.output / f"{recipe['candidate_id']}-{legacy_identity[:20]}"
+        if (legacy / 'result.json').exists():
+            cached = json.loads((legacy / 'result.json').read_text())
+            require(cached['recipe_hash'] == legacy_identity, 'Cached legacy recipe identity changed')
+            require((legacy / 'clip.mp4').exists() and sha(legacy / 'clip.mp4') == cached['output_sha256'], 'Cached legacy output missing or corrupt')
+            input_root = args.output.parent / 'input'
+            if (input_root / 'manifest.json').exists():
+                from bounded_window_cache import open_window
+                open_window(legacy, input_root)
+            return cached
+    if result_path.exists():
+        result = json.loads(result_path.read_text())
+        require(result.get('encoding_identity') == codec['identity'] and result['recipe_hash'] == identity, 'Cached encoding identity changed')
+        require(video.exists() and sha(video) == result['output_sha256'], 'Cached output missing or corrupt')
+        input_root = args.output.parent / 'input'
+        if (input_root / 'manifest.json').exists():
+            from bounded_window_cache import open_window
+            open_window(out, input_root)
+        return result
     import google.auth
     from google.auth.transport.requests import AuthorizedSession
     credentials, _ = google.auth.default(scopes=['https://www.googleapis.com/auth/devstorage.read_only'])
     session = AuthorizedSession(credentials)
-    obj = packet['gcs_object']
-    proxy = RangeProxy(session, obj, args.max_transfer_bytes or int(obj['size']))
-    response = session.get(proxy.api, timeout=45)
-    response.raise_for_status()
-    current = response.json()
-    require(current['generation'] == obj['generation'] and current['size'] == obj['size'], 'Source generation/size changed since review packet')
-    identity = audit.digest({'recipe': recipe, 'generation': obj['generation'], 'encoding': 'h264-crf18-slow-aac192-v1'})
-    out = args.output / f"{recipe['candidate_id']}-{identity[:20]}"
+    proxy = RangeProxy(session, obj, args.max_transfer_bytes or int(obj['size']), cache_root=os.environ.get('SNIPPY_ORIGINAL_RANGE_CACHE'))
     out.mkdir(parents=True, exist_ok=True)
-    result_path, video = out / 'result.json', out / 'clip.mp4'
-    if result_path.exists():
-        result = json.loads(result_path.read_text())
-        require(video.exists() and sha(video) == result['output_sha256'], 'Cached output missing or corrupt')
-        return result
     require(not (out / 'transfer.json').exists(), 'Previous attempt exists; inspect receipt before explicitly choosing a new output directory')
     audit.atomic(out / 'recipe.json', recipe)
     audit.atomic(out / 'source.json', current)
     parts = []
     started = time.monotonic()
-    ffmpeg_version = run(['ffmpeg', '-version'], out / 'ffmpeg-version.log').splitlines()[0]
+    ffmpeg_version = run([codec['binary_path'], '-version'], out / 'ffmpeg-version.log').splitlines()[0]
     try:
         with proxy:
             source_probe = probe(proxy.url, out / 'source-probe.log')
             audit.atomic(out / 'source-ffprobe.json', source_probe)
             for index, edit in enumerate(recipe['edits']):
                 part = out / f'part-{index:03}.mp4'
-                cmd = ['ffmpeg', '-nostdin', '-hide_banner', '-v', 'error', '-y', '-ss', str(edit['start_seconds']), '-i', proxy.url, '-t', str(edit['end_seconds'] - edit['start_seconds']), '-map', '0:v:0', '-map', '0:a:0', '-sn', '-dn', '-c:v', 'libx264', '-preset', 'slow', '-crf', '18', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', str(part)]
+                cmd = [codec['binary_path'], '-nostdin', '-hide_banner', '-v', 'error', '-y', '-ss', str(edit['start_seconds']), '-i', proxy.url, '-t', str(edit['end_seconds'] - edit['start_seconds']), '-map', '0:v:0', '-map', '0:a:0', '-sn', '-dn', *encoding.output_args(codec), str(part)]
                 run(cmd, out / f'part-{index:03}.log')
                 parts.append(part)
         require(not proxy.errors, 'Range transfer errors; inspect transfer.json')
@@ -303,11 +357,13 @@ def render(args, recipe, packet, validation):
     a = next((s for s in streams if s['codec_type'] == 'audio'), None)
     sv = next((s for s in source_probe['streams'] if s['codec_type'] == 'video'), None)
     checks = {'video': v is not None, 'audio': a is not None, 'duration': abs(float(qa['format']['duration']) - validation['duration_seconds']) < 0.3, 'native_dimensions': v is not None and sv is not None and (v['width'], v['height']) == (sv['width'], sv['height'])}
+    checks['native_fps'] = v is not None and sv is not None and encoding.native_fps(v, sv)
     run(['ffmpeg', '-nostdin', '-v', 'error', '-xerror', '-i', str(video), '-f', 'null', '-'], out / 'decode.log')
     checks['full_decode'] = True
     audit.atomic(out / 'qa.json', {'checks': checks, 'ffprobe': qa, 'human_picture_and_dialogue_review': 'pending'})
     require(all(checks.values()), 'Output QA failed')
     result = {'recipe_hash': identity, 'candidate_id': recipe['candidate_id'], 'provider': 'astra', 'source_generation': obj['generation'], 'source_input_hash': recipe['source_input_hash'], 'clip_path': str(video.resolve()), 'output_sha256': sha(video), 'duration_seconds': float(qa['format']['duration']), 'output_bytes': video.stat().st_size, 'elapsed_seconds': time.monotonic() - started, 'ffmpeg_version': ffmpeg_version, 'transfer': receipt, 'automated_qa': checks, 'human_picture_and_dialogue_review': 'pending', 'uploaded': False, 'database_written': False, 'created_at': audit.now()}
+    result.update(encoding=codec, encoding_identity=codec['identity'])
     audit.atomic(result_path, result)
     return result
 
