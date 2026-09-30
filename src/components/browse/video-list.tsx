@@ -44,7 +44,11 @@ export function VideoList({ entries, snippetsByVideo, total, page, tab, onPageCh
         <DialogDescription>{playing?.video.channel} · {playing && displayDate(playing.video.published)}</DialogDescription>
         {playing?.snippet && <video key={playing.snippet.id} controls autoPlay playsInline onError={() => setMediaError(true)} src={playing.snippet.url} className={styles.snippetPlayer} />}
         {mediaError && <p role="alert">This snippet could not be loaded. You can still open the full video below.</p>}
-        {playing && <Link className={styles.outlineButton} href={`/video/${playing.video.id}`}>View full video<ChevronRight size={14} /></Link>}
+        {playing?.snippet?.transcript && <details className={styles.snippetTranscript}><summary>Clip transcript</summary><p>{playing.snippet.transcript}</p></details>}
+        {playing && <div className={styles.playerActions}>
+          <Link className={styles.outlineButton} href={`/video/${playing.video.id}`}>View full video<ChevronRight size={14} /></Link>
+          {playing.snippet && <a className={styles.outlineButton} href={playing.snippet.url} target="_blank" rel="noopener noreferrer">Open clip / download<ChevronRight size={14} /></a>}
+        </div>}
       </DialogContent>
     </Dialog>
   </>;

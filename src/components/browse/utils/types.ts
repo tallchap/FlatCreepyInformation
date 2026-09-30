@@ -30,6 +30,7 @@ export type BrowseSnippet = {
   title: string;
   durationMs: number;
   url: string;
+  transcript: string | null;
 };
 
 export type SpeakerLibrary = {
