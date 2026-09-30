@@ -9,7 +9,7 @@ import { CHAT_HANDOFF_KEY, SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
 import type { DragFeel } from "./portrait-picker";
 export function ClipHomepage({
-  feel,
+  feel = "spring",
   elonPortrait,
   initialSpeaker = SEARCH_SPEAKERS[0].slug,
 }: {
