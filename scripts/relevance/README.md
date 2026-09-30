@@ -98,3 +98,14 @@ and intact permanent archive counts. It exits nonzero on any failure.
 
 Footage in Google Cloud Storage is a separate inventory/deletion operation and
 must not be described as removed merely because database/search deletion passed.
+
+`cull_media.py` implements the separately authorized permanent GCS footage cull.
+It consumes the reviewed `gcs-delete-plan.json`, refuses unapproved IDs, duplicate
+generations, protected speakers, object holds, or already soft-deleted objects.
+It verifies the text archive, disables soft delete temporarily with a bucket
+metageneration precondition, waits for propagation, deletes exact object
+generations, and restores the prior policy in `finally`. Per-object receipts
+allow recovery. It never downloads footage. `verify_cull_media.py` compares fresh
+inventories for every accessible bucket/project, including old generations and
+soft-deleted objects, matching IDs and exact-byte renamed copies. It also proves
+non-target generations are unchanged. Inventories are metadata only.

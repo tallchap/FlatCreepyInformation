@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import shutil
 import time
+import threading
 import zipfile
 
 import requests
@@ -185,7 +186,7 @@ def render_index(records):
     cards=[]
     for vid,r in sorted(records.items(),key=lambda x:(x[1]['speaker_source'] or '',x[1]['title'] or '')):
         cards.append('<article><h2>'+html.escape(r['title'] or vid)+'</h2><p>'+html.escape(r['speaker_source'] or '')+' · '+html.escape(r['channel'] or '')+'</p><p><code>'+vid+'</code> · <a href="transcripts/'+vid+'.txt">Full transcript</a> · <a href="videos/'+vid+'.json">Complete metadata and original segments</a></p><p>'+html.escape(r['reason'])+'</p></article>')
-    page='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Snippy historical archive — 915 culled videos</title><style>body{font:16px system-ui;max-width:1050px;margin:32px auto;padding:0 20px;background:#f4f7fa;color:#183047}input{font:inherit;width:95%;padding:12px}article{background:white;margin:15px 0;padding:20px;border:1px solid #d4dee6;border-radius:8px}h2{font-size:20px}a{color:#075b9d}p{line-height:1.5}</style><h1>Snippy historical archive</h1><p>915 videos archived September 30, 2026, before the approved cull. Names, IDs, full metadata, original transcript segments, timestamped text, and Luna reasons are preserved. Permanent cloud copy: youtubetranscripts-429803.snippy_history, tables beginning cull_20260930_.</p><p><a href="audit-no-clipworthy-passage.csv">Video list CSV</a> · <a href="manifest.json">Restoration manifest</a> · <a href="archive-verification.json">Cloud archive verification</a> · <a href="cull-verification.json">Deletion verification</a></p><input id="q" placeholder="Search names, titles, IDs or reasons" aria-label="Search archive"><p id="n">915 videos</p>__CARDS__<script>const cards=[...document.querySelectorAll('article')];document.getElementById('q').oninput=e=>{let n=0;for(const c of cards){c.hidden=!c.textContent.toLowerCase().includes(e.target.value.toLowerCase());if(!c.hidden)n++}document.getElementById('n').textContent=n+' videos'}</script>'''
+    page='''<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Snippy historical archive — 915 culled videos</title><style>body{font:16px system-ui;max-width:1050px;margin:32px auto;padding:0 20px;background:#f4f7fa;color:#183047}input{font:inherit;width:95%;padding:12px}article{background:white;margin:15px 0;padding:20px;border:1px solid #d4dee6;border-radius:8px}h2{font-size:20px}a{color:#075b9d}p{line-height:1.5}</style><h1>Snippy historical archive</h1><p>915 videos archived September 30, 2026, before the approved cull. This archive contains TEXT AND METADATA ONLY — no video footage or audio. Names, IDs, full metadata, original transcript segments, timestamped text, and Luna reasons are preserved. Permanent cloud copy: youtubetranscripts-429803.snippy_history, tables beginning cull_20260930_.</p><p><a href="audit-no-clipworthy-passage.csv">Video list CSV</a> · <a href="manifest.json">Restoration manifest</a> · <a href="archive-verification.json">Cloud archive verification</a> · <a href="cull-verification.json">Database and search verification</a> · <a href="gcs-verification.json">Permanent footage deletion verification</a> · <a href="README.txt">Archive instructions</a></p><input id="q" placeholder="Search names, titles, IDs or reasons" aria-label="Search archive"><p id="n">915 videos</p>__CARDS__<script>const cards=[...document.querySelectorAll('article')];document.getElementById('q').oninput=e=>{let n=0;for(const c of cards){c.hidden=!c.textContent.toLowerCase().includes(e.target.value.toLowerCase());if(!c.hidden)n++}document.getElementById('n').textContent=n+' videos'}</script>'''
     (OUT/'index.html').write_text(page.replace('__CARDS__',''.join(cards)),encoding='utf-8')
 
 
@@ -261,7 +262,7 @@ def delete_database():
     params=[bigquery.ArrayQueryParameter('ids','STRING',ids),bigquery.ScalarQueryParameter('protected','STRING','|'.join(audit.PROTECTED.values()))]
     # Deterministic job ID lets an interrupted client recover the receipt without submitting again.
     from google.api_core.exceptions import Conflict
-    try:job=b.query(sql,job_id=job_id,job_config=bigquery.QueryJobConfig(query_parameters=params))
+    try:job=b.query(sql,job_id=job_id,job_retry=None,job_config=bigquery.QueryJobConfig(query_parameters=params))
     except Conflict:job=b.get_job(job_id,location='US')
     job.result()
     audit.atomic(OUT/'database-deletion.json',{'time':audit.now(),'job_id':job.job_id,'deleted_videos':915,'tables':m['tables'],'committed':True})
@@ -271,11 +272,16 @@ def delete_database():
 def detach_vectors():
     if not read(OUT/'database-deletion.json')['committed']:raise ValueError('Database transaction not committed')
     matches=read(OUT/'vector-matches.json');key=audit.api_key();receipts=OUT/'vector-detach-receipts';receipts.mkdir(exist_ok=True)
+    rate_lock=threading.Lock();next_request=[0.0]
     def one(row):
         path=receipts/(row['id']+'.json')
         if path.exists() and read(path).get('deleted'):return
         url=f'https://api.openai.com/v1/vector_stores/{STORE}/files/{row["id"]}'
-        for attempt in range(5):
+        for attempt in range(10):
+            with rate_lock:
+                delay=max(0,next_request[0]-time.monotonic())
+                if delay:time.sleep(delay)
+                next_request[0]=time.monotonic()+0.26
             r=requests.delete(url,headers={'Authorization':'Bearer '+key},timeout=60)
             if r.status_code==200:
                 data=r.json()
@@ -283,7 +289,8 @@ def detach_vectors():
                 audit.atomic(path,data);return
             if r.status_code==404:
                 audit.atomic(path,{'id':row['id'],'deleted':True,'already_absent':True});return
-            if r.status_code in (429,500,502,503,504):time.sleep(2**attempt);continue
+            if r.status_code in (429,500,502,503,504):
+                time.sleep(min(45,max(2**attempt,15 if r.status_code==429 else 1)));continue
             raise RuntimeError(f'Detach {r.status_code}: {r.text[:200]}')
         raise RuntimeError('Detach retries exhausted: '+row['id'])
     with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
@@ -314,6 +321,8 @@ def verify():
     protected_ids={r['video_id'] for r in csv.DictReader((AUDIT/'preserved.csv').open(encoding='utf-8-sig'))}
     live_ids={json.loads(r['row_json'])['video_id'] for r in retained}
     checks['all_1029_preserved_videos_remain']=len(protected_ids)==1029 and protected_ids<=live_ids
+    if (OUT/'gcs-delete-plan.json').exists():
+        checks['matching_gcs_footage_permanently_removed']=read(OUT/'gcs-verification.json')['passed']
     receipt={'time':audit.now(),'requested':'Archive and delete exact 915 approved no-passage videos, preserving seven protected speakers.',
         'deleted_videos':915,'remaining_videos':len({json.loads(r['row_json'])['video_id'] for r in retained}),'remaining_metadata_rows':len(retained),'remaining_by_table':remaining,
         'vector_files_detached':len(targets),'vector_files_remaining':len(after),'checks':checks,'passed':all(checks.values()),
