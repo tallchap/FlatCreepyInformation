@@ -29,7 +29,7 @@ class BatchTests(unittest.TestCase):
         self.write(self.clip / 'result.json', {'candidate_id': self.vid, 'source_input_hash': 'source', 'source_generation': '1', 'output_sha256': qa.sha(self.clip / 'clip.mp4'), 'duration_seconds': 40, 'transfer': {'upstream_body_bytes_read': 123}})
         self.write(self.clip / 'qa.json', {'checks': {'video': True, 'audio': True, 'duration': True}, 'ffprobe': {'streams': [{'codec_type': 'video', 'width': 160, 'height': 90}, {'codec_type': 'audio'}]}})
         self.write(self.clip / 'asr/clip.json', {'segments': [{'words': [{'start': n * 5, 'end': (n + 1) * 5, 'word': 'word' + str(n)} for n in range(8)]}]})
-        self.write(self.packets / f'{self.vid}.json', {'source_input_hash': 'source', 'gcs_object': {'generation': '1'}, 'context_transcript': '[90] before\n[100] complete original caption\n[150] after'})
+        self.write(self.packets / f'{self.vid}.json', {'candidate_id': self.vid, 'source_input_hash': 'source', 'gcs_object': {'generation': '1'}, 'context_transcript': '[90] before\n[100] complete original caption\n[150] after'})
         self.p = qa.package(self.clip, self.packets)
 
     def tearDown(self):
@@ -118,7 +118,7 @@ class BatchTests(unittest.TestCase):
         for name in ('recipe.json', 'result.json'):
             data = qa.read(other / name); data['candidate_id'] = vid
             self.write(other / name, data)
-        shutil.copyfile(self.packets / f'{self.vid}.json', self.packets / f'{vid}.json')
+        self.write(self.packets / f'{vid}.json', {**qa.read(self.packets / f'{self.vid}.json'), 'candidate_id': vid})
         p2 = qa.package(other, self.packets)
         bad = self.decision(status='adjust', keep_start_seconds=5.123, keep_end_seconds=25)
         result = self.normalize(self.raw([bad, self.decision(p2)]), [self.p, p2], self.root / 'out')
@@ -137,7 +137,7 @@ class BatchTests(unittest.TestCase):
             data = qa.read(other / name)
             data['candidate_id'] = vid
             self.write(other / name, data)
-        shutil.copyfile(self.packets / f'{self.vid}.json', self.packets / f'{vid}.json')
+        self.write(self.packets / f'{vid}.json', {**qa.read(self.packets / f'{self.vid}.json'), 'candidate_id': vid})
         p2 = qa.package(other, self.packets)
         original_recipe = (self.clip / 'recipe.json').read_bytes()
         for fields in ({'retained_speaker': 'Sagar'}, {'final_title': ''}, {'final_description': 'x' * 4001}):
@@ -227,6 +227,53 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(plan['source_ranges'][0]['start_seconds'], 105)
         self.assertTrue(plan['transcript'].startswith('word1'))
         self.assertEqual(plan['attempt'], 1)  # One encode from original, not a child-of-child.
+
+    def test_source_labels_allow_supported_repair_without_inventing_identity(self):
+        recipe = qa.read(self.clip / 'recipe.json')
+        recipe['speaker'] = 'Speaker not securely established by incomplete transcript'
+        self.write(self.clip / 'recipe.json', recipe)
+        packet_path = self.packets / f'{self.vid}.json'
+        packet = qa.read(packet_path)
+        packet.update(speaker_source='First Panelist, Mark Sagar, Other Panelist', context_transcript='[100] [Sagar] What we learned about AI')
+        self.write(packet_path, packet)
+        p = qa.package(self.clip, self.packets)
+        self.assertEqual(p['evidence']['source_speaker_evidence']['caption_speaker_labels'], ['Sagar'])
+        result = self.normalize(self.raw([self.decision(p, retained_speaker='Mark Sagar')]), [p], self.root / 'out')
+        self.assertEqual(result['decisions'][0]['status'], 'approve')
+        binding = p['evidence']['source_speaker_evidence']
+        target = qa.apply_publication_metadata(self.clip, 'Mark Sagar', 'Actual title', 'Actual content.', self.root / 'fixed', binding)
+        self.assertEqual(qa.read(target / 'recipe.json')['speaker'], 'Mark Sagar')
+        plan = qa.trim_plan(p['evidence'], 5, 25, speaker='Mark Sagar')
+        self.assertEqual(plan['source_speaker_evidence'], binding)
+        for label in ('Invented Person', 'Mark Sagar and Invented Person'):
+            result = self.normalize(self.raw([self.decision(p, retained_speaker=label)]), [p], self.root / 'out')
+            self.assertEqual(result['decisions'][0]['status'], 'review')
+            self.assertIn('not an invented name', result['decisions'][0]['action_validation_error'])
+
+    def test_source_identity_hash_guard_covers_metadata_and_trim_execution(self):
+        packet_path = self.packets / f'{self.vid}.json'
+        packet = qa.read(packet_path)
+        packet['speaker_source'] = 'Mark Sagar'
+        self.write(packet_path, packet)
+        p = qa.package(self.clip, self.packets)
+        plan = qa.trim_plan(p['evidence'], 5, 25, speaker='Mark Sagar')
+        plan.update(parent_clip_dir=str(self.clip), reason='A bounded correction')
+        path = self.write(self.root / 'trim-plan.json', plan)
+        packet['speaker_source'] = 'Someone Else'
+        self.write(packet_path, packet)
+        with self.assertRaisesRegex(ValueError, 'Source speaker evidence hash drift'):
+            qa.recheck(p)
+        with self.assertRaisesRegex(ValueError, 'Source speaker evidence hash drift'):
+            qa.apply_publication_metadata(self.clip, 'Mark Sagar', 'Title', 'Description', self.root / 'fixed', p['evidence']['source_speaker_evidence'])
+        with patch.object(qa, 'run', side_effect=AssertionError('Must fail before render')):
+            with self.assertRaisesRegex(ValueError, 'Source speaker evidence hash drift'):
+                qa.execute_trim(self.root / 'trim-plan.json', self.root / 'fixed')
+
+    def test_unidentified_speaker_is_an_explicit_nonidentity_fallback(self):
+        self.assertEqual(qa.validate_speaker('Unidentified speaker', ['Known Expert']), 'Unidentified speaker')
+        self.assertEqual(qa.validate_speaker('Known Expert and Unidentified speaker', ['Known Expert']), 'Known Expert and Unidentified speaker')
+        with self.assertRaises(ValueError):
+            qa.validate_speaker('Invented Expert and Unidentified speaker', ['Known Expert'])
 
     def test_speaker_only_fix_preserves_original_and_media(self):
         recipe = qa.read(self.clip / 'recipe.json')
