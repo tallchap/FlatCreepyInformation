@@ -24,7 +24,8 @@ ROOT_FILES = {'status.json', 'verification.json', 'checkpoint-import.json', 'che
               'coverage.csv', 'code-verification.json', 'cuda-roundtrip-verification.json',
               'preflight-query.json', 'supervisor.json', 'experiment-plan.json',
               'experiment-status.json', 'benchmark-baseline.json',
-              'benchmark-report.json', 'benchmark-report.md', 'benchmark-context.json'}
+              'benchmark-report.json', 'benchmark-report.md', 'benchmark-context.json',
+              'failure-analysis.json', 'failure-analysis.md', 'code-verification.md'}
 RENDER_FILES = {'recipe.json', 'parent-recipe.json', 'result.json', 'qa.json', 'final-qa.json',
                 'source.json', 'source-ffprobe.json', 'transfer.json', 'trim.json',
                 'contact.jpg', 'contact.png', 'clip.json', 'evidence.json'}

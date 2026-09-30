@@ -8,6 +8,9 @@ concurrency, resume identities and operational evidence only.
 For Relay job `SNIPPY-LUNA-CODEX-1644-20260930`, the posting session's
 2026-09-30 20:20:30Z update limits the next admission to one experiment of ten
 groups of five fresh candidates. Stop after that experiment for cost confirmation.
+The 20:28:58Z update selects seven eligible groups and three review groups, for
+35 eligible and 15 review candidates. Failed preparation does not authorize a
+replacement candidate outside that frozen set.
 Every Astra referral stays pending and unpublished; do not invoke an editorial
 Astra or Claude fallback.
 
