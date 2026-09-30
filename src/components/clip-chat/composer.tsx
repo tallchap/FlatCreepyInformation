@@ -1,0 +1,79 @@
+"use client";
+import { ArrowUp, LoaderCircle } from "lucide-react";
+import { FEATURED_SPEAKERS } from "./speakers";
+import styles from "./clip-chat.module.css";
+export function Composer({
+  speaker,
+  name,
+  value,
+  onChange,
+  onSend,
+  busy = false,
+}: {
+  speaker: string;
+  name: string;
+  value: string;
+  onChange: (value: string) => void;
+  onSend: () => void;
+  busy?: boolean;
+}) {
+  const featured = FEATURED_SPEAKERS.find((person) => person.slug === speaker);
+  return (
+    <div className={styles.composerWrap}>
+      <form
+        className={styles.composer}
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!busy && value.trim()) onSend();
+        }}
+      >
+        <label className="sr-only" htmlFor="clip-prompt">
+          Describe the clip you want to find
+        </label>
+        <textarea
+          id="clip-prompt"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          maxLength={5000}
+          rows={2}
+          placeholder="What are you looking for?"
+          disabled={busy}
+          onKeyDown={(event) => {
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault();
+              if (!busy && value.trim()) onSend();
+            }
+          }}
+        />
+        <div className={styles.composerBottom}>
+          <span className={styles.scope}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {featured && <img src={`/speakers/${featured.slug}.jpg`} alt="" />}
+            <span>
+              Searching <strong>{name}</strong>
+            </span>
+          </span>
+          <button
+            type="submit"
+            className={styles.send}
+            disabled={busy || !value.trim()}
+            aria-label={busy ? "Finding clips" : "Find a clip"}
+          >
+            {busy ? (
+              <LoaderCircle className="animate-spin" size={21} />
+            ) : (
+              <ArrowUp size={23} />
+            )}
+          </button>
+        </div>
+      </form>
+      <p className={styles.hint}>
+        Real quotes. Original videos. Right to the moment.
+      </p>
+    </div>
+  );
+}

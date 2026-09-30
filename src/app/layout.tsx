@@ -38,7 +38,7 @@ export default function RootLayout({
         </Script>
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gray-50`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-white`}
       >
         {/* GTM noscript fallback */}
         <noscript>
@@ -52,9 +52,9 @@ export default function RootLayout({
 
         <ClientProviders>
           <Navbar />
-          <main className="p-4">{children}</main>
+          <main className="site-main">{children}</main>
           <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
-            v{process.env.BUILD_VERSION || "dev"}
+            v{process.env.BUILD_VERSION || "dev"} · <a href="/speakers/credits.html" className="hover:underline">Photo credits</a>
           </footer>
           <Toaster />
         </ClientProviders>

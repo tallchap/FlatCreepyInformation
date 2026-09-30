@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
+import { FEATURED_SPEAKERS } from "../clip-chat/speakers";
 import { ChevronDown } from "lucide-react";
 
 interface Speaker {
@@ -36,7 +37,9 @@ export function SpeakerSelect({
   }, []);
 
   const allSpeakers = useMemo(() => {
-    return [...dynamicSpeakers].sort((a, b) => a.name.localeCompare(b.name));
+    const speakers = new Map<string, Speaker>(FEATURED_SPEAKERS.map((person) => [person.slug, { ...person, videoCount: 0 }]));
+    dynamicSpeakers.forEach((person) => speakers.set(person.slug, person));
+    return [...speakers.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [dynamicSpeakers]);
 
   // The display name for the selected speaker
@@ -103,7 +106,7 @@ export function SpeakerSelect({
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild disabled={disabled}>
         <button
-          className="flex items-center justify-between gap-2 w-[320px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#99cc66] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center justify-between gap-2 w-[min(320px,calc(100vw-48px))] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#99cc66] disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => {
             setOpen(true);
             // Focus input on next tick
@@ -121,7 +124,7 @@ export function SpeakerSelect({
         <Popover.Content
           align="start"
           sideOffset={4}
-          className="z-50 w-[320px] rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
+          className="z-50 w-[min(320px,calc(100vw-48px))] rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             inputRef.current?.focus();

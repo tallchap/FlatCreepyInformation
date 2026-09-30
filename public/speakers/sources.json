@@ -1,0 +1,72 @@
+[
+  {
+    "name": "Sam Altman",
+    "slug": "sam-altman",
+    "source": "https://en.wikipedia.org/wiki/Sam_Altman",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5a/Meeting_with_Masayoshi_Son_and_Sam_Altman_%28February_3%2C_2025%29_%283x4_cropped_on_Altman%29.jpg/250px-Meeting_with_Masayoshi_Son_and_Sam_Altman_%28February_3%2C_2025%29_%283x4_cropped_on_Altman%29.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Meeting_with_Masayoshi_Son_and_Sam_Altman_%28February_3%2C_2025%29_%283x4_cropped_on_Altman%29.jpg",
+    "author": "\u9996\u76f8\u5b98\u90b8\u30db\u30fc\u30e0\u30da\u30fc\u30b8 / Office of the Prime Minister of Japan Official Website",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0"
+  },
+  {
+    "name": "Dario Amodei",
+    "slug": "dario-amodei",
+    "source": "https://en.wikipedia.org/wiki/Dario_Amodei",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e4/Dario_Amodei_at_TechCrunch_Disrupt_2023_01_%28cropped%29.jpg/250px-Dario_Amodei_at_TechCrunch_Disrupt_2023_01_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Dario_Amodei_at_TechCrunch_Disrupt_2023_01_%28cropped%29.jpg",
+    "author": "TechCrunch",
+    "license": "CC BY 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/2.0"
+  },
+  {
+    "name": "Demis Hassabis",
+    "slug": "demis-hassabis",
+    "source": "https://en.wikipedia.org/wiki/Demis_Hassabis",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2b/Demis_Hassabis%2C_2024_Nobel_Prize_Laureate_in_Chemistry_7_%28cropped%29.jpg/250px-Demis_Hassabis%2C_2024_Nobel_Prize_Laureate_in_Chemistry_7_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Demis_Hassabis%2C_2024_Nobel_Prize_Laureate_in_Chemistry_7_%28cropped%29.jpg",
+    "author": "<a href=\"//commons.wikimedia.org/wiki/User:Johnsearsmedia\" title=\"User:Johnsearsmedia\">John Sears</a>",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
+    "name": "Geoffrey Hinton",
+    "slug": "geoffrey-hinton",
+    "source": "https://en.wikipedia.org/wiki/Geoffrey_Hinton",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/82/Geoffrey_Hinton_in_2026.jpg/250px-Geoffrey_Hinton_in_2026.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_in_2026.jpg",
+    "author": "<a href=\"//commons.wikimedia.org/wiki/User:Cmichel67\" title=\"User:Cmichel67\">Cmichel67</a>",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
+    "name": "Yoshua Bengio",
+    "slug": "yoshua-bengio",
+    "source": "https://en.wikipedia.org/wiki/Yoshua_Bengio",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/11/ICLR_2025_-_Yoshua_Bengio_02.jpg/250px-ICLR_2025_-_Yoshua_Bengio_02.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:ICLR_2025_-_Yoshua_Bengio_02.jpg",
+    "author": "<a href=\"//commons.wikimedia.org/wiki/User:Xuthoria\" title=\"User:Xuthoria\">Xuthoria</a>",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
+    "name": "Max Tegmark",
+    "slug": "max-tegmark",
+    "source": "https://en.wikipedia.org/wiki/Max_Tegmark",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/74/Partnership_-_CGTN_%26_Razor_Broadcast_Studio_%2854919125534%29_%28cropped%29.jpg/250px-Partnership_-_CGTN_%26_Razor_Broadcast_Studio_%2854919125534%29_%28cropped%29.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Partnership_-_CGTN_%26_Razor_Broadcast_Studio_%2854919125534%29_%28cropped%29.jpg",
+    "author": "<a rel=\"nofollow\" class=\"external text\" href=\"https://www.flickr.com/people/websummit/\">Web Summit</a>",
+    "license": "CC BY 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by/4.0"
+  },
+  {
+    "name": "Eliezer Yudkowsky",
+    "slug": "eliezer-yudkowsky",
+    "source": "https://en.wikipedia.org/wiki/Eliezer_Yudkowsky",
+    "image": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/35/Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg/250px-Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg?utm_source=en.wikipedia.org&utm_campaign=parser&utm_content=thumbnail",
+    "commons": "https://commons.wikimedia.org/wiki/File:Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg",
+    "author": "<a rel=\"nofollow\" class=\"external text\" href=\"https://www.flickr.com/photos/null0/\">\"null0\"</a>",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0"
+  }
+]

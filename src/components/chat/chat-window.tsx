@@ -1,9 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Send, RotateCcw, Bug, X, Download } from "lucide-react";
+import { RotateCcw, Bug, X, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
+import { Composer } from "../clip-chat/composer";
+import { Welcome } from "../clip-chat/welcome";
+import { CHAT_HANDOFF_KEY, FEATURED_SPEAKERS, readChatHandoff } from "../clip-chat/speakers";
+import styles from "../clip-chat/clip-chat.module.css";
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
 import { VideoPreviewPane } from "./video-preview-pane";
@@ -20,8 +24,8 @@ type SelectedVideo = {
 } | null;
 
 export function ChatWindow() {
-  const [speaker, setSpeaker] = useState("");
-  const [speakerName, setSpeakerName] = useState("");
+  const [speaker, setSpeaker] = useState<string>(FEATURED_SPEAKERS[0].slug);
+  const [speakerName, setSpeakerName] = useState<string>(FEATURED_SPEAKERS[0].name);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
 
@@ -35,14 +39,35 @@ export function ChatWindow() {
   const [debugFileSearch, setDebugFileSearch] = useState<any>(null);
   const [debugModal, setDebugModal] = useState<"filter" | "main" | "filesearch" | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const sendingRef = useRef(false);
+  const controllerRef = useRef<AbortController | null>(null);
+  const [showAllSpeakers, setShowAllSpeakers] = useState(false);
+
+  useEffect(() => {
+    // Defer consumption so React Strict Mode's setup/cleanup replay cannot send twice.
+    const timer = window.setTimeout(() => {
+      try {
+        const pending = readChatHandoff(sessionStorage.getItem(CHAT_HANDOFF_KEY));
+        sessionStorage.removeItem(CHAT_HANDOFF_KEY);
+        if (!pending) return;
+        setSpeaker(pending.speaker);
+        setSpeakerName(pending.name);
+        void handleSend(pending.prompt, { slug: pending.speaker, name: pending.name });
+      } catch {
+        // Direct /chat still works when browser storage is unavailable.
+      }
+    }, 0);
+    return () => { clearTimeout(timer); controllerRef.current?.abort(); };
+    // This is a one-time handoff; subsequent messages use the current conversation state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
+    if (messages.length) scrollToBottom();
   }, [messages, scrollToBottom]);
 
   function handleNewConversation() {
@@ -50,6 +75,10 @@ export function ChatWindow() {
     setInput("");
     setIsLoading(false);
     setSelectedVideo(null);
+    setDebugFilterCall(null);
+    setDebugMainCall(null);
+    setDebugFileSearch(null);
+    setDebugModal(null);
   }
 
   function handleSpeakerChange(value: string, name?: string) {
@@ -58,9 +87,12 @@ export function ChatWindow() {
     handleNewConversation();
   }
 
-  async function handleSend(overrideMessage?: string) {
+  async function handleSend(overrideMessage?: string, initialSpeaker?: { slug: string; name: string }) {
     const trimmed = (overrideMessage ?? input).trim();
-    if (!trimmed || !speaker || isLoading) return;
+    if (!trimmed || !speaker || sendingRef.current) return;
+    sendingRef.current = true;
+    const controller = new AbortController();
+    controllerRef.current = controller;
 
     const userMessage: Message = { role: "user", content: trimmed };
     setMessages((prev) => [...prev, userMessage]);
@@ -75,13 +107,14 @@ export function ChatWindow() {
 
     try {
       // Send full conversation history — Responses API uses client-managed state
-      const currentMessages = [...messages.slice(0, -1), userMessage]; // exclude placeholder
+      const currentMessages = [...messages, userMessage]; // state above has not rendered yet
       const res = await fetch("/api/chat", {
         method: "POST",
+        signal: controller.signal,
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          speaker,
-          speakerName,
+          speaker: initialSpeaker?.slug ?? speaker,
+          speakerName: initialSpeaker?.name ?? speakerName,
           message: trimmed,
           messages: currentMessages,
         }),
@@ -100,6 +133,7 @@ export function ChatWindow() {
 
       while (true) {
         const { done, value } = await reader.read();
+        if (controller.signal.aborted) return;
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -205,6 +239,7 @@ export function ChatWindow() {
         }
       }
     } catch (error) {
+      if (controller.signal.aborted) return;
       setMessages((prev) => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
@@ -220,189 +255,48 @@ export function ChatWindow() {
         return updated;
       });
     } finally {
-      setIsLoading(false);
-    }
-  }
-
-  function handleKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
+      sendingRef.current = false;
+      if (!controller.signal.aborted) setIsLoading(false);
     }
   }
 
   return (
-    <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_420px] gap-4 items-start">
-      <div className="flex flex-col h-[calc(100vh-160px)] min-w-0">
-        {/* Header */}
-        <div className="flex items-center justify-between gap-4 pb-4 border-b border-gray-200">
-          <div className="flex items-center gap-3">
-            <SpeakerSelect
-              value={speaker}
-              onValueChange={handleSpeakerChange}
-              disabled={isLoading}
-            />
-            {messages.length > 0 && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleNewConversation}
-                disabled={isLoading}
-              >
-                <RotateCcw className="h-4 w-4 mr-1" />
-                New Chat
-              </Button>
-            )}
-          </div>
+    <div className={`${styles.surface} ${styles.chatGrid} ${selectedVideo ? styles.withVideo : ""}`}>
+      <section className={styles.chat}>
+        <div className={styles.chatHeader}>
+          <span><i />{speakerName}’s conversations</span>
+          <Button variant="outline" size="sm" onClick={handleNewConversation} disabled={isLoading}>
+            <RotateCcw size={13} /> New chat
+          </Button>
         </div>
-
-        {/* Messages area */}
-        <div className="flex-1 overflow-y-auto py-4 space-y-4">
-          {!speaker && (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              <p className="text-lg">Select a speaker to start chatting</p>
-            </div>
-          )}
-
-          {speaker && messages.length === 0 && (
-            <div className="flex items-center justify-center h-full text-gray-400">
-              <div className="text-center space-y-4">
-                <p className="text-lg">
-                  Chat with{" "}
-                  <span className="font-semibold text-gray-600">
-                    {speakerName || speaker}
-                  </span>
-                  &apos;s transcript history
-                </p>
-                <p className="text-sm">
-                  Ask about their views, find specific quotes, or explore topics
-                  they&apos;ve discussed.
-                </p>
-                <div className="flex flex-wrap justify-center gap-2 pt-2">
-                  {[
-                    "Find me quotes about AI safety",
-                    "What are their views on consciousness?",
-                    "Summarize their key ideas",
-                  ].map((q) => (
-                    <button
-                      key={q}
-                      disabled={isLoading}
-                      onClick={() => {
-                        setInput(q);
-                        // Trigger send on next tick after state updates
-                        requestAnimationFrame(() => {
-                          const sendBtn = document.getElementById("chat-send-btn") as HTMLButtonElement;
-                          sendBtn?.click();
-                        });
-                      }}
-                      className="px-3 py-1.5 text-sm bg-white border border-gray-200 rounded-full text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-colors"
-                    >
-                      {q}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-          )}
-
-          {messages.map((msg, i) => (
-            <MessageBubble
-              key={i}
-              role={msg.role}
-              content={msg.content}
-              isStreaming={
-                isLoading &&
-                i === messages.length - 1 &&
-                msg.role === "assistant"
-              }
-              onVideoLinkClick={(payload) => setSelectedVideo(payload)}
-              onSuggestionClick={(text) => handleSend(text)}
-            />
-          ))}
-          <div ref={messagesEndRef} />
-        </div>
-
-        {/* Input area */}
-        {speaker && (
-          <div className="border-t border-gray-200 pt-4">
-            <div className="flex items-end gap-2">
-              <textarea
-                ref={inputRef}
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={handleKeyDown}
-                placeholder="Ask about their views, find quotes, explore topics..."
-                className="flex-1 resize-none rounded-xl border border-gray-300 bg-white px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent min-h-[48px] max-h-[120px]"
-                rows={1}
-                disabled={isLoading}
-              />
-              <Button
-                id="chat-send-btn"
-                onClick={() => handleSend()}
-                disabled={!input.trim() || isLoading}
-                className="bg-[#99cc66] hover:bg-[#88bb55] text-white rounded-xl h-[48px] w-[48px] p-0"
-              >
-                <Send className="h-5 w-5" />
-              </Button>
-            </div>
-            <div className="flex items-center justify-center gap-3 mt-2">
-              <p className="text-xs text-gray-400 text-center">
-                Responses are based on video transcript data. Always verify quotes
-                against the original videos.
-              </p>
-              <button
-                onClick={() => {
-                  window.open(`/api/export-transcripts?speaker=${encodeURIComponent(speakerName || speaker)}`, "_blank");
-                }}
-                disabled={isLoading}
-                className="text-xs px-2 py-1 rounded border border-gray-300 text-gray-500 hover:bg-gray-50 hover:border-gray-400 transition-colors whitespace-nowrap flex items-center gap-1"
-              >
-                <Download className="h-3 w-3" />
-                Export Transcripts
-              </button>
-            </div>
-            {(debugFilterCall || debugMainCall) && (
-              <div className="flex justify-center gap-2 mt-2">
-                {debugFilterCall && (
-                  <button
-                    onClick={() => setDebugModal("filter")}
-                    className="text-[10px] px-2 py-0.5 rounded border border-orange-300 text-orange-500 hover:bg-orange-50"
-                  >
-                    <Bug className="h-3 w-3 inline mr-0.5" />
-                    Filter API Call
-                  </button>
-                )}
-                {debugMainCall && (
-                  <button
-                    onClick={() => setDebugModal("main")}
-                    className="text-[10px] px-2 py-0.5 rounded border border-blue-300 text-blue-500 hover:bg-blue-50"
-                  >
-                    <Bug className="h-3 w-3 inline mr-0.5" />
-                    Main API Call
-                  </button>
-                )}
-                {debugFileSearch && (
-                  <button
-                    onClick={() => setDebugModal("filesearch")}
-                    className="text-[10px] px-2 py-0.5 rounded border border-green-300 text-green-600 hover:bg-green-50"
-                  >
-                    <Bug className="h-3 w-3 inline mr-0.5" />
-                    Search Results
-                  </button>
-                )}
-              </div>
-            )}
+        {messages.length === 0 ? (
+          <Welcome speaker={speaker} name={speakerName} onSpeakerChange={handleSpeakerChange}
+            onSuggestion={(text) => { setInput(text); document.getElementById("clip-prompt")?.focus(); }} disabled={isLoading} />
+        ) : (
+          <div className={styles.messages} role="log" aria-label="Chat messages" aria-live="polite" aria-busy={isLoading}>
+            {messages.map((msg, i) => (
+              <MessageBubble key={i} role={msg.role} content={msg.content}
+                isStreaming={isLoading && i === messages.length - 1 && msg.role === "assistant"}
+                onVideoLinkClick={setSelectedVideo} onSuggestionClick={(text) => handleSend(text)} />
+            ))}
+            <div ref={messagesEndRef} />
           </div>
         )}
-      </div>
-
-      {selectedVideo && (
-        <VideoPreviewPane
-          videoId={selectedVideo.videoId}
-          startSec={selectedVideo.startSec}
-          title={selectedVideo.title}
-        />
-      )}
+        <Composer speaker={speaker} name={speakerName} value={input} onChange={setInput} onSend={() => handleSend()} busy={isLoading} />
+        <div className={styles.chatTools}>
+          <button onClick={() => setShowAllSpeakers(!showAllSpeakers)} disabled={isLoading}>Change speaker</button>
+          <button onClick={() => window.open(`/api/export-transcripts?speaker=${encodeURIComponent(speakerName)}`, "_blank")} disabled={isLoading}>
+            <Download className="inline mr-1" size={11} />Export transcripts
+          </button>
+          {debugFilterCall && <button onClick={() => setDebugModal("filter")}><Bug className="inline mr-1" size={11} />Filter API call</button>}
+          {debugMainCall && <button onClick={() => setDebugModal("main")}><Bug className="inline mr-1" size={11} />Main API call</button>}
+          {debugFileSearch && <button onClick={() => setDebugModal("filesearch")}><Bug className="inline mr-1" size={11} />Search results</button>}
+        </div>
+        {showAllSpeakers && <div className={styles.chatSelect}>
+          <SpeakerSelect value={speaker} onValueChange={(value, name) => { handleSpeakerChange(value, name); setShowAllSpeakers(false); }} disabled={isLoading} />
+        </div>}
+      </section>
+      {selectedVideo && <VideoPreviewPane videoId={selectedVideo.videoId} startSec={selectedVideo.startSec} title={selectedVideo.title} />}
 
       {/* Debug modal */}
       {debugModal && (
