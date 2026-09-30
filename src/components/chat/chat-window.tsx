@@ -5,13 +5,11 @@ import { RotateCcw, Bug, X, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { Composer } from "../clip-chat/composer";
-import Link from "next/link";
 import {
   CHAT_HANDOFF_KEY,
   FEATURED_SPEAKERS,
   readChatHandoff,
   speakerPortrait,
-  SEARCH_SPEAKERS,
 } from "../clip-chat/speakers";
 import styles from "../clip-chat/clip-chat.module.css";
 import { SpeakerSelect } from "./speaker-select";
@@ -313,31 +311,6 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
     <div
       className={`${styles.surface} ${styles.chatGrid} ${selectedVideo ? styles.withVideo : ""}`}
     >
-      <aside className={styles.chatSidebar} aria-label="Chat speakers">
-        <div className={styles.sidebarHeading}>Speakers</div>
-        <div className={styles.sidebarPeople}>
-          {SEARCH_SPEAKERS.map((person) => (
-            <button
-              key={person.slug}
-              aria-label={`Switch to ${person.name}`}
-              aria-pressed={speaker === person.slug}
-              disabled={isLoading}
-              onClick={() => handleSpeakerChange(person.slug, person.name)}
-            >
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              {person.slug === "all" ? (
-                <span className={styles.allAvatar}>All</span>
-              ) : (
-                <img src={speakerPortrait(person.slug)} alt="" />
-              )}
-              <span>{person.name}</span>
-            </button>
-          ))}
-        </div>
-        <Link className={styles.sidebarHome} href="/">
-          Back to homepage
-        </Link>
-      </aside>
       <section className={styles.chat}>
         <div className={styles.chatHeader}>
           <div className={styles.chatIdentity}>

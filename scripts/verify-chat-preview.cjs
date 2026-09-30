@@ -20,7 +20,7 @@ const fs = require("node:fs");
   assert(!content.includes("Clip conversation"));
   assert.equal(
     await p.getByRole("complementary", { name: "Chat speakers" }).count(),
-    1,
+    0,
   );
   for (const width of [320, 390, 768, 1440]) {
     await p.setViewportSize({ width, height: 900 });
@@ -52,15 +52,12 @@ const fs = require("node:fs");
       .count(),
     1,
   );
-  await p
-    .getByRole("button", { name: "Switch to Elon Musk", exact: true })
-    .click();
-  assert.equal(
-    await p
-      .getByRole("button", { name: "Switch to Elon Musk", exact: true })
-      .getAttribute("aria-pressed"),
-    "true",
+  await p.route("**/api/speakers", (route) =>
+    route.fulfill({ contentType: "application/json", body: '{"speakers":[]}' }),
   );
+  await p.getByRole("button", { name: "Change speaker", exact: true }).click();
+  await p.getByRole("button", { name: "Sam Altman", exact: true }).click();
+  await p.getByRole("button", { name: "Elon Musk (0)", exact: true }).click();
   assert((await p.locator("main").innerText()).includes("Elon Musk said"));
   console.log(
     "PASS Simple chat preview, simulated follow-up, empty state, no paid API requests",
