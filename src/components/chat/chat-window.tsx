@@ -5,8 +5,14 @@ import { RotateCcw, Bug, X, Download } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 import { Composer } from "../clip-chat/composer";
-import { Welcome } from "../clip-chat/welcome";
-import { CHAT_HANDOFF_KEY, FEATURED_SPEAKERS, readChatHandoff } from "../clip-chat/speakers";
+import Link from "next/link";
+import {
+  CHAT_HANDOFF_KEY,
+  FEATURED_SPEAKERS,
+  readChatHandoff,
+  speakerPortrait,
+  SEARCH_SPEAKERS,
+} from "../clip-chat/speakers";
 import styles from "../clip-chat/clip-chat.module.css";
 import { SpeakerSelect } from "./speaker-select";
 import { MessageBubble } from "./message-bubble";
@@ -23,10 +29,23 @@ type SelectedVideo = {
   title?: string;
 } | null;
 
-export function ChatWindow() {
+const PREVIEW_MESSAGES: Message[] = [
+  { role: "user", content: "Find a short Sam Altman clip about AGI." },
+  {
+    role: "assistant",
+    content:
+      "**A short moment about AGI**\n\n“One idea would be that AGI really is going to happen.”\n\n[The race to build AI that benefits humanity · TED Tech · 1:06:05](youtube:Q3E5fagbcsA:3965)\n\nWant a different angle? Ask for a more surprising prediction or a clip about the risks.",
+  },
+];
+
+export function ChatWindow({ preview = false }: { preview?: boolean }) {
   const [speaker, setSpeaker] = useState<string>(FEATURED_SPEAKERS[0].slug);
-  const [speakerName, setSpeakerName] = useState<string>(FEATURED_SPEAKERS[0].name);
-  const [messages, setMessages] = useState<Message[]>([]);
+  const [speakerName, setSpeakerName] = useState<string>(
+    FEATURED_SPEAKERS[0].name,
+  );
+  const [messages, setMessages] = useState<Message[]>(
+    preview ? PREVIEW_MESSAGES : [],
+  );
   const [input, setInput] = useState("");
 
   const [isLoading, setIsLoading] = useState(false);
@@ -37,27 +56,38 @@ export function ChatWindow() {
   const [debugMainCall, setDebugMainCall] = useState<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const [debugFileSearch, setDebugFileSearch] = useState<any>(null);
-  const [debugModal, setDebugModal] = useState<"filter" | "main" | "filesearch" | null>(null);
+  const [debugModal, setDebugModal] = useState<
+    "filter" | "main" | "filesearch" | null
+  >(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const sendingRef = useRef(false);
   const controllerRef = useRef<AbortController | null>(null);
   const [showAllSpeakers, setShowAllSpeakers] = useState(false);
 
   useEffect(() => {
+    if (preview) return;
     // Defer consumption so React Strict Mode's setup/cleanup replay cannot send twice.
     const timer = window.setTimeout(() => {
       try {
-        const pending = readChatHandoff(sessionStorage.getItem(CHAT_HANDOFF_KEY));
+        const pending = readChatHandoff(
+          sessionStorage.getItem(CHAT_HANDOFF_KEY),
+        );
         sessionStorage.removeItem(CHAT_HANDOFF_KEY);
         if (!pending) return;
         setSpeaker(pending.speaker);
         setSpeakerName(pending.name);
-        void handleSend(pending.prompt, { slug: pending.speaker, name: pending.name });
+        void handleSend(pending.prompt, {
+          slug: pending.speaker,
+          name: pending.name,
+        });
       } catch {
         // Direct /chat still works when browser storage is unavailable.
       }
     }, 0);
-    return () => { clearTimeout(timer); controllerRef.current?.abort(); };
+    return () => {
+      clearTimeout(timer);
+      controllerRef.current?.abort();
+    };
     // This is a one-time handoff; subsequent messages use the current conversation state.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -67,8 +97,8 @@ export function ChatWindow() {
   }, []);
 
   useEffect(() => {
-    if (messages.length) scrollToBottom();
-  }, [messages, scrollToBottom]);
+    if (messages.length && !preview) scrollToBottom();
+  }, [messages, scrollToBottom, preview]);
 
   function handleNewConversation() {
     setMessages([]);
@@ -87,7 +117,10 @@ export function ChatWindow() {
     handleNewConversation();
   }
 
-  async function handleSend(overrideMessage?: string, initialSpeaker?: { slug: string; name: string }) {
+  async function handleSend(
+    overrideMessage?: string,
+    initialSpeaker?: { slug: string; name: string },
+  ) {
     const trimmed = (overrideMessage ?? input).trim();
     if (!trimmed || !speaker || sendingRef.current) return;
     sendingRef.current = true;
@@ -106,6 +139,18 @@ export function ChatWindow() {
     setMessages((prev) => [...prev, { role: "assistant", content: "" }]);
 
     try {
+      if (preview) {
+        await new Promise((resolve) => window.setTimeout(resolve, 550));
+        setMessages((prev) => [
+          ...prev.slice(0, -1),
+          {
+            role: "assistant",
+            content:
+              "This is a design preview, so no new search was run. On the real chat page, your follow-up searches the selected speaker’s conversations while keeping the earlier messages in context.",
+          },
+        ]);
+        return;
+      }
       // Send full conversation history — Responses API uses client-managed state
       const currentMessages = [...messages, userMessage]; // state above has not rendered yet
       const res = await fetch("/api/chat", {
@@ -173,7 +218,10 @@ export function ChatWindow() {
                 const updated = [...prev];
                 const last = updated[updated.length - 1];
                 if (last && last.role === "assistant") {
-                  updated[updated.length - 1] = { ...last, content: event.content };
+                  updated[updated.length - 1] = {
+                    ...last,
+                    content: event.content,
+                  };
                 }
                 return updated;
               });
@@ -202,9 +250,10 @@ export function ChatWindow() {
                   let content = last.content;
                   for (const [marker, info] of Object.entries(citationsMap)) {
                     // Include timestamp if available: youtube:VIDEO_ID:SECONDS
-                    const ytRef = info.timestamp !== undefined
-                      ? `youtube:${info.videoId}:${Math.floor(info.timestamp)}`
-                      : `youtube:${info.videoId}`;
+                    const ytRef =
+                      info.timestamp !== undefined
+                        ? `youtube:${info.videoId}:${Math.floor(info.timestamp)}`
+                        : `youtube:${info.videoId}`;
                     const metaParts = [
                       info.metadata?.publishedAt,
                       info.metadata?.channel,
@@ -261,42 +310,164 @@ export function ChatWindow() {
   }
 
   return (
-    <div className={`${styles.surface} ${styles.chatGrid} ${selectedVideo ? styles.withVideo : ""}`}>
+    <div
+      className={`${styles.surface} ${styles.chatGrid} ${selectedVideo ? styles.withVideo : ""}`}
+    >
+      <aside className={styles.chatSidebar} aria-label="Chat speakers">
+        <div className={styles.sidebarHeading}>Speakers</div>
+        <div className={styles.sidebarPeople}>
+          {SEARCH_SPEAKERS.map((person) => (
+            <button
+              key={person.slug}
+              aria-label={`Switch to ${person.name}`}
+              aria-pressed={speaker === person.slug}
+              disabled={isLoading}
+              onClick={() => handleSpeakerChange(person.slug, person.name)}
+            >
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              {person.slug === "all" ? (
+                <span className={styles.allAvatar}>All</span>
+              ) : (
+                <img src={speakerPortrait(person.slug)} alt="" />
+              )}
+              <span>{person.name}</span>
+            </button>
+          ))}
+        </div>
+        <Link className={styles.sidebarHome} href="/">
+          Back to homepage
+        </Link>
+      </aside>
       <section className={styles.chat}>
         <div className={styles.chatHeader}>
-          <span><i />{speaker === "all" ? "All speakers’ conversations" : `${speakerName}’s conversations`}</span>
-          <Button variant="outline" size="sm" onClick={handleNewConversation} disabled={isLoading}>
+          <div className={styles.chatIdentity}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            {FEATURED_SPEAKERS.some((person) => person.slug === speaker) && (
+              <img src={speakerPortrait(speaker)} alt="" />
+            )}
+            <div>
+              <strong>
+                {speaker === "all" ? "All speakers" : speakerName}
+              </strong>
+            </div>
+          </div>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleNewConversation}
+            disabled={isLoading}
+          >
             <RotateCcw size={13} /> New chat
           </Button>
         </div>
         {messages.length === 0 ? (
-          <Welcome speaker={speaker} name={speakerName} onSpeakerChange={handleSpeakerChange}
-            disabled={isLoading} />
+          <div className={styles.chatEmpty}>
+            {FEATURED_SPEAKERS.some((person) => person.slug === speaker) && (
+              <div className={styles.chatWelcomePortrait}>
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src={speakerPortrait(speaker)} alt="" />
+              </div>
+            )}
+            <h1>What would you like to find?</h1>
+            <p>
+              Describe a moment, an idea, or something{" "}
+              {speaker === "all" ? "you heard" : `${speakerName} said`}.
+            </p>
+          </div>
         ) : (
-          <div className={styles.messages} role="log" aria-label="Chat messages" aria-live="polite" aria-busy={isLoading}>
+          <div
+            className={styles.messages}
+            role="log"
+            aria-label="Chat messages"
+            aria-live="polite"
+            aria-busy={isLoading}
+          >
             {messages.map((msg, i) => (
-              <MessageBubble key={i} role={msg.role} content={msg.content}
-                isStreaming={isLoading && i === messages.length - 1 && msg.role === "assistant"}
-                onVideoLinkClick={setSelectedVideo} onSuggestionClick={(text) => handleSend(text)} />
+              <MessageBubble
+                key={i}
+                role={msg.role}
+                content={msg.content}
+                isStreaming={
+                  isLoading &&
+                  i === messages.length - 1 &&
+                  msg.role === "assistant"
+                }
+                onVideoLinkClick={setSelectedVideo}
+                onSuggestionClick={(text) => handleSend(text)}
+              />
             ))}
             <div ref={messagesEndRef} />
           </div>
         )}
-        <Composer speaker={speaker} name={speakerName} value={input} onChange={setInput} onSend={() => handleSend()} busy={isLoading} />
-        <div className={styles.chatTools}>
-          <button onClick={() => setShowAllSpeakers(!showAllSpeakers)} disabled={isLoading}>Change speaker</button>
-          <button onClick={() => window.open(`/api/export-transcripts?speaker=${encodeURIComponent(speakerName)}`, "_blank")} disabled={isLoading}>
-            <Download className="inline mr-1" size={11} />Export transcripts
-          </button>
-          {debugFilterCall && <button onClick={() => setDebugModal("filter")}><Bug className="inline mr-1" size={11} />Filter API call</button>}
-          {debugMainCall && <button onClick={() => setDebugModal("main")}><Bug className="inline mr-1" size={11} />Main API call</button>}
-          {debugFileSearch && <button onClick={() => setDebugModal("filesearch")}><Bug className="inline mr-1" size={11} />Search results</button>}
+        <div className={styles.chatReply}>
+          <Composer
+            showSuggestions={messages.length === 0}
+            speaker={speaker}
+            name={speakerName}
+            value={input}
+            onChange={setInput}
+            onSend={() => handleSend()}
+            busy={isLoading}
+          />
+          <div className={styles.chatTools}>
+            <button
+              onClick={() => setShowAllSpeakers(!showAllSpeakers)}
+              disabled={isLoading}
+            >
+              Change speaker
+            </button>
+            <button
+              onClick={() =>
+                window.open(
+                  `/api/export-transcripts?speaker=${encodeURIComponent(speakerName)}`,
+                  "_blank",
+                )
+              }
+              disabled={isLoading}
+            >
+              <Download className="inline mr-1" size={11} />
+              Export transcripts
+            </button>
+            {debugFilterCall && (
+              <button onClick={() => setDebugModal("filter")}>
+                <Bug className="inline mr-1" size={11} />
+                Filter API call
+              </button>
+            )}
+            {debugMainCall && (
+              <button onClick={() => setDebugModal("main")}>
+                <Bug className="inline mr-1" size={11} />
+                Main API call
+              </button>
+            )}
+            {debugFileSearch && (
+              <button onClick={() => setDebugModal("filesearch")}>
+                <Bug className="inline mr-1" size={11} />
+                Search results
+              </button>
+            )}
+          </div>
+          {showAllSpeakers && (
+            <div className={styles.chatSelect}>
+              <SpeakerSelect
+                value={speaker}
+                onValueChange={(value, name) => {
+                  handleSpeakerChange(value, name);
+                  setShowAllSpeakers(false);
+                }}
+                disabled={isLoading}
+              />
+            </div>
+          )}
         </div>
-        {showAllSpeakers && <div className={styles.chatSelect}>
-          <SpeakerSelect value={speaker} onValueChange={(value, name) => { handleSpeakerChange(value, name); setShowAllSpeakers(false); }} disabled={isLoading} />
-        </div>}
       </section>
-      {selectedVideo && <VideoPreviewPane videoId={selectedVideo.videoId} startSec={selectedVideo.startSec} title={selectedVideo.title} />}
+      {selectedVideo && (
+        <VideoPreviewPane
+          videoId={selectedVideo.videoId}
+          startSec={selectedVideo.startSec}
+          title={selectedVideo.title}
+        />
+      )}
 
       {/* Debug modal */}
       {debugModal && (
@@ -304,19 +475,33 @@ export function ChatWindow() {
           <div className="bg-white rounded-xl shadow-2xl max-w-3xl w-full max-h-[80vh] flex flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200">
               <h3 className="font-semibold text-sm">
-                {debugModal === "filter" ? "GPT-4o-mini Filter Detection Call" : debugModal === "main" ? "OpenAI Responses API Call" : "File Search Results"}
+                {debugModal === "filter"
+                  ? "GPT-4o-mini Filter Detection Call"
+                  : debugModal === "main"
+                    ? "OpenAI Responses API Call"
+                    : "File Search Results"}
               </h3>
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    const data = debugModal === "filter" ? debugFilterCall : debugModal === "main" ? debugMainCall : debugFileSearch;
-                    navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+                    const data =
+                      debugModal === "filter"
+                        ? debugFilterCall
+                        : debugModal === "main"
+                          ? debugMainCall
+                          : debugFileSearch;
+                    navigator.clipboard.writeText(
+                      JSON.stringify(data, null, 2),
+                    );
                   }}
                   className="text-xs px-2 py-1 rounded bg-gray-100 hover:bg-gray-200 text-gray-600"
                 >
                   Copy
                 </button>
-                <button onClick={() => setDebugModal(null)} className="text-gray-400 hover:text-gray-600">
+                <button
+                  onClick={() => setDebugModal(null)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
                   <X className="h-5 w-5" />
                 </button>
               </div>
@@ -324,7 +509,11 @@ export function ChatWindow() {
             <div className="overflow-auto p-4">
               <pre className="text-xs whitespace-pre-wrap break-words font-mono text-gray-800">
                 {JSON.stringify(
-                  debugModal === "filter" ? debugFilterCall : debugModal === "main" ? debugMainCall : debugFileSearch,
+                  debugModal === "filter"
+                    ? debugFilterCall
+                    : debugModal === "main"
+                      ? debugMainCall
+                      : debugFileSearch,
                   null,
                   2,
                 )}

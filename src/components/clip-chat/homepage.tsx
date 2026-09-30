@@ -52,7 +52,6 @@ export function ClipHomepage({
         disabled={navigating}
       />
       <Composer
-        elonPortrait={elonPortrait}
         speaker={speaker}
         name={person.name}
         value={input}

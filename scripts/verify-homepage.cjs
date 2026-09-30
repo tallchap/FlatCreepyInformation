@@ -111,10 +111,11 @@ fs.mkdirSync(out, { recursive: true });
     .getByRole("group", { name: "Choose a speaker" })
     .boundingBox();
   const x = box.x + box.width / 2,
-    y = box.y + 65;
+    y = box.y + 125;
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x - 80, y, { steps: 10 });
+  await page.waitForTimeout(120);
   await page.mouse.up();
   await page.waitForTimeout(550);
   assert((await heading()).includes("Elon Musk"));
@@ -187,6 +188,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + 90, y, { steps: 8 });
+  await page.waitForTimeout(120);
   await page.mouse.up();
   await page.waitForTimeout(800);
   assert((await heading()).includes("Elon Musk"));
@@ -233,7 +235,12 @@ fs.mkdirSync(out, { recursive: true });
     1,
   );
   await page.getByRole("button", { name: "New chat", exact: true }).click();
-  assert((await heading()).includes("Elon Musk"));
+  assert.equal(await heading(), "What would you like to find?");
+  assert((await page.locator("main").innerText()).includes("Elon Musk"));
+  assert.equal(
+    await page.getByRole("group", { name: "Choose a speaker" }).count(),
+    0,
+  );
   assert.equal(
     await page
       .getByRole("button", { name: "Search results", exact: true })
@@ -288,7 +295,7 @@ fs.mkdirSync(out, { recursive: true });
   await page
     .getByRole("button", { name: "Yoshua Bengio (0)", exact: true })
     .click();
-  assert((await heading()).includes("Yoshua Bengio"));
+  assert((await page.locator("main").innerText()).includes("Yoshua Bengio"));
   checks.push(
     "PASS Full speaker picker keeps featured speakers available when listing API is empty",
   );
@@ -335,9 +342,7 @@ fs.mkdirSync(out, { recursive: true });
     .waitFor();
   assert.equal(requests.at(-1).speaker, "all");
   assert.equal(requests.at(-1).speakerName, "Any speaker");
-  await page
-    .getByText("All speakers’ conversations", { exact: true })
-    .waitFor();
+  await page.getByText("All speakers", { exact: true }).waitFor();
   checks.push(
     "PASS Any speaker survives homepage handoff and submits the all-speakers search; footer copy removed",
   );
@@ -387,7 +392,7 @@ fs.mkdirSync(out, { recursive: true });
     .getByRole("group", { name: "Choose a speaker" })
     .boundingBox();
   const tx = a.x + a.width / 2,
-    ty = a.y + 60;
+    ty = a.y + 125;
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchStart",
     touchPoints: [{ x: tx, y: ty }],
@@ -397,6 +402,7 @@ fs.mkdirSync(out, { recursive: true });
       type: "touchMove",
       touchPoints: [{ x: tx - i * 11, y: ty }],
     });
+  await mobile.waitForTimeout(120);
   await cdp.send("Input.dispatchTouchEvent", {
     type: "touchEnd",
     touchPoints: [],

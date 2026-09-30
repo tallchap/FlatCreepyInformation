@@ -1,8 +1,6 @@
 "use client";
-import type { ElonPortrait } from "./elon-portraits";
-
-import { ArrowUp, LoaderCircle, UsersRound } from "lucide-react";
-import { FEATURED_SPEAKERS, SUGGESTIONS, speakerPortrait } from "./speakers";
+import { ArrowUp, LoaderCircle } from "lucide-react";
+import { SUGGESTIONS } from "./speakers";
 import styles from "./clip-chat.module.css";
 export function Composer({
   speaker,
@@ -11,7 +9,7 @@ export function Composer({
   onChange,
   onSend,
   busy = false,
-  elonPortrait,
+  showSuggestions = true,
 }: {
   speaker: string;
   name: string;
@@ -19,9 +17,8 @@ export function Composer({
   onChange: (value: string) => void;
   onSend: () => void;
   busy?: boolean;
-  elonPortrait?: ElonPortrait;
+  showSuggestions?: boolean;
 }) {
-  const featured = FEATURED_SPEAKERS.find((person) => person.slug === speaker);
   return (
     <div className={styles.composerWrap}>
       <form
@@ -54,17 +51,6 @@ export function Composer({
           }}
         />
         <div className={styles.composerBottom}>
-          <span className={styles.scope}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            {featured && (
-              <img src={speakerPortrait(featured.slug, elonPortrait)} alt="" />
-            )}
-            {speaker === "all" && <UsersRound size={23} aria-hidden="true" />}
-            <span>
-              Searching{" "}
-              <strong>{speaker === "all" ? "all speakers" : name}</strong>
-            </span>
-          </span>
           <button
             type="submit"
             className={styles.send}
@@ -79,22 +65,24 @@ export function Composer({
           </button>
         </div>
       </form>
-      <div className={styles.suggestions}>
-        {SUGGESTIONS.map((suggestion) => (
-          <button
-            key={suggestion.topic}
-            disabled={busy}
-            onClick={() => {
-              onChange(
-                `Find a clip of ${speaker === "all" ? "any speaker" : name} talking about ${suggestion.topic}`,
-              );
-              document.getElementById("clip-prompt")?.focus();
-            }}
-          >
-            {suggestion.label}
-          </button>
-        ))}
-      </div>
+      {showSuggestions && (
+        <div className={styles.suggestions}>
+          {SUGGESTIONS.map((suggestion) => (
+            <button
+              key={suggestion.topic}
+              disabled={busy}
+              onClick={() => {
+                onChange(
+                  `Find a clip of ${speaker === "all" ? "any speaker" : name} talking about ${suggestion.topic}`,
+                );
+                document.getElementById("clip-prompt")?.focus();
+              }}
+            >
+              {suggestion.label}
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
