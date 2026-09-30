@@ -129,6 +129,30 @@ class BatchTests(unittest.TestCase):
         self.assertNotIn('trim_path', failed)
         self.assertEqual(good['status'], 'approve')
 
+    def test_invalid_metadata_isolated_from_valid_neighbor(self):
+        other = self.root / 'other'
+        shutil.copytree(self.clip, other)
+        vid = 'lmnopqrstuv'
+        for name in ('recipe.json', 'result.json'):
+            data = qa.read(other / name)
+            data['candidate_id'] = vid
+            self.write(other / name, data)
+        shutil.copyfile(self.packets / f'{self.vid}.json', self.packets / f'{vid}.json')
+        p2 = qa.package(other, self.packets)
+        original_recipe = (self.clip / 'recipe.json').read_bytes()
+        for fields in ({'retained_speaker': 'Sagar'}, {'final_title': ''}, {'final_description': 'x' * 4001}):
+            with self.subTest(fields=fields):
+                bad = self.decision(status='adjust', keep_start_seconds=5, keep_end_seconds=25, **fields)
+                result = self.normalize(self.raw([bad, self.decision(p2)]), [self.p, p2], self.root / 'out')
+                failed, good = result['decisions']
+                self.assertEqual(failed['status'], 'review')
+                self.assertIn('Invalid proposed metadata', failed['action_validation_error'])
+                self.assertFalse(failed['automatic_release_eligible'])
+                self.assertIsNone(failed['keep_start_seconds'])
+                self.assertNotIn('trim_path', failed)
+                self.assertEqual(good['status'], 'approve')
+                self.assertEqual((self.clip / 'recipe.json').read_bytes(), original_recipe)
+
     def test_invalid_action_cannot_pass_even_if_verifier_approves_current_media(self):
         def reviewer(packages, output, role):
             decision = self.decision(packages[0], status='review' if role == 'finalizer' else 'approve')

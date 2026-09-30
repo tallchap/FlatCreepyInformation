@@ -200,8 +200,14 @@ def normalize(raw, packages, output, request=None):
         evidence = p['evidence']
         require(decision['reason'].strip(), 'Decision reason required')
         decision = {**copy.deepcopy(decision), **{key: evidence[key] for key in IDENTITIES}}
-        decision['final_title'], decision['final_description'] = validate_publication_metadata(decision['final_title'], decision['final_description'])
-        decision['retained_speaker'] = validate_speaker(decision['retained_speaker'], evidence['recipe']['speaker'])
+        try:
+            decision['final_title'], decision['final_description'] = validate_publication_metadata(decision['final_title'], decision['final_description'])
+            decision['retained_speaker'] = validate_speaker(decision['retained_speaker'], evidence['recipe']['speaker'])
+        except ValueError as exc:
+            # Bad proposed metadata is a candidate-level repair request, not a
+            # reason to lose valid neighboring decisions or relax source identity.
+            normalized.append({**decision, 'status': 'review', 'keep_start_seconds': None, 'keep_end_seconds': None, 'action_validation_error': 'Invalid proposed metadata: ' + str(exc), 'reason': decision['reason'] + ' [Invalid proposed metadata; media and recipe unchanged: ' + str(exc) + ']', 'attempt': evidence['attempt'], 'automatic_release_eligible': False, 'published': False})
+            continue
         status = decision['status']
         action = None
         if status == 'adjust':
