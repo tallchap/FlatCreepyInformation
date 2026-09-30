@@ -10,6 +10,16 @@
     "licenseUrl": "https://creativecommons.org/licenses/by/2.0"
   },
   {
+    "name": "Elon Musk",
+    "slug": "elon-musk",
+    "source": "https://commons.wikimedia.org/wiki/File:Elon_Musk_(54816836217).jpg",
+    "commons": "https://commons.wikimedia.org/wiki/File:Elon_Musk_(54816836217).jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Elon_Musk_%2854816836217%29.jpg/960px-Elon_Musk_%2854816836217%29.jpg",
+    "author": "Gage Skidmore",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
     "name": "Dario Amodei",
     "slug": "dario-amodei",
     "source": "https://www.anthropic.com/company/leadership",
@@ -19,21 +29,31 @@
     "licenseUrl": null
   },
   {
-    "name": "Demis Hassabis",
-    "slug": "demis-hassabis",
-    "source": "https://commons.wikimedia.org/wiki/File:Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Demis_Hassabis_in_2025_by_Christopher_Michel.jpg/960px-Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
-    "commons": "https://commons.wikimedia.org/wiki/File:Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
-    "author": "Cmichel67",
-    "license": "CC BY-SA 4.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
-  },
-  {
     "name": "Geoffrey Hinton",
     "slug": "geoffrey-hinton",
     "source": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_in_2026.jpg",
     "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/8/82/Geoffrey_Hinton_in_2026.jpg/960px-Geoffrey_Hinton_in_2026.jpg",
     "commons": "https://commons.wikimedia.org/wiki/File:Geoffrey_Hinton_in_2026.jpg",
+    "author": "Cmichel67",
+    "license": "CC BY-SA 4.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
+  },
+  {
+    "name": "Eliezer Yudkowsky",
+    "slug": "eliezer-yudkowsky",
+    "source": "https://commons.wikimedia.org/wiki/File:Eliezer_Yudkowsky,_Stanford_2006_(square_crop).jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/35/Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg/960px-Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg",
+    "commons": "https://commons.wikimedia.org/wiki/File:Eliezer_Yudkowsky,_Stanford_2006_(square_crop).jpg",
+    "author": "\"null0\"",
+    "license": "CC BY-SA 2.0",
+    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0"
+  },
+  {
+    "name": "Demis Hassabis",
+    "slug": "demis-hassabis",
+    "source": "https://commons.wikimedia.org/wiki/File:Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
+    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/1/1d/Demis_Hassabis_in_2025_by_Christopher_Michel.jpg/960px-Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
+    "commons": "https://commons.wikimedia.org/wiki/File:Demis_Hassabis_in_2025_by_Christopher_Michel.jpg",
     "author": "Cmichel67",
     "license": "CC BY-SA 4.0",
     "licenseUrl": "https://creativecommons.org/licenses/by-sa/4.0"
@@ -56,15 +76,5 @@
     "author": "Alex Gagne for The Wall Street Journal",
     "license": "Copyrighted \u2014 local design preview; reuse permission not verified",
     "licenseUrl": null
-  },
-  {
-    "name": "Eliezer Yudkowsky",
-    "slug": "eliezer-yudkowsky",
-    "source": "https://commons.wikimedia.org/wiki/File:Eliezer_Yudkowsky,_Stanford_2006_(square_crop).jpg",
-    "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/3/35/Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg/960px-Eliezer_Yudkowsky%2C_Stanford_2006_%28square_crop%29.jpg",
-    "commons": "https://commons.wikimedia.org/wiki/File:Eliezer_Yudkowsky,_Stanford_2006_(square_crop).jpg",
-    "author": "\"null0\"",
-    "license": "CC BY-SA 2.0",
-    "licenseUrl": "https://creativecommons.org/licenses/by-sa/2.0"
   }
 ]

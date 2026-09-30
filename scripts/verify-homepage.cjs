@@ -85,12 +85,13 @@ fs.mkdirSync(out, { recursive: true });
   );
   await page.getByRole("group", { name: "Choose a speaker" }).focus();
   for (const name of [
+    "Elon Musk",
     "Dario Amodei",
-    "Demis Hassabis",
     "Geoffrey Hinton",
+    "Eliezer Yudkowsky",
+    "Demis Hassabis",
     "Yoshua Bengio",
     "Max Tegmark",
-    "Eliezer Yudkowsky",
     "any speaker",
     "Sam Altman",
   ]) {
@@ -98,10 +99,10 @@ fs.mkdirSync(out, { recursive: true });
     assert((await heading()).includes(name));
   }
   checks.push(
-    "PASS All seven speakers plus Any speaker remain selectable; keyboard wraparound works",
+    "PASS All eight speakers in the requested order plus Any speaker remain selectable; keyboard wraparound works",
   );
-  await page.keyboard.press("End");
-  await page.keyboard.press("ArrowLeft");
+  await page.keyboard.press("Home");
+  for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowRight");
   assert.equal(await heading(), "Find an Eliezer Yudkowsky clip!");
   await page.keyboard.press("Home");
   checks.push("PASS Eliezer heading uses an");
@@ -116,7 +117,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.mouse.move(x - 80, y, { steps: 10 });
   await page.mouse.up();
   await page.waitForTimeout(550);
-  assert((await heading()).includes("Dario Amodei"));
+  assert((await heading()).includes("Elon Musk"));
   checks.push(
     "PASS Desktop drag still changes speaker without visible controls",
   );
@@ -132,7 +133,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.waitForTimeout(150); // A small held pull should return, not count as a flick.
   await page.mouse.up();
   await page.waitForTimeout(800);
-  assert((await heading()).includes("Dario Amodei"));
+  assert((await heading()).includes("Elon Musk"));
   assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -144,7 +145,7 @@ fs.mkdirSync(out, { recursive: true });
   );
   await page.mouse.up();
   await page.waitForTimeout(800);
-  assert((await heading()).includes("Dario Amodei"));
+  assert((await heading()).includes("Elon Musk"));
   assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
   // Catch a card mid-spring, reverse the gesture, and verify a clean final settle.
   await stage.press("ArrowRight");
@@ -154,7 +155,7 @@ fs.mkdirSync(out, { recursive: true });
   await page.mouse.move(x + 90, y, { steps: 8 });
   await page.mouse.up();
   await page.waitForTimeout(800);
-  assert((await heading()).includes("Dario Amodei"));
+  assert((await heading()).includes("Elon Musk"));
   assert.equal(await activeCard.evaluate((e) => e.style.transform), resting);
   checks.push(
     "PASS Larger cards track the pointer, settle after small pulls/cancellation, and support reversing mid-spring",
@@ -166,8 +167,8 @@ fs.mkdirSync(out, { recursive: true });
     .getByText("Here is a clip about AI safety.", { exact: true })
     .waitFor();
   assert.equal(requests.length, 1);
-  assert.equal(requests[0].speaker, "dario-amodei");
-  assert.equal(requests[0].speakerName, "Dario Amodei");
+  assert.equal(requests[0].speaker, "elon-musk");
+  assert.equal(requests[0].speakerName, "Elon Musk");
   assert.equal(requests[0].message, "Find a quote about safety");
   assert.equal(requests[0].messages.length, 1);
   assert.equal(
@@ -198,7 +199,7 @@ fs.mkdirSync(out, { recursive: true });
     1,
   );
   await page.getByRole("button", { name: "New chat", exact: true }).click();
-  assert((await heading()).includes("Dario Amodei"));
+  assert((await heading()).includes("Elon Musk"));
   assert.equal(
     await page
       .getByRole("button", { name: "Search results", exact: true })
@@ -367,7 +368,7 @@ fs.mkdirSync(out, { recursive: true });
     touchPoints: [],
   });
   await mobile.waitForTimeout(550);
-  assert((await mobile.locator("h1").innerText()).includes("Dario Amodei"));
+  assert((await mobile.locator("h1").innerText()).includes("Elon Musk"));
   checks.push("PASS Native Chromium touch swipe works in the React homepage");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await home();

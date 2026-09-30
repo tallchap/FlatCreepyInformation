@@ -1,11 +1,12 @@
 export const FEATURED_SPEAKERS = [
   { name: "Sam Altman", slug: "sam-altman", color: "#ddebba" },
+  { name: "Elon Musk", slug: "elon-musk", color: "#d3dee9" },
   { name: "Dario Amodei", slug: "dario-amodei", color: "#f2cfbb" },
-  { name: "Demis Hassabis", slug: "demis-hassabis", color: "#d8d6f1" },
   { name: "Geoffrey Hinton", slug: "geoffrey-hinton", color: "#c9dde8" },
+  { name: "Eliezer Yudkowsky", slug: "eliezer-yudkowsky", color: "#e9ccd8" },
+  { name: "Demis Hassabis", slug: "demis-hassabis", color: "#d8d6f1" },
   { name: "Yoshua Bengio", slug: "yoshua-bengio", color: "#eee0aa" },
   { name: "Max Tegmark", slug: "max-tegmark", color: "#cce3d6" },
-  { name: "Eliezer Yudkowsky", slug: "eliezer-yudkowsky", color: "#e9ccd8" },
 ] as const;
 export const SEARCH_SPEAKERS = [
   ...FEATURED_SPEAKERS,

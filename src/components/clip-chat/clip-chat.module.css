@@ -442,3 +442,8 @@
   transform: scale(2.15);
   transform-origin: 49% 25%;
 }
+
+.portraitImage img[data-speaker="elon-musk"] {
+  transform: scale(1.65);
+  transform-origin: 53% 34%;
+}
