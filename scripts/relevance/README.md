@@ -71,3 +71,30 @@ Luna judgments are triage, not human-reviewed ground truth. The original prompt
 was an uncalibrated first-pass candidate prompt. No arbitrary score threshold is
 added; the model judges whether a passage is worth clipping. The feedback loop
 for the Daily Clips product is outside this one-time audit's scope.
+
+## Explicitly authorized 915-video cull (September 30, 2026)
+
+`cull.py` is a separate, destructive workflow tied to this exact approved list.
+It archives the full original rows in permanent BigQuery tables under
+`youtubetranscripts-429803.snippy_history.cull_20260930_*`, exports individual
+metadata JSON and complete timestamped transcripts locally, and checks exact
+row multiplicity and transcript hashes before allowing deletion. The archive
+contains text and structured metadata only: no footage or audio downloads.
+
+Stages: `archive`, `export`, `vector-plan`, `delete-database`, `detach-vectors`,
+`verify`, `bundle`. The manifest and all receipts are in
+`.context/cull-20260930/`. Vector planning requires complete store and File
+metadata inventories there. Conflicting identities, unknown files, and protected
+speakers fail closed. Shared-store transcript files are individually identified;
+combined speaker files are never guessed or detached wholesale.
+
+The database deletion is one atomic transaction: verify the current rows still
+match every archive, delete only the approved IDs, assert every affected count,
+then commit. Search cleanup detaches only matching per-video transcript files.
+The original OpenAI File objects are text and remain available for restoration.
+The verifier checks exact surviving search files, absence of culled IDs in all
+20 live tables, unchanged retained metadata, all 1,029 preserved videos present,
+and intact permanent archive counts. It exits nonzero on any failure.
+
+Footage in Google Cloud Storage is a separate inventory/deletion operation and
+must not be described as removed merely because database/search deletion passed.
