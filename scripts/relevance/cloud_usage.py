@@ -230,6 +230,12 @@ class Usage:
         bucket_verified = (bucket_metadata.get('status') == 'verified' and bucket_metadata.get('name') == BUCKET
                            and all(bucket_metadata.get(k) for k in ('location', 'locationType', 'storageClass')))
         output_metadata = self.read(self.base / 'output-storage-metadata.json', required=False)
+        if output_metadata.get('schema_version') == 'snippy-output-storage-metadata-v2':
+            snapshots = [item for item in output_metadata.get('snapshots', [])
+                         if item.get('experiment_id') == self.experiment_id]
+            if len(snapshots) > 1:
+                self.error('duplicate_output_metadata_scope', self.base / 'output-storage-metadata.json')
+            output_metadata = snapshots[0] if snapshots else {}
         if output_metadata:
             expected = output_inventory(list(objects.values()))
             if (output_metadata.get('experiment_id') != self.experiment_id
@@ -301,7 +307,7 @@ class Usage:
             'Output object bytes are not a bound on all upload traffic: failed/unreceipted uploads, retries and protocol overhead are unobserved.',
             'Source body bytes were actually read. Response lengths and requested lengths are upper bounds including cancelled unread data, excluding HTTP/TLS overhead. These are not billed egress bytes.',
             'Range intents can precede network dispatch; response statuses prove returned HTTP responses. Saved source metadata files prove responses, not a complete operation count.',
-            'Output metadata GETs, upload POSTs, public playback GETs, site API calls and any hidden transport retries lack dedicated operation receipts and are not guessed.',
+            'Only final-report metadata GETs have dedicated operation receipts. Publisher metadata GETs, upload POSTs, public playback GETs, site API calls and hidden transport retries remain unobserved.',
             'Bucket default storage class does not establish each output object storage class. Source object metadata applies only to the recorded source objects.',
             'No dollar cloud estimate is asserted without verified billing location, operation classes/rates, egress destination, retention time and billing adjustments.',
         ]
@@ -318,6 +324,7 @@ class Usage:
             'outputs': {'unique_verified_objects': len(objects), 'verified_output_object_bytes': output_bytes,
                         'verified_output_object_gib': output_bytes / 1024**3, 'actual_upload_wire_bytes': None,
                         'upload_posts_observed': None, 'objects_with_unobserved_storageClass': sum(not obj['storageClass'] for obj in objects.values()),
+                        'observed_output_storage_classes': dict(Counter(obj['storageClass'] or 'unobserved' for obj in objects.values())),
                         'objects': list(objects.values()), 'publication_receipts': receipts},
             'bigquery': {'unique_publication_query_jobs': len(jobs), 'recorded_bytes_billed': billed,
                          'recorded_tib_billed': billed / 1024**4,
@@ -358,7 +365,7 @@ class Usage:
                           'source_class_b_gets': {'assumed_usd_per_1000': .0004,
                               'observed_successful_responses_scenario_usd': (sum(count for code, count in statuses.items() if code in ('200', '206')) + len(source_metadata)) / 1000 * .0004,
                               'assumption': 'Standard flat-namespace Class B; observed successful range and saved source metadata responses only; other calls unpriced.'},
-                          'storage_formula': 'output GiB * applicable object class/location USD per GiB-month * retained fraction of month; no rate chosen while output class/location unknown',
+                          'storage_formula': 'output GiB * applicable object class/location USD per GiB-month * retained fraction of month; class observations above, location and retention remain unverified',
                           'references': ['https://cloud.google.com/storage/pricing', 'https://cloud.google.com/bigquery/pricing']},
                       'formulas': {'bigquery': 'recorded_tib_billed * applicable USD/TiB, before billing adjustments',
                                    'storage': 'verified_output_object_gib * retained fraction of month * applicable storage USD/GiB-month',
@@ -379,11 +386,12 @@ def output_inventory(objects):
                     'size': obj['verified_object_bytes']} for obj in objects], key=lambda row: (row['bucket'], row['name'], row['generation']))
 
 
-def fetch_output_metadata(usage, report, private_env_file=None, session=None):
+def fetch_output_metadata(usage, report, private_env_file=None, session=None, *, output_path=None, allow_stopped=False):
     """One final bounded metadata pass. Existing/pending receipts never retry."""
-    if usage.base != usage.root or not report['checks']['wave_finished'] or not report['checks']['evidence_integrity']:
+    settled = report['checks']['wave_finished'] or (allow_stopped and report['checks'].get('scope_stopped'))
+    if usage.base != usage.root or not settled or not report['checks']['evidence_integrity']:
         raise ValueError('Output metadata fetch requires the completed current wave with valid evidence')
-    path = usage.root / 'output-storage-metadata.json'
+    path = Path(output_path) if output_path is not None else usage.root / 'output-storage-metadata.json'
     inventory = output_inventory(report['outputs']['objects'])
     signature = audit.digest(inventory)
     if path.exists():
@@ -418,7 +426,7 @@ def fetch_output_metadata(usage, report, private_env_file=None, session=None):
             audit.atomic(path, receipt)
             try:
                 response = session.get('https://storage.googleapis.com/storage/v1/b/' + BUCKET + '/o/' + quote(obj['name'], safe=''),
-                    params={'fields': receipt['fields'], 'generation': obj['generation']}, timeout=30)
+                    params={'fields': receipt['fields'], 'generation': obj['generation']}, timeout=30, allow_redirects=False)
                 item['http_status'] = response.status_code
                 receipt['http_responses_observed'] += 1
                 if response.status_code == 200:
@@ -430,6 +438,7 @@ def fetch_output_metadata(usage, report, private_env_file=None, session=None):
                     item['status'] = 'verified' if matched else 'identity_mismatch'
                 else:
                     item['status'] = 'permission_denied' if response.status_code in (401, 403) else 'http_error'
+                response.close()
             except Exception as exc:
                 item['status'], item['error_type'] = 'transport_error', type(exc).__name__
             item['finished_at'] = audit.now()
@@ -458,7 +467,8 @@ def markdown(report):
         f'| Source range intents / HTTP responses | {source["range_request_intents"]} / {source["range_http_responses_observed"]} |',
         f'| Bucket location / type / default class | {bucket["location"] or "unverified"} / {bucket["locationType"] or "unverified"} / {bucket["default_storageClass"] or "unverified"} |',
         f'| Source object storage classes observed | {json.dumps(source["observed_source_storage_classes"])} |',
-        f'| Output objects without recorded storage class | {outputs["objects_with_unobserved_storageClass"]} |', '',
+        f'| Output objects without recorded storage class | {outputs["objects_with_unobserved_storageClass"]} |',
+        f'| Output object storage classes observed | {json.dumps(outputs["observed_output_storage_classes"])} |', '',
         'Historical verification, startup preflight, Mac checkpoint and other waves are excluded from BigQuery totals. Shadow and ChatGPT subscriptions are fixed costs kept separate; no allocation or zero-cost claim is made.', '',
         'These measurements are not an invoice. Actual cloud dollar cost remains unknown. The conditional calculator below does not establish the account bill or a total-cost bound.', '']
     calculator = report['costs']['illustrative_calculator']
@@ -466,7 +476,7 @@ def markdown(report):
     rows += [f"Saved Luna API usage-derived estimate: ${report['costs']['model_api_usage_derived_usd']:.9f}; unresolved charge records: {len(report['costs']['model_unknown_charge_paths'])}.",
         f"If internet egress is $0.12/GiB, read-byte scenario is ${egress['read_bytes_scenario_usd']:.6f}; requested-byte scenario is ${egress['requested_bytes_scenario_usd']:.6f}. These byte scenarios are not measured billed egress.",
         f"If BigQuery uses $6.25/TiB on-demand pricing, the saved billed-byte quantity prices at ${bq_cost['recorded_usage_before_allowances_usd']:.6f} before allowances/credits. Free-tier use and reservation pricing are unknown.",
-        'Storage remains a formula because output class, bucket location and retention are unknown. Local encoder/ASR benchmarks make no Luna API calls. Shadow/ChatGPT incremental subscription cost is $0 only under the already-owned subscription assumption; amortized allocation remains unknown.', '',
+        'Storage remains a formula because bucket location and retention are unknown; observed output classes are listed above. Local encoder/ASR benchmarks make no Luna API calls. Shadow/ChatGPT incremental subscription cost is $0 only under the already-owned subscription assumption; amortized allocation remains unknown.', '',
         'Calculator sources checked 2026-09-30: [Cloud Storage pricing](https://cloud.google.com/storage/pricing), [BigQuery pricing](https://cloud.google.com/bigquery/pricing).', '']
     rows.extend('- ' + item for item in report['limitations'])
     rows += ['', 'References: [bucket metadata](https://docs.cloud.google.com/storage/docs/json_api/v1/buckets/get), [storage fields](https://docs.cloud.google.com/storage/docs/json_api/v1/buckets), [BigQuery job statistics](https://docs.cloud.google.com/bigquery/docs/reference/rest/v2/Job).', '']

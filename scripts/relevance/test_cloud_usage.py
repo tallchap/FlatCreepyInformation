@@ -118,6 +118,55 @@ class CloudUsageTests(unittest.TestCase):
             self.assertEqual(len(report['costs']['model_unknown_charge_paths']), 1)
             self.assertTrue(report['checks']['wave_finished'])
 
+    def test_aggregate_output_metadata_is_scoped_and_generation_bound(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); self.fixture(root)
+            self.receipt(root, 'wave0', 'wave-job')
+            self.receipt(root, 'prior0', 'prior-job')
+            snapshots = []
+            for scope in ('experiment', 'first-shadow'):
+                report = cloud.Usage(root, scope=scope).build()
+                obj = report['outputs']['objects'][0]
+                snapshots.append({'experiment_id': report['experiment_id'],
+                    'plan_sha256': report['scope']['plan_sha256'],
+                    'objects_inventory_sha256': audit.digest(cloud.output_inventory(report['outputs']['objects'])),
+                    'requests_started': 1, 'http_responses_observed': 1,
+                    'objects': [{'name': obj['name'], 'expected_generation': obj['generation'], 'status': 'verified',
+                        'metadata': {'bucket': cloud.BUCKET, 'name': obj['name'], 'generation': obj['generation'],
+                                     'size': obj['verified_object_bytes'], 'storageClass': 'STANDARD'}}]})
+            saved = {'schema_version': 'snippy-output-storage-metadata-v2', 'snapshots': snapshots}
+            audit.atomic(root / 'output-storage-metadata.json', saved)
+            for scope in ('experiment', 'first-shadow'):
+                report = cloud.Usage(root, scope=scope).build()
+                self.assertTrue(report['checks']['evidence_integrity'])
+                self.assertEqual(report['outputs']['objects_with_unobserved_storageClass'], 0)
+                self.assertEqual(report['operations']['final_report_output_metadata_http_responses'], 1)
+                self.assertIsNone(report['bucket']['location'])
+            snapshots[0]['objects'][0]['metadata']['generation'] = 'changed'
+            audit.atomic(root / 'output-storage-metadata.json', saved)
+            self.assertFalse(cloud.Usage(root).build()['checks']['evidence_integrity'])
+            self.assertTrue(cloud.Usage(root, scope='first-shadow').build()['checks']['evidence_integrity'])
+
+    def test_stopped_output_metadata_fetch_is_bounded_and_saved_errors_never_retry(self):
+        from unittest.mock import Mock
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); self.fixture(root)
+            self.receipt(root, 'wave0', 'wave-job')
+            usage = cloud.Usage(root); report = usage.build()
+            session = Mock()
+            session.get.return_value.status_code = 403
+            path = root / 'output-storage-metadata-wave-one.json'
+            with self.assertRaises(ValueError):
+                cloud.fetch_output_metadata(usage, report, session=session, output_path=path)
+            saved = cloud.fetch_output_metadata(usage, report, session=session, output_path=path, allow_stopped=True)
+            self.assertEqual(saved['requests_started'], 1)
+            self.assertEqual(saved['http_responses_observed'], 1)
+            self.assertEqual(saved['objects'][0]['status'], 'permission_denied')
+            self.assertFalse(session.get.call_args.kwargs['allow_redirects'])
+            self.assertEqual(session.get.call_args.kwargs['params']['generation'], '100')
+            cloud.fetch_output_metadata(usage, report, session=session, output_path=path, allow_stopped=True)
+            session.get.assert_called_once()
+
 
 if __name__ == '__main__':
     unittest.main()
