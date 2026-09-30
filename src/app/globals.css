@@ -283,3 +283,16 @@ video::-webkit-media-controls-picture-in-picture-button {
 .snippy-scrubber-scroll::-webkit-scrollbar-thumb:hover {
   background: rgba(150,150,150,0.7);
 }
+
+/* Shared site navigation for the chat-first homepage. */
+.site-header{height:83px;display:flex;align-items:center;justify-content:space-between;gap:24px;max-width:1360px;margin:auto;padding:0 48px;border-bottom:1px solid #edf0e8;color:#20352b;font-family:var(--font-geist-sans),Arial,sans-serif}
+.site-brand{display:flex;align-items:center;gap:8px;font-size:27px;font-weight:700;letter-spacing:-1.5px}
+.site-brand img{width:47px;height:53px;object-fit:contain}
+.brand-dot{color:#88ad53}
+.site-links{display:flex;align-items:center;gap:5px}
+.site-link{padding:10px 18px;border-radius:24px;font-size:13px;font-weight:500;transition:background .15s}
+.site-link:hover{background:#edf2e5}
+.site-link.active{background:#20352b;color:white}
+.site-main{padding:24px 48px}
+@media(max-width:900px){.site-header{padding:0 24px}.site-main{padding:20px 24px}.site-brand{font-size:24px}.site-link{padding:9px 12px;font-size:12px}}
+@media(max-width:650px){.site-header{height:auto;min-height:111px;flex-direction:column;justify-content:center;gap:12px;padding:14px 18px 12px}.site-brand{font-size:25px;letter-spacing:-1.3px}.site-brand img{height:38px;width:35px}.site-links{gap:2px}.site-link{font-size:11px;padding:7px 13px}.site-main{padding:15px 18px}}

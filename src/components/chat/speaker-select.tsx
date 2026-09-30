@@ -2,7 +2,12 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import * as Popover from "@radix-ui/react-popover";
+import { FEATURED_SPEAKERS } from "../clip-chat/speakers";
 import { ChevronDown } from "lucide-react";
+
+export function speakerInitial(name: string) {
+  return Array.from(name.trim())[0]?.toLocaleUpperCase() || "?";
+}
 
 interface Speaker {
   name: string;
@@ -14,12 +19,14 @@ interface SpeakerSelectProps {
   value: string;
   onValueChange: (value: string, speakerName?: string) => void;
   disabled?: boolean;
+  name?: string;
 }
 
 export function SpeakerSelect({
   value,
   onValueChange,
   disabled,
+  name,
 }: SpeakerSelectProps) {
   const [dynamicSpeakers, setDynamicSpeakers] = useState<Speaker[]>([]);
   const [search, setSearch] = useState("");
@@ -36,15 +43,22 @@ export function SpeakerSelect({
   }, []);
 
   const allSpeakers = useMemo(() => {
-    return [...dynamicSpeakers].sort((a, b) => a.name.localeCompare(b.name));
+    const speakers = new Map<string, Speaker>(
+      FEATURED_SPEAKERS.map((person) => [
+        person.slug,
+        { ...person, videoCount: 0 },
+      ]),
+    );
+    dynamicSpeakers.forEach((person) => speakers.set(person.slug, person));
+    return [...speakers.values()].sort((a, b) => a.name.localeCompare(b.name));
   }, [dynamicSpeakers]);
 
   // The display name for the selected speaker
   const selectedName = useMemo(() => {
     if (value === "all") return "All Speakers";
     const sp = allSpeakers.find((s) => s.slug === value);
-    return sp?.name || "";
-  }, [value, allSpeakers]);
+    return sp?.name || name || "";
+  }, [value, allSpeakers, name]);
 
   const filtered = useMemo(() => {
     if (!search) return allSpeakers;
@@ -103,15 +117,26 @@ export function SpeakerSelect({
     <Popover.Root open={open} onOpenChange={setOpen}>
       <Popover.Trigger asChild disabled={disabled}>
         <button
-          className="flex items-center justify-between gap-2 w-[320px] rounded-md border border-gray-300 bg-white px-3 py-2 text-sm shadow-sm hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-[#99cc66] disabled:cursor-not-allowed disabled:opacity-50"
+          aria-label={`Choose speaker, current: ${selectedName || "none"}`}
+          className="flex items-center gap-2 w-full min-w-0 max-w-[320px] rounded-xl border border-[#dce3d3] bg-white px-2 sm:px-3 py-2 text-sm hover:bg-[#f5f7f0] focus:outline-none focus:ring-2 focus:ring-[#99cc66] disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => {
             setOpen(true);
             // Focus input on next tick
             requestAnimationFrame(() => inputRef.current?.focus());
           }}
         >
-          <span className={selectedName ? "text-gray-900" : "text-gray-500"}>
-            {selectedName || "Choose a speaker..."}
+          <span
+            data-speaker-initial
+            aria-hidden="true"
+            className="grid place-items-center shrink-0 w-8 h-8 rounded-lg bg-[#e7eddb] text-[#52683d] font-semibold"
+          >
+            {speakerInitial(selectedName)}
+          </span>
+          <span className="min-w-0 text-left flex-1">
+            <span className="block text-[10px] text-[#78856b]">Speaker</span>
+            <span className="block truncate text-[#20352b] font-medium">
+              {selectedName || "Choose a speaker"}
+            </span>
           </span>
           <ChevronDown className="h-4 w-4 opacity-50 shrink-0" />
         </button>
@@ -121,18 +146,19 @@ export function SpeakerSelect({
         <Popover.Content
           align="start"
           sideOffset={4}
-          className="z-50 w-[320px] rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
+          className="z-50 flex max-h-[var(--radix-popover-content-available-height)] w-[min(320px,calc(100vw-48px))] flex-col overflow-hidden rounded-md border border-gray-200 bg-white shadow-lg animate-in fade-in-0 zoom-in-95"
           onOpenAutoFocus={(e) => {
             e.preventDefault();
             inputRef.current?.focus();
           }}
         >
-          <div className="p-2 border-b border-gray-100">
+          <div className="shrink-0 p-2 border-b border-gray-100">
             <input
               ref={inputRef}
               type="text"
               placeholder="Type to search speakers..."
-              className="w-full rounded border border-gray-300 bg-white px-3 py-2 text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent"
+              aria-label="Search speakers"
+              className="min-h-11 w-full rounded border border-gray-300 bg-white px-3 py-2 text-base sm:text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -141,24 +167,29 @@ export function SpeakerSelect({
               onKeyDown={handleKeyDown}
             />
           </div>
-          <div
-            ref={listRef}
-            className="max-h-[300px] overflow-y-auto p-1"
-          >
+          <div ref={listRef} className="min-h-0 max-h-[300px] overflow-y-auto overscroll-contain p-1">
             {items.map((item, i) => (
               <button
                 key={item.slug}
-                className={`w-full text-left px-3 py-2 text-sm rounded-sm cursor-pointer transition-colors ${
+                aria-label={item.label}
+                className={`flex min-h-11 items-center gap-3 w-full text-left px-3 py-2 text-sm rounded-sm cursor-pointer transition-colors ${
                   i === highlightIndex
                     ? "bg-[#99cc66]/20 text-gray-900"
                     : item.slug === value
-                    ? "bg-gray-100 text-gray-900 font-medium"
-                    : "text-gray-700 hover:bg-gray-100"
+                      ? "bg-gray-100 text-gray-900 font-medium"
+                      : "text-gray-700 hover:bg-gray-100"
                 }`}
                 onClick={() => selectItem(item.slug)}
                 onMouseEnter={() => setHighlightIndex(i)}
               >
-                {item.label}
+                <span
+                  data-speaker-initial
+                  aria-hidden="true"
+                  className="grid place-items-center shrink-0 w-7 h-7 rounded-lg bg-[#e7eddb] text-[#52683d] text-xs font-semibold"
+                >
+                  {speakerInitial(item.label)}
+                </span>
+                <span>{item.label}</span>
               </button>
             ))}
             {filtered.length > 200 && (

@@ -15,7 +15,7 @@ export default function AboutPage() {
           <li>
             Use{" "}
             <Link
-              href="/"
+              href="/search"
               className="text-blue-600 hover:underline font-medium"
             >
               Search
