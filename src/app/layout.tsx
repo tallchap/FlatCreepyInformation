@@ -15,7 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "snippysaurus",
-  description: "Snippysaurus helps you find clip-worthy quotes from 3 000+ AI-focused video transcripts.",
+  description:
+    "Snippysaurus helps you find clip-worthy quotes from 3 000+ AI-focused video transcripts.",
 };
 
 export default function RootLayout({
@@ -38,7 +39,7 @@ export default function RootLayout({
         </Script>
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-gray-50`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased min-h-screen bg-white`}
       >
         {/* GTM noscript fallback */}
         <noscript>
@@ -52,10 +53,7 @@ export default function RootLayout({
 
         <ClientProviders>
           <Navbar />
-          <main className="p-4">{children}</main>
-          <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
-            v{process.env.BUILD_VERSION || "dev"}
-          </footer>
+          <main className="site-main">{children}</main>
           <Toaster />
         </ClientProviders>
       </body>

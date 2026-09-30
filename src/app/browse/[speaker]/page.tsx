@@ -1,19 +1,13 @@
 import { Suspense } from "react";
 import { SpeakerVideosContainer } from "@/components/browse/speaker-videos";
 
-export default async function SpeakerPage({
-  params,
-}: {
-  params: Promise<{ speaker: string }>;
-}) {
+export default async function SpeakerPage({ params }: { params: Promise<{ speaker: string }> }) {
   const { speaker } = await params;
-  const decodedSpeaker = decodeURIComponent(speaker);
-
+  let name = speaker;
+  try { name = decodeURIComponent(speaker); } catch { /* Preserve literal percent signs in names. */ }
   return (
-    <section className="container mx-auto max-w-6xl flex flex-col gap-4">
-      <Suspense fallback={<div className="text-center py-8 text-gray-500">Loading videos...</div>}>
-        <SpeakerVideosContainer speaker={decodedSpeaker} />
-      </Suspense>
-    </section>
+    <Suspense fallback={<p role="status">Loading speaker…</p>}>
+      <SpeakerVideosContainer speaker={name} />
+    </Suspense>
   );
 }

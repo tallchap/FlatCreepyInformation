@@ -1,6 +1,7 @@
 export type Speaker = {
   name: string;
   videoCount: number;
+  updatedAt?: string | null;
 };
 
 export type YearEntry = {
@@ -21,4 +22,17 @@ export type BrowseVideo = {
   speakers: string;
   youtubeUrl: string;
   videoLength: string | null;
+};
+
+export type BrowseSnippet = {
+  id: string;
+  videoId: string;
+  title: string;
+  durationMs: number;
+  url: string;
+};
+
+export type SpeakerLibrary = {
+  videos: BrowseVideo[];
+  snippets: BrowseSnippet[];
 };

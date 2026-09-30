@@ -4,9 +4,15 @@ import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
   role: "user" | "assistant";
+  messageIndex?: number;
   content: string;
   isStreaming?: boolean;
-  onVideoLinkClick?: (payload: { videoId: string; startSec: number; title?: string }) => void;
+  onVideoLinkClick?: (payload: {
+    videoId: string;
+    startSec: number;
+    title?: string;
+    citationIndex: number;
+  }) => void;
   onSuggestionClick?: (suggestion: string) => void;
 }
 
@@ -56,13 +62,14 @@ function formatContent(text: string): string {
       )
       // Numbered follow-up suggestions (e.g. "1. find quotes about...")
       // Convert to clickable spans with cleaned text
-      .replace(
-        /^(\d+\.\s+.+)$/gm,
-        (_match, line: string) => {
-          const cleaned = cleanSuggestion(line);
-          return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="cursor-pointer underline text-emerald-600 hover:text-emerald-800">${line.replace(/^\d+\.\s*/, "").replace(/^or\s+/i, "").replace(/[,.]$/, "").trim()}</span>`;
-        },
-      )
+      .replace(/^(\d+\.\s+.+)$/gm, (_match, line: string) => {
+        const cleaned = cleanSuggestion(line);
+        return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="cursor-pointer underline text-emerald-600 hover:text-emerald-800">${line
+          .replace(/^\d+\.\s*/, "")
+          .replace(/^or\s+/i, "")
+          .replace(/[,.]$/, "")
+          .trim()}</span>`;
+      })
       // Newlines
       .replace(/\n/g, "<br />")
   );
@@ -70,6 +77,7 @@ function formatContent(text: string): string {
 
 export function MessageBubble({
   role,
+  messageIndex,
   content,
   isStreaming,
   onVideoLinkClick,
@@ -81,7 +89,9 @@ export function MessageBubble({
     const target = e.target as HTMLElement;
 
     // Handle suggestion clicks
-    const suggestion = target.closest("[data-suggestion]") as HTMLElement | null;
+    const suggestion = target.closest(
+      "[data-suggestion]",
+    ) as HTMLElement | null;
     if (suggestion && onSuggestionClick) {
       e.preventDefault();
       const text = decodeURIComponent(suggestion.dataset.suggestion || "");
@@ -100,20 +110,26 @@ export function MessageBubble({
     e.preventDefault();
     const startSec = Number(link.dataset.startSec || "0") || 0;
     const encodedTitle = link.dataset.videoTitle;
-    const title = encodedTitle ? decodeURIComponent(encodedTitle) : link.textContent || undefined;
-    onVideoLinkClick({ videoId, startSec, title });
+    const title = encodedTitle
+      ? decodeURIComponent(encodedTitle)
+      : link.textContent || undefined;
+    const citationIndex = Array.from(
+      e.currentTarget.querySelectorAll("a[data-video-id]"),
+    ).indexOf(link);
+    onVideoLinkClick({ videoId, startSec, title, citationIndex });
   }
 
   return (
     <div
+      data-chat-message-index={messageIndex}
       className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}
     >
       <div
         className={cn(
-          "max-w-[80%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+          "max-w-[92%] sm:max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
           isUser
-            ? "bg-[#99cc66] text-gray-900"
-            : "bg-white border border-gray-200 text-gray-800",
+            ? "bg-[#e7efda] text-[#20352b]"
+            : "bg-white border border-[#e2e7dc] text-[#20352b]",
           isStreaming && "animate-pulse",
         )}
       >
