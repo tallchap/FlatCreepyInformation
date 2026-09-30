@@ -1,125 +1,73 @@
 "use client";
 
-import { useMemo } from "react";
-import { BrowseVideo } from "./utils/types";
-import { Button } from "@/components/ui/button";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { useId, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { ChevronRight, Play, Scissors } from "lucide-react";
+import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import type { BrowseSnippet, BrowseVideo } from "./utils/types";
+import { displayDate, duration, PAGE_SIZE, yearOf } from "./utils/presentation";
+import { BrowsePagination } from "./pagination";
+import styles from "./browse.module.css";
 
-export function VideoList({
-  speaker,
-  videos,
-  total,
-  page,
-  onPageChange,
-  isLoading,
-}: {
-  speaker: string;
-  videos: BrowseVideo[];
-  total: number;
-  page: number;
-  onPageChange: (page: number) => void;
-  isLoading: boolean;
+type Entry = { key: string; video: BrowseVideo; snippet: BrowseSnippet | null };
+
+export function VideoList({ entries, snippetsByVideo, total, page, tab, onPageChange }: {
+  entries: Entry[]; snippetsByVideo: Map<string, BrowseSnippet[]>; total: number; page: number;
+  tab: string; onPageChange: (page: number) => void;
 }) {
-  const totalPages = Math.ceil(total / 20);
-
-  // Group videos by year from published date
-  const groupedByYear = useMemo(() => {
-    const groups: { year: string; videos: BrowseVideo[] }[] = [];
-    let currentYear = "";
-    for (const video of videos) {
-      const year = video.published.substring(0, 4);
-      if (year !== currentYear) {
-        currentYear = year;
-        groups.push({ year, videos: [] });
-      }
-      groups[groups.length - 1].videos.push(video);
-    }
-    return groups;
-  }, [videos]);
-
-  return (
-    <div className="space-y-4">
-      <h2 className="text-sm font-semibold text-gray-500 uppercase tracking-wider px-1">
-        <span className="text-blue-700 normal-case">{speaker}</span>
-        <span className="font-normal text-gray-400 normal-case ml-2">
-          ({total} {total === 1 ? "video" : "videos"})
-        </span>
-      </h2>
-
-      <div className={`transition-opacity ${isLoading ? "opacity-50 pointer-events-none" : ""}`}>
-        {groupedByYear.map((group) => (
-          <div key={group.year} className="space-y-3">
-            <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-1">
-              {group.year}
-            </h3>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
-              {group.videos.map((video) => (
-                <Link
-                  key={video.id}
-                  href={`/video/${video.id}`}
-                  className="group block"
-                >
-                  <div className="rounded-lg overflow-hidden border border-gray-200 bg-white hover:border-blue-300 hover:shadow-md transition-all">
-                    <Image
-                      src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`}
-                      alt={video.title}
-                      width={320}
-                      height={180}
-                      className="w-full aspect-video object-cover"
-                    />
-                    <div className="p-2.5">
-                      <p className="text-xs font-medium text-gray-800 line-clamp-2 group-hover:text-blue-700 transition-colors">
-                        {video.title}
-                      </p>
-                      <p className="text-[11px] text-gray-400 mt-1 truncate">
-                        {video.channel}
-                      </p>
-                      <p className="text-[11px] text-gray-400 truncate">
-                        {video.published}
-                        {video.videoLength && ` · ${video.videoLength}`}
-                      </p>
-                    </div>
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        ))}
-
-        {videos.length === 0 && !isLoading && (
-          <p className="text-center text-gray-500 py-4">
-            No videos found.
-          </p>
-        )}
-      </div>
-
-      {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-4 pt-2">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isLoading || page <= 1}
-            onClick={() => onPageChange(page - 1)}
-          >
-            <ChevronLeft size={16} />
-            Previous
-          </Button>
-          <span className="text-sm text-gray-600">
-            Page {page} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={isLoading || page >= totalPages}
-            onClick={() => onPageChange(page + 1)}
-          >
-            Next
-            <ChevronRight size={16} />
-          </Button>
-        </div>
-      )}
+  const [playing, setPlaying] = useState<Entry | null>(null);
+  const [mediaError, setMediaError] = useState(false);
+  function play(entry: Entry) { setMediaError(false); setPlaying(entry); }
+  const groups = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const year = yearOf(entry.video.published);
+    groups.set(year, [...(groups.get(year) || []), entry]);
+  }
+  return <>
+    <div className={styles.yearGroups}>
+      {[...groups].map(([year, items]) => <section key={year} aria-label={`${year} ${tab}`}>
+        <div className={styles.yearHeading}><h2>{year}</h2><span>{items.length} {tab} on this page</span></div>
+        <div className={styles.videoCard}>{items.map((entry) => entry.snippet
+          ? <button key={entry.key} className={`${styles.videoRow} ${styles.snippetRow}`} onClick={() => play(entry)}>
+              <Thumbnail video={entry.video} clipDuration={duration(entry.snippet.durationMs)} />
+              <span className={styles.videoInfo}><strong>{entry.snippet.title}</strong><span>{entry.video.channel} · {entry.video.title}</span></span>
+              <span className={styles.date}>{displayDate(entry.video.published)}</span><span className={styles.playBadge}><Play size={12} fill="currentColor" />Play snippet</span>
+            </button>
+          : <VideoRow key={entry.key} video={entry.video} snippets={snippetsByVideo.get(entry.video.id) || []} onPlay={(snippet) => play({ ...entry, snippet })} />)}</div>
+      </section>)}
     </div>
-  );
+    <BrowsePagination page={page} totalPages={Math.ceil(total / PAGE_SIZE)} onChange={onPageChange} />
+    <Dialog open={!!playing} onOpenChange={(open) => { if (!open) setPlaying(null); }}>
+      <DialogContent className={styles.playerDialog}>
+        <DialogTitle>{playing?.snippet?.title}</DialogTitle>
+        <DialogDescription>{playing?.video.channel} · {playing && displayDate(playing.video.published)}</DialogDescription>
+        {playing?.snippet && <video key={playing.snippet.id} controls autoPlay playsInline onError={() => setMediaError(true)} src={playing.snippet.url} className={styles.snippetPlayer} />}
+        {mediaError && <p role="alert">This snippet could not be loaded. You can still open the full video below.</p>}
+        {playing && <Link className={styles.outlineButton} href={`/video/${playing.video.id}`}>View full video<ChevronRight size={14} /></Link>}
+      </DialogContent>
+    </Dialog>
+  </>;
+}
+
+function Thumbnail({ video, clipDuration }: { video: BrowseVideo; clipDuration?: string }) {
+  return <span className={styles.thumbnail}><Image src={`https://img.youtube.com/vi/${video.id}/mqdefault.jpg`} alt="" width={120} height={68} />{(clipDuration || video.videoLength) && <span>{clipDuration || video.videoLength}</span>}</span>;
+}
+function VideoRow({ video, snippets, onPlay }: { video: BrowseVideo; snippets: BrowseSnippet[]; onPlay: (snippet: BrowseSnippet) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  const id = useId();
+  return <div className={styles.videoGroup}>
+    <div className={styles.videoRow} data-expanded={expanded}>
+      <Link className={styles.videoLink} href={`/video/${video.id}`}>
+        <Thumbnail video={video} />
+        <span className={styles.videoInfo}><strong>{video.title}</strong><span>{video.channel}</span></span>
+        <span className={styles.date}>{displayDate(video.published)}</span>
+      </Link>
+      <button className={styles.snippetBadge} disabled={!snippets.length} aria-expanded={expanded} aria-controls={id} aria-label={`${expanded ? "Hide" : "Show"} ${snippets.length} snippets from ${video.title}`} onClick={() => setExpanded(!expanded)}><Scissors size={12} /><span>{snippets.length} {snippets.length === 1 ? "snippet" : "snippets"}</span>{!!snippets.length && <ChevronRight size={11} style={{ transform: expanded ? "rotate(90deg)" : undefined }} />}</button>
+    </div>
+    {expanded && <div id={id} className={styles.nestedSnippets}>
+      <p>{snippets.length} {snippets.length === 1 ? "snippet" : "snippets"} from this video</p>
+      <div>{snippets.map((snippet) => <button key={snippet.id} className={styles.nestedSnippet} onClick={() => onPlay(snippet)}><span className={styles.playDot}><Play size={10} fill="currentColor" /></span><span><strong>{snippet.title}</strong><small>{duration(snippet.durationMs)}</small></span></button>)}</div>
+    </div>}
+  </div>;
 }
