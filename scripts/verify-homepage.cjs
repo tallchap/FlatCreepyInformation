@@ -91,14 +91,20 @@ fs.mkdirSync(out, { recursive: true });
     "Yoshua Bengio",
     "Max Tegmark",
     "Eliezer Yudkowsky",
+    "any speaker",
     "Sam Altman",
   ]) {
     await page.keyboard.press("ArrowRight");
     assert((await heading()).includes(name));
   }
   checks.push(
-    "PASS All seven speakers remain selectable, keyboard wraparound works",
+    "PASS All seven speakers plus Any speaker remain selectable; keyboard wraparound works",
   );
+  await page.keyboard.press("End");
+  await page.keyboard.press("ArrowLeft");
+  assert.equal(await heading(), "Find an Eliezer Yudkowsky clip!");
+  await page.keyboard.press("Home");
+  checks.push("PASS Eliezer heading uses an");
   await page.waitForTimeout(550);
   const box = await page
     .getByRole("group", { name: "Choose a speaker" })
@@ -222,6 +228,39 @@ fs.mkdirSync(out, { recursive: true });
     1,
   );
   checks.push("PASS Keyword search remains available at /search");
+  await home();
+  const bodyText = await page.locator("body").innerText();
+  for (const removed of [
+    "Real quotes. Original videos. Right to the moment.",
+    "vdev",
+    "Photo credits",
+  ])
+    assert(!bodyText.includes(removed));
+  assert.equal(await page.locator("footer").count(), 0);
+  await page.getByRole("button", { name: "Any speaker", exact: true }).click();
+  assert.equal(await heading(), "Find a clip from any speaker!");
+  assert.equal(
+    await page
+      .locator('[data-portrait][aria-pressed="true"]')
+      .getAttribute("aria-label"),
+    "Select Any speaker",
+  );
+  await page
+    .getByRole("button", { name: /AI could change everything/ })
+    .click();
+  await page.getByRole("button", { name: "Find a clip", exact: true }).click();
+  await page.waitForURL(base + "/chat");
+  await page
+    .getByText("Here is a clip about AI safety.", { exact: true })
+    .waitFor();
+  assert.equal(requests.at(-1).speaker, "all");
+  assert.equal(requests.at(-1).speakerName, "Any speaker");
+  await page
+    .getByText("All speakers’ conversations", { exact: true })
+    .waitFor();
+  checks.push(
+    "PASS Any speaker survives homepage handoff and submits the all-speakers search; footer copy removed",
+  );
   for (const width of [320, 390, 768, 1440]) {
     await page.setViewportSize({ width, height: width < 500 ? 844 : 1000 });
     await home();
@@ -231,7 +270,22 @@ fs.mkdirSync(out, { recursive: true });
       ),
       false,
     );
+    const composerBox = await page.locator("form").boundingBox();
+    const suggestionBox = await page
+      .getByRole("button", { name: /AI could change everything/ })
+      .boundingBox();
+    assert(suggestionBox.y >= composerBox.y + composerBox.height);
     await page.screenshot({ path: out + `/home-${width}.png`, fullPage: true });
+    if (width === 390 || width === 1440) {
+      await page
+        .getByRole("button", { name: "Any speaker", exact: true })
+        .click();
+      await page.waitForTimeout(550);
+      await page.screenshot({
+        path: out + `/any-speaker-${width}.png`,
+        fullPage: true,
+      });
+    }
     await page.goto(base + "/chat");
     await page.locator("h1").waitFor();
     assert.equal(

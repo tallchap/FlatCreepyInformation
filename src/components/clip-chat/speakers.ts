@@ -7,6 +7,10 @@ export const FEATURED_SPEAKERS = [
   { name: "Max Tegmark", slug: "max-tegmark", color: "#cce3d6" },
   { name: "Eliezer Yudkowsky", slug: "eliezer-yudkowsky", color: "#e9ccd8" },
 ] as const;
+export const SEARCH_SPEAKERS = [
+  ...FEATURED_SPEAKERS,
+  { name: "Any speaker", slug: "all", color: "#dde5d3" },
+] as const;
 export const CHAT_HANDOFF_KEY = "snippysaurus:new-chat";
 export const SUGGESTIONS = [
   {
@@ -31,7 +35,7 @@ export function readChatHandoff(
   if (!raw) return null;
   try {
     const value = JSON.parse(raw);
-    const person = FEATURED_SPEAKERS.find(
+    const person = SEARCH_SPEAKERS.find(
       (speaker) => speaker.slug === value.speaker,
     );
     if (

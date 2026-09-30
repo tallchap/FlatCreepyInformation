@@ -1,6 +1,6 @@
 "use client";
-import { ArrowUp, LoaderCircle } from "lucide-react";
-import { FEATURED_SPEAKERS } from "./speakers";
+import { ArrowUp, LoaderCircle, UsersRound } from "lucide-react";
+import { FEATURED_SPEAKERS, SUGGESTIONS } from "./speakers";
 import styles from "./clip-chat.module.css";
 export function Composer({
   speaker,
@@ -53,8 +53,10 @@ export function Composer({
           <span className={styles.scope}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
             {featured && <img src={`/speakers/${featured.slug}.jpg`} alt="" />}
+            {speaker === "all" && <UsersRound size={23} aria-hidden="true" />}
             <span>
-              Searching <strong>{name}</strong>
+              Searching{" "}
+              <strong>{speaker === "all" ? "all speakers" : name}</strong>
             </span>
           </span>
           <button
@@ -71,9 +73,22 @@ export function Composer({
           </button>
         </div>
       </form>
-      <p className={styles.hint}>
-        Real quotes. Original videos. Right to the moment.
-      </p>
+      <div className={styles.suggestions}>
+        {SUGGESTIONS.map((suggestion) => (
+          <button
+            key={suggestion.topic}
+            disabled={busy}
+            onClick={() => {
+              onChange(
+                `Find a clip of ${speaker === "all" ? "any speaker" : name} talking about ${suggestion.topic}`,
+              );
+              document.getElementById("clip-prompt")?.focus();
+            }}
+          >
+            <span aria-hidden="true">{suggestion.icon}</span> {suggestion.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
-import { Scissors } from "lucide-react";
-import { FEATURED_SPEAKERS } from "./speakers";
+import { Scissors, UsersRound } from "lucide-react";
+import { SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
 
 export function PortraitPicker({
@@ -23,12 +23,12 @@ export function PortraitPicker({
       stage.querySelectorAll<HTMLButtonElement>("[data-portrait]"),
     );
     const motion = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const count = FEATURED_SPEAKERS.length;
+    const count = SEARCH_SPEAKERS.length;
     const wrap = (n: number) => (n + count) % count;
     const current = () =>
       Math.max(
         0,
-        FEATURED_SPEAKERS.findIndex((p) => p.slug === latest.current.value),
+        SEARCH_SPEAKERS.findIndex((p) => p.slug === latest.current.value),
       );
     const step = () => (stage.clientWidth < 340 ? 94 : 112);
     let suppressClickUntil = 0;
@@ -45,7 +45,7 @@ export function PortraitPicker({
     function paint(dx = 0, animate = true) {
       cards.forEach((card, index) => {
         let relative = wrap(index - current());
-        if (relative > 3) relative -= count;
+        if (relative > count / 2) relative -= count;
         const distance = relative + dx / step(),
           abs = Math.abs(distance);
         card.style.transition =
@@ -66,7 +66,7 @@ export function PortraitPicker({
     }
     function choose(index: number) {
       if (latest.current.disabled) return;
-      const person = FEATURED_SPEAKERS[wrap(index)];
+      const person = SEARCH_SPEAKERS[wrap(index)];
       latest.current.onChange(person.slug, person.name);
     }
     function finish(event: PointerEvent, cancelled = false) {
@@ -183,7 +183,7 @@ export function PortraitPicker({
       aria-label="Choose a speaker"
       aria-disabled={disabled}
     >
-      {FEATURED_SPEAKERS.map((person, index) => (
+      {SEARCH_SPEAKERS.map((person, index) => (
         <button
           key={person.slug}
           data-portrait={index}
@@ -194,12 +194,19 @@ export function PortraitPicker({
           aria-pressed={value === person.slug}
           style={{ backgroundColor: person.color }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={`/speakers/${person.slug}.jpg`}
-            alt={person.name}
-            draggable={false}
-          />
+          {person.slug === "all" ? (
+            <span className={styles.anyPortrait}>
+              <UsersRound size={43} strokeWidth={1.4} />
+              <span>Any speaker</span>
+            </span>
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`/speakers/${person.slug}.jpg`}
+              alt={person.name}
+              draggable={false}
+            />
+          )}
           <span data-badge className={styles.badge}>
             <Scissors size={20} />
           </span>

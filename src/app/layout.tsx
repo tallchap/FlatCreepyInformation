@@ -15,7 +15,8 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "snippysaurus",
-  description: "Snippysaurus helps you find clip-worthy quotes from 3 000+ AI-focused video transcripts.",
+  description:
+    "Snippysaurus helps you find clip-worthy quotes from 3 000+ AI-focused video transcripts.",
 };
 
 export default function RootLayout({
@@ -53,9 +54,6 @@ export default function RootLayout({
         <ClientProviders>
           <Navbar />
           <main className="site-main">{children}</main>
-          <footer className="text-[10px] text-gray-400 text-center py-2 select-all">
-            v{process.env.BUILD_VERSION || "dev"} · <a href="/speakers/credits.html" className="hover:underline">Photo credits</a>
-          </footer>
           <Toaster />
         </ClientProviders>
       </body>

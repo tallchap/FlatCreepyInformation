@@ -264,14 +264,14 @@ export function ChatWindow() {
     <div className={`${styles.surface} ${styles.chatGrid} ${selectedVideo ? styles.withVideo : ""}`}>
       <section className={styles.chat}>
         <div className={styles.chatHeader}>
-          <span><i />{speakerName}’s conversations</span>
+          <span><i />{speaker === "all" ? "All speakers’ conversations" : `${speakerName}’s conversations`}</span>
           <Button variant="outline" size="sm" onClick={handleNewConversation} disabled={isLoading}>
             <RotateCcw size={13} /> New chat
           </Button>
         </div>
         {messages.length === 0 ? (
           <Welcome speaker={speaker} name={speakerName} onSpeakerChange={handleSpeakerChange}
-            onSuggestion={(text) => { setInput(text); document.getElementById("clip-prompt")?.focus(); }} disabled={isLoading} />
+            disabled={isLoading} />
         ) : (
           <div className={styles.messages} role="log" aria-label="Chat messages" aria-live="polite" aria-busy={isLoading}>
             {messages.map((msg, i) => (

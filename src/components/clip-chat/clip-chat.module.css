@@ -376,3 +376,53 @@
     transition: none !important;
   }
 }
+
+.anySpeaker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  margin: 2px 0 0;
+  border: 1px solid #e1e6d9;
+  border-radius: 20px;
+  background: #fff;
+  color: #708263;
+  font-size: 11px;
+}
+.anySpeaker:hover,
+.anySpeaker[aria-pressed="true"] {
+  background: #edf3e2;
+  border-color: #a7bb8c;
+  color: #3c542d;
+}
+.anyPortrait {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  border-radius: 17px;
+  background: #eff4e6;
+  color: #577044;
+  pointer-events: none;
+}
+.anyPortrait > span {
+  font-size: 11px;
+  font-weight: 600;
+}
+.composerWrap .suggestions {
+  margin-top: 18px;
+}
+@media (max-width: 650px) {
+  .anySpeaker {
+    font-size: 10px;
+    padding: 6px 10px;
+  }
+  .composerWrap .suggestions {
+    margin-top: 14px;
+  }
+  .anyPortrait > span {
+    font-size: 10px;
+  }
+}

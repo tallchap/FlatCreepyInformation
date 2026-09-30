@@ -3,16 +3,16 @@ import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Composer } from "./composer";
 import { Welcome } from "./welcome";
-import { CHAT_HANDOFF_KEY, FEATURED_SPEAKERS } from "./speakers";
+import { CHAT_HANDOFF_KEY, SEARCH_SPEAKERS } from "./speakers";
 import styles from "./clip-chat.module.css";
 export function ClipHomepage() {
   const router = useRouter();
-  const [speaker, setSpeaker] = useState<string>(FEATURED_SPEAKERS[0].slug);
+  const [speaker, setSpeaker] = useState<string>(SEARCH_SPEAKERS[0].slug);
   const [input, setInput] = useState("");
   const [navigating, setNavigating] = useState(false);
   const [error, setError] = useState("");
   const sending = useRef(false);
-  const person = FEATURED_SPEAKERS.find((person) => person.slug === speaker)!;
+  const person = SEARCH_SPEAKERS.find((person) => person.slug === speaker)!;
   function startChat() {
     if (!input.trim() || sending.current) return;
     try {
@@ -37,10 +37,6 @@ export function ClipHomepage() {
         name={person.name}
         onSpeakerChange={setSpeaker}
         disabled={navigating}
-        onSuggestion={(text) => {
-          setInput(text);
-          document.getElementById("clip-prompt")?.focus();
-        }}
       />
       <Composer
         speaker={speaker}
