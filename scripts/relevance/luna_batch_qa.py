@@ -255,6 +255,8 @@ def execute_trim(plan_path, output, whisper_python=None):
     result = read(directory / 'result.json')
     evidence = {**{k: plan[k] for k in IDENTITIES}, 'source_generation': plan['source_generation'], 'asr_sha256': plan['asr_sha256'], 'recipe': recipe, 'duration_seconds': result['duration_seconds'], 'asr_words': words_from(read(asr_path)), 'asr_provenance': plan['transcript_provenance'], 'attempt': parent_attempt, 'current_cut': plan.get('restores_original_range', False)}
     expected = trim_plan(evidence, plan.get('selected_word_start_seconds', plan['keep_start_seconds']), plan.get('selected_word_end_seconds', plan['keep_end_seconds']), plan.get('retained_speaker'), plan.get('final_title'), plan.get('final_description'))
+    if 'source_speaker_evidence' not in plan:
+        expected.pop('source_speaker_evidence', None)  # Legacy plans retain their original hash/cache identity.
     require(all(plan[k] == v for k, v in expected.items()), 'Trim plan altered after validation')
     out = Path(output) / f"{plan['candidate_id']}-{audit.digest(plan)[:20]}"
     out.mkdir(parents=True, exist_ok=True)

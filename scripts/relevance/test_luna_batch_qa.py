@@ -165,6 +165,29 @@ class BatchTests(unittest.TestCase):
         self.assertEqual(result['decisions'][0]['attempts'], 5)
         self.assertFalse((self.clip / 'final-qa.json').exists())
 
+    def test_legacy_trim_plan_without_speaker_binding_reuses_original_cache(self):
+        plan = qa.trim_plan(self.p['evidence'], 5, 25)
+        plan.pop('source_speaker_evidence', None)
+        plan.update(parent_clip_dir=str(self.clip), reason='Saved before speaker evidence was added')
+        path = self.root / 'legacy-trim.json'
+        self.write(path, plan)
+        original_bytes = path.read_bytes()
+        output = self.root / 'legacy-output'
+        cached_dir = output / f"{self.vid}-{audit.digest(plan)[:20]}"
+        cached_dir.mkdir(parents=True)
+        shutil.copyfile(self.clip / 'clip.mp4', cached_dir / 'clip.mp4')
+        cached = {'candidate_id': self.vid, 'output_sha256': qa.sha(cached_dir / 'clip.mp4')}
+        self.write(cached_dir / 'result.json', cached)
+        with patch.object(qa, 'run', side_effect=AssertionError('Legacy cache must not re-render')):
+            self.assertEqual(qa.execute_trim(path, output), cached)
+        self.assertEqual(path.read_bytes(), original_bytes)
+        self.assertEqual(list(output.iterdir()), [cached_dir])
+        plan['retained_speaker'] = 'Invented Person'
+        self.write(path, plan)
+        with patch.object(qa, 'run', side_effect=AssertionError('Must reject before render')):
+            with self.assertRaisesRegex(ValueError, 'not an invented name'):
+                qa.execute_trim(path, output)
+
     def test_gap_handles_never_overlap_excluded_words(self):
         evidence = copy.deepcopy(self.p['evidence'])
         evidence['asr_words'] = [{'start': n * 5 + 1, 'end': n * 5 + 4, 'text': 'word' + str(n)} for n in range(8)]
