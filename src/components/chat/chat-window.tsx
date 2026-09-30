@@ -337,11 +337,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
             >
               {speakerInitial(speaker === "all" ? "All speakers" : speakerName)}
             </div>
-            <h1>What would you like to find?</h1>
-            <p>
-              Describe a moment, an idea, or something{" "}
-              {speaker === "all" ? "you heard" : `${speakerName} said`}.
-            </p>
+            <h1>Search for a quote</h1>
           </div>
         ) : (
           <div

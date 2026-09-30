@@ -57,9 +57,7 @@ const fs = require("node:fs");
     .waitFor();
   assert.equal(requests, 0);
   await p.getByRole("button", { name: "New chat", exact: true }).click();
-  await p
-    .getByRole("heading", { name: "What would you like to find?" })
-    .waitFor();
+  await p.getByRole("heading", { name: "Search for a quote" }).waitFor();
   assert.equal(await p.getByRole("log").count(), 0);
   assert.equal(
     await p
@@ -74,7 +72,15 @@ const fs = require("node:fs");
     })
     .click();
   await p.getByRole("button", { name: "Elon Musk (0)", exact: true }).click();
-  assert((await p.locator("main").innerText()).includes("Elon Musk said"));
+  assert.equal(
+    await p
+      .getByRole("button", {
+        name: "Choose speaker, current: Elon Musk",
+        exact: true,
+      })
+      .count(),
+    1,
+  );
   await p
     .getByRole("button", {
       name: "Choose speaker, current: Elon Musk",

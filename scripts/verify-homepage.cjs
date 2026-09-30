@@ -235,7 +235,7 @@ fs.mkdirSync(out, { recursive: true });
     1,
   );
   await page.getByRole("button", { name: "New chat", exact: true }).click();
-  assert.equal(await heading(), "What would you like to find?");
+  assert.equal(await heading(), "Search for a quote");
   assert((await page.locator("main").innerText()).includes("Elon Musk"));
   assert.equal(
     await page.getByRole("group", { name: "Choose a speaker" }).count(),
