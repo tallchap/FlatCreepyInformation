@@ -8,6 +8,7 @@ not cryptographic identity. Neither the config nor a session wallet is uploaded.
 import argparse
 import base64
 from collections import Counter
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -21,6 +22,9 @@ import sys
 import threading
 import time
 import uuid
+
+
+_CONTROL_THREAD_LOCK = threading.RLock()
 
 
 def now():
@@ -48,6 +52,30 @@ def atomic(path, value):
 
 def hidden():
     return {'creationflags': subprocess.CREATE_NO_WINDOW} if os.name == 'nt' else {}
+
+
+@contextmanager
+def control_lock(continuation):
+    """Serialize durable control creation and application across processes."""
+    path = Path(continuation) / '.control.lock'
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with _CONTROL_THREAD_LOCK, path.open('a+b') as handle:
+        handle.seek(0)
+        if os.name == 'nt':
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def alive(pid):
@@ -154,7 +182,7 @@ def load_config(path):
     return config
 
 
-def submit_control(config, action, source='local', details=None, identifier=None):
+def _submit_control_unlocked(config, action, source='local', details=None, identifier=None):
     action = action.upper()
     if action not in ('PAUSE', 'RESUME'):
         raise ValueError('Unknown control action')
@@ -175,30 +203,107 @@ def submit_control(config, action, source='local', details=None, identifier=None
     return request
 
 
-def maintenance_resume_blocker(config):
-    """Why a maintenance RESUME must not be issued, or None when it is safe.
+def submit_control(config, action, source='local', details=None, identifier=None):
+    with control_lock(config['continuation_dir']):
+        return _submit_control_unlocked(config, action, source, details, identifier)
+
+
+def control_state_generation(control):
+    payload = json.dumps(control, sort_keys=True, separators=(',', ':'), ensure_ascii=False).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
+def parse_timestamp(value):
+    parsed = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
+    if parsed.tzinfo is None:
+        raise ValueError('Control timestamps must include a timezone')
+    return parsed.astimezone(timezone.utc)
+
+
+def _maintenance_resume_snapshot_unlocked(config, resume_request=None):
+    """Return (blocker, proof) for a CLI or supervisor maintenance resume.
 
     Maintenance may resume only its own drain: the newest control request of
     any source must be an applied maintenance PAUSE, and a fresh remote-control
-    read must postdate it, so a newer user/Relay pause is never overridden.
+    read must postdate the resume request at application time. The proof binds
+    the request to the exact applied pause/control generation observed by the
+    CLI; the supervisor revalidates it under the same cross-process lock.
     """
     continuation = Path(config['continuation_dir'])
-    requests = sorted((read(path) for path in (continuation / 'control-requests').glob('*.json')), key=control_order)
+    requests = [read(path) for path in (continuation / 'control-requests').glob('*.json')]
+    if resume_request:
+        requests = [item for item in requests if item.get('id') != resume_request.get('id')]
+    requests.sort(key=control_order)
     state = read(continuation / 'status.json')
     control = read(continuation / 'control-state.json')
     if not requests:
-        return 'No control request exists'
+        return 'No control request exists', None
     latest = requests[-1]
     if latest.get('action') != 'PAUSE' or latest.get('source') != 'maintenance':
-        return f"Newest control is {latest.get('source')} {latest.get('action')}, not this maintenance pause"
+        return f"Newest control is {latest.get('source')} {latest.get('action')}, not this maintenance pause", None
+    if resume_request:
+        required = {'expected_maintenance_pause_id', 'expected_maintenance_pause_order',
+                    'expected_control_state_sha256', 'observed_remote_poll_at',
+                    'observed_remote_blob_sha', 'observed_remote_control_count'}
+        missing = sorted(required - set(resume_request))
+        if missing:
+            return 'Maintenance resume proof is incomplete: ' + ', '.join(missing), None
+        if latest['id'] != resume_request['expected_maintenance_pause_id']:
+            return 'Maintenance resume is not bound to the newest maintenance pause', None
+        if control_order(latest) != resume_request['expected_maintenance_pause_order']:
+            return 'Maintenance pause order changed after resume authorization', None
+        if control_state_generation(control) != resume_request['expected_control_state_sha256']:
+            return 'Control state changed after maintenance resume authorization', None
+        observed_count = resume_request['observed_remote_control_count']
+        if type(observed_count) is not int or state.get('remote_control_count', -1) < observed_count:
+            return 'Remote-control history regressed after maintenance resume authorization', None
     if latest['id'] not in control.get('processed_ids', []) or control.get('desired') != 'paused':
-        return 'Maintenance pause has not been applied by a supervisor yet'
+        return 'Maintenance pause has not been applied by a supervisor yet', None
+    unprocessed = [item['id'] for item in requests if item['id'] not in control.get('processed_ids', [])]
+    if unprocessed:
+        return 'A control request arrived after the maintenance resume snapshot: ' + ', '.join(unprocessed), None
+    if control.get('last_applied_order') != control_order(latest):
+        return 'Maintenance pause is not the last applied control generation', None
     if state.get('phase') != 'paused' or state.get('own_children_alive') is not False:
-        return 'Supervisor has not reported a drained pause'
-    if state.get('remote_poll_error') or not state.get('last_remote_poll_at') \
-            or state['last_remote_poll_at'] <= latest['received_at']:
-        return 'No successful remote-control read after the maintenance pause'
-    return None
+        return 'Supervisor has not reported a drained pause', None
+    remote_poll_at = state.get('last_remote_poll_at')
+    remote_blob = state.get('remote_blob_sha')
+    remote_count = state.get('remote_control_count')
+    freshness_floor = resume_request['received_at'] if resume_request else latest['received_at']
+    try:
+        fresh = remote_poll_at and parse_timestamp(remote_poll_at) > parse_timestamp(freshness_floor)
+    except (TypeError, ValueError):
+        fresh = False
+    if state.get('remote_poll_error') or not fresh:
+        return ('No successful remote-control read after the maintenance resume request'
+                if resume_request else 'No successful remote-control read after the maintenance pause'), None
+    if not isinstance(remote_blob, str) or not remote_blob or type(remote_count) is not int:
+        return 'Remote-control read lacks a bound blob/count receipt', None
+    proof = {
+        'expected_maintenance_pause_id': latest['id'],
+        'expected_maintenance_pause_order': control_order(latest),
+        'expected_control_state_sha256': control_state_generation(control),
+        'observed_remote_poll_at': remote_poll_at,
+        'observed_remote_blob_sha': remote_blob,
+        'observed_remote_control_count': remote_count,
+    }
+    return None, proof
+
+
+def maintenance_resume_blocker(config):
+    with control_lock(config['continuation_dir']):
+        return _maintenance_resume_snapshot_unlocked(config)[0]
+
+
+def submit_maintenance_resume(config, reason):
+    """Atomically validate and enqueue a proof-bound maintenance resume."""
+    with control_lock(config['continuation_dir']):
+        blocker, proof = _maintenance_resume_snapshot_unlocked(config)
+        if blocker:
+            return None, blocker
+        request = _submit_control_unlocked(config, 'RESUME', 'maintenance',
+            {'reason': reason, **proof})
+        return request, None
 
 
 def write_batch_workers(config, value, reason):
@@ -264,6 +369,7 @@ class Supervisor:
         self.endpoint = None
         self.open_logs = []
         self.finished = False
+        self.remote_lock = threading.Lock()
         self.last_remote_success = time.monotonic()
         self.first_remote_success = threading.Event()
         self._coverage_cache, self._coverage_at = None, 0
@@ -311,42 +417,51 @@ class Supervisor:
                 continue
             raise RuntimeError(f'Relay {arguments[0]} exited {result.returncode}; see relay-operations.log')
 
+    def refresh_remote_controls(self):
+        """Perform one serialized, receipted read of canonical remote controls."""
+        with self.remote_lock:
+            history_path = self.cont / 'remote-control-history.json'
+            history = read(history_path).get('commands', [])
+            command = ['gh', 'api', f"repos/tallchap/relay/contents/jobs/{self.config['job_id']}.md?ref=main"]
+            result = subprocess.run(command, cwd=self.config['relay'], env=self.env, capture_output=True,
+                text=True, encoding='utf-8', timeout=20, check=True, **hidden())
+            meta, body, blob = decode_job(json.loads(result.stdout), self.config['job_id'])
+            if meta.get('posted_by') != self.config['origin'] or meta.get('owner_instance') != self.config['instance']:
+                raise ValueError('Relay origin/worker routing identity changed')
+            if meta.get('status') != 'CLAIMED':
+                if not (self.state.get('phase') == 'finalizing' and meta.get('status') in ('READY', 'DONE')):
+                    submit_control(self.config, 'PAUSE', 'relay_lifecycle', {'reason': 'Job no longer CLAIMED'})
+            controls = remote_controls(body, {self.config['origin'], self.config['instance']})
+            keys = [row['line_sha256'] for row in controls]
+            if keys[:len(history)] != history:
+                raise ValueError('Processed Relay control history changed; refusing replay')
+            for index in range(len(history), len(controls)):
+                item = controls[index]
+                # Deterministic identity makes crash recovery after enqueue idempotent.
+                identifier = f'remote-{index:08d}-{item["line_sha256"]}'
+                submit_control(self.config, item['action'], 'relay_log',
+                    {**item, 'remote_sequence': index, 'relay_blob_sha': blob}, identifier)
+                history.append(keys[index])
+                atomic(history_path, {'commands': history, 'last_blob_sha': blob, 'time': now(),
+                    'author_filter': 'Private repository author labels, not cryptographic origin identity'})
+            self.save(last_remote_poll_at=now(), remote_poll_error=None, remote_blob_sha=blob,
+                      remote_control_count=len(history))
+            self.last_remote_success = time.monotonic()
+            self.first_remote_success.set()
+            return blob, len(history)
+
+    def record_remote_failure(self, exc):
+        self.save(remote_poll_error=f'{type(exc).__name__}: {exc}', remote_poll_failed_at=now())
+        if isinstance(exc, ValueError):
+            submit_control(self.config, 'PAUSE', 'remote_control_integrity', {'reason': str(exc)})
+
     def remote_reader(self):
-        history_path = self.cont / 'remote-control-history.json'
-        history = read(history_path).get('commands', [])
         while not self.exit.is_set():
             began = time.monotonic()
             try:
-                command = ['gh', 'api', f"repos/tallchap/relay/contents/jobs/{self.config['job_id']}.md?ref=main"]
-                result = subprocess.run(command, cwd=self.config['relay'], env=self.env, capture_output=True,
-                    text=True, encoding='utf-8', timeout=20, check=True, **hidden())
-                meta, body, blob = decode_job(json.loads(result.stdout), self.config['job_id'])
-                if meta.get('posted_by') != self.config['origin'] or meta.get('owner_instance') != self.config['instance']:
-                    raise ValueError('Relay origin/worker routing identity changed')
-                if meta.get('status') != 'CLAIMED':
-                    if not (self.state.get('phase') == 'finalizing' and meta.get('status') in ('READY', 'DONE')):
-                        submit_control(self.config, 'PAUSE', 'relay_lifecycle', {'reason': 'Job no longer CLAIMED'})
-                controls = remote_controls(body, {self.config['origin'], self.config['instance']})
-                keys = [row['line_sha256'] for row in controls]
-                if keys[:len(history)] != history:
-                    raise ValueError('Processed Relay control history changed; refusing replay')
-                for index in range(len(history), len(controls)):
-                    item = controls[index]
-                    # Deterministic identity makes crash recovery after enqueue idempotent.
-                    identifier = f'remote-{index:08d}-{item["line_sha256"]}'
-                    submit_control(self.config, item['action'], 'relay_log',
-                        {**item, 'remote_sequence': index, 'relay_blob_sha': blob}, identifier)
-                    history.append(keys[index])
-                    atomic(history_path, {'commands': history, 'last_blob_sha': blob, 'time': now(),
-                        'author_filter': 'Private repository author labels, not cryptographic origin identity'})
-                self.save(last_remote_poll_at=now(), remote_poll_error=None, remote_blob_sha=blob,
-                          remote_control_count=len(history))
-                self.last_remote_success = time.monotonic()
-                self.first_remote_success.set()
+                self.refresh_remote_controls()
             except Exception as exc:
-                self.save(remote_poll_error=f'{type(exc).__name__}: {exc}', remote_poll_failed_at=now())
-                if isinstance(exc, ValueError):
-                    submit_control(self.config, 'PAUSE', 'remote_control_integrity', {'reason': str(exc)})
+                self.record_remote_failure(exc)
             self.exit.wait(max(0.1, 30 - (time.monotonic() - began)))
 
     def checkpoint(self, final=False):
@@ -433,35 +548,78 @@ class Supervisor:
         self.save(phase='draining', desired='paused', pause_reason=reason)
 
     def apply_controls(self):
-        paths = list((self.cont / 'control-requests').glob('*.json'))
-        requests = [read(path) for path in paths]
-        requests.sort(key=control_order)
-        for item in requests:
-            if item['id'] in self.control['processed_ids']:
-                continue
-            if item.get('job_id') != self.config['job_id'] or item.get('action') not in ('PAUSE', 'RESUME'):
-                raise ValueError('Invalid durable control request')
-            action = item['action']
-            order = control_order(item)
-            if self.control.get('last_applied_order') and order < self.control['last_applied_order']:
+        with control_lock(self.cont):
+            pending_maintenance = {
+                item['id'] for item in (read(path) for path in (self.cont / 'control-requests').glob('*.json'))
+                if item.get('action') == 'RESUME' and item.get('source') == 'maintenance'
+                and item.get('id') not in self.control['processed_ids']}
+        remote_error = None
+        if pending_maintenance:
+            try:
+                # A CLI snapshot is not enough: fetch the canonical board after
+                # this resume request exists, then rescan under the control lock.
+                self.refresh_remote_controls()
+            except Exception as exc:
+                self.record_remote_failure(exc)
+                remote_error = f'Fresh remote-control read failed: {type(exc).__name__}: {exc}'
+        with control_lock(self.cont):
+            requests = [read(path) for path in (self.cont / 'control-requests').glob('*.json')]
+            requests.sort(key=control_order)
+            for item in requests:
+                if item['id'] in self.control['processed_ids']:
+                    continue
+                if item.get('job_id') != self.config['job_id'] or item.get('action') not in ('PAUSE', 'RESUME'):
+                    raise ValueError('Invalid durable control request')
+                action = item['action']
+                if action == 'RESUME' and item.get('source') == 'maintenance':
+                    blocker = ('Maintenance resume arrived after the remote-refresh window; retry it'
+                               if item['id'] not in pending_maintenance else remote_error)
+                    if not blocker:
+                        blocker = _maintenance_resume_snapshot_unlocked(self.config, item)[0]
+                    if blocker:
+                        self.control['processed_ids'].append(item['id'])
+                        self.control['transitions'].append({**item, 'blocked_at': now(), 'block_reason': blocker})
+                        self.control_save()
+                        self.save(desired=self.control['desired'], maintenance_resume_blocked_at=now(),
+                                  maintenance_resume_blocker=blocker)
+                        self.enqueue('log', f"Maintenance RESUME rejected (id={item['id']}): {blocker}; "
+                                     f"supervisor PID={os.getpid()}; production remains {self.control['desired']}.")
+                        continue
+                order = control_order(item)
+                delayed_remote_pause = False
+                if self.control.get('last_applied_order') and order < self.control['last_applied_order']:
+                    last_applied = next((row for row in reversed(self.control['transitions'])
+                                         if row.get('applied_at')), {})
+                    fence = last_applied.get('observed_remote_control_count')
+                    delayed_remote_pause = (
+                        action == 'PAUSE' and item.get('source') == 'relay_log'
+                        and last_applied.get('action') == 'RESUME'
+                        and last_applied.get('source') == 'maintenance'
+                        and type(item.get('remote_sequence')) is int and type(fence) is int
+                        and item['remote_sequence'] >= fence)
+                    if not delayed_remote_pause:
+                        self.control['processed_ids'].append(item['id'])
+                        self.control['transitions'].append({**item, 'skipped_at': now(),
+                            'skip_reason': 'Control predates a later already-applied command'})
+                        self.control_save()
+                        continue
+                self.control['desired'] = 'paused' if action == 'PAUSE' else 'running'
+                if not delayed_remote_pause:
+                    self.control['last_applied_order'] = order
                 self.control['processed_ids'].append(item['id'])
-                self.control['transitions'].append({**item, 'skipped_at': now(),
-                    'skip_reason': 'Control predates a later already-applied command'})
-                self.control_save()
-                continue
-            self.control['desired'] = 'paused' if action == 'PAUSE' else 'running'
-            self.control['last_applied_order'] = order
-            self.control['processed_ids'].append(item['id'])
-            self.control['transitions'].append({**item, 'applied_at': now()})
-            self.control_save()  # Desired state survives a crash before its physical effect.
-            if action == 'PAUSE':
-                self.pause('Explicit ' + item['source'] + ' pause ' + item['id'])
-            else:
-                self.control['resume_stop_sha256'] = stop_digest(self.root)
-                self.control_save()
-                self.save(desired='running', resume_requested_at=now())
-            self.enqueue('log', f"Control {action} accepted ({item['source']}, id={item['id']}); "
-                         f"supervisor PID={os.getpid()}; durable status={self.state_path}.")
+                transition = {**item, 'applied_at': now()}
+                if delayed_remote_pause:
+                    transition['late_remote_pause_after_maintenance_resume'] = True
+                self.control['transitions'].append(transition)
+                self.control_save()  # Desired state survives a crash before its physical effect.
+                if action == 'PAUSE':
+                    self.pause('Explicit ' + item['source'] + ' pause ' + item['id'])
+                else:
+                    self.control['resume_stop_sha256'] = stop_digest(self.root)
+                    self.control_save()
+                    self.save(desired='running', resume_requested_at=now())
+                self.enqueue('log', f"Control {action} accepted ({item['source']}, id={item['id']}); "
+                             f"supervisor PID={os.getpid()}; durable status={self.state_path}.")
 
     def admission_approved(self):
         gate = read(self.cont / 'admission-approved.json')
@@ -473,35 +631,46 @@ class Supervisor:
         self.open_logs.append(stream)
         return stream
 
+    def pending_control_ids(self):
+        return [item['id'] for item in
+                (read(path) for path in (self.cont / 'control-requests').glob('*.json'))
+                if item.get('id') not in self.control['processed_ids']]
+
     def start_asr(self):
         from production import runner_lock
         self.verify_runtime()
         # An OS lock, not a stale PID file, gates a second production writer.
         with runner_lock(self.root / 'runner.lock'):
             pass
-        stop = self.root / 'STOP.json'
-        if stop.exists():
-            if self.state.get('cycle', 0) and self.control.get('resume_stop_sha256') != stop_digest(self.root):
-                self.pause('Unacknowledged STOP marker requires a new explicit resume')
+        with control_lock(self.cont):
+            pending = self.pending_control_ids()
+            if pending or self.control.get('desired') != 'running':
+                self.save(phase='waiting_for_control_application', desired=self.control.get('desired'),
+                          pending_control_ids=pending)
                 return
-            archive = self.cont / 'stop-history' / (str(time.time_ns()) + '.json')
-            archive.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(stop, archive)
-            stop.unlink()
-        self.control['resume_stop_sha256'] = None
-        self.control_save()
-        cycle = self.state.get('cycle', 0) + 1
-        private_base = Path(self.config['_config_path']).parent
-        endpoint_path = private_base / f'private-asr-{self.config["job_id"]}-{cycle}-{uuid.uuid4().hex}.json'
-        self.env['SNIPPY_WHISPER_SERVER_CONFIG'] = str(endpoint_path)
-        self.server = subprocess.Popen([self.config['whisper_python'], '-X', 'utf8',
-            str(self.scripts / 'whisper_cuda_server.py'), '--media-root', str(self.root), '--config',
-            str(endpoint_path), '--stop-file', str(stop)], cwd=self.scripts.parent.parent, env=self.env,
-            stdout=self.log_file(f'asr-{cycle}.log'), stderr=subprocess.STDOUT, **hidden())
-        self.endpoint = endpoint_path
-        self.asr_deadline = time.monotonic() + 60
-        self.save(phase='asr_starting', cycle=cycle, asr_launcher_pid=self.server.pid, asr_pid=None,
-                  runner_pid=None, asr_started_at=now(), desired='running', own_children_alive=True)
+            stop = self.root / 'STOP.json'
+            if stop.exists():
+                if self.state.get('cycle', 0) and self.control.get('resume_stop_sha256') != stop_digest(self.root):
+                    self.pause('Unacknowledged STOP marker requires a new explicit resume')
+                    return
+                archive = self.cont / 'stop-history' / (str(time.time_ns()) + '.json')
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(stop, archive)
+                stop.unlink()
+            self.control['resume_stop_sha256'] = None
+            self.control_save()
+            cycle = self.state.get('cycle', 0) + 1
+            private_base = Path(self.config['_config_path']).parent
+            endpoint_path = private_base / f'private-asr-{self.config["job_id"]}-{cycle}-{uuid.uuid4().hex}.json'
+            self.env['SNIPPY_WHISPER_SERVER_CONFIG'] = str(endpoint_path)
+            self.server = subprocess.Popen([self.config['whisper_python'], '-X', 'utf8',
+                str(self.scripts / 'whisper_cuda_server.py'), '--media-root', str(self.root), '--config',
+                str(endpoint_path), '--stop-file', str(stop)], cwd=self.scripts.parent.parent, env=self.env,
+                stdout=self.log_file(f'asr-{cycle}.log'), stderr=subprocess.STDOUT, **hidden())
+            self.endpoint = endpoint_path
+            self.asr_deadline = time.monotonic() + 60
+            self.save(phase='asr_starting', cycle=cycle, asr_launcher_pid=self.server.pid, asr_pid=None,
+                      runner_pid=None, asr_started_at=now(), desired='running', own_children_alive=True)
 
     def asr_ready(self):
         if not self.endpoint.exists():
@@ -532,10 +701,16 @@ class Supervisor:
             '--batch-workers', str(self.config.get('batch_workers', 2))]
         if self.config.get('tuning_authorization'):
             command += ['--tuning-authorization', self.config['tuning_authorization']]
-        self.runner = subprocess.Popen(command, cwd=self.scripts.parent.parent, env=self.env,
-            stdout=self.log_file(f'runner-{self.state["cycle"]}.log'), stderr=subprocess.STDOUT, **hidden())
-        self.save(phase='running', runner_pid=self.runner.pid, runner_started_at=now(), admission_approved=True,
-                  own_children_alive=True)
+        with control_lock(self.cont):
+            pending = self.pending_control_ids()
+            if pending or self.control.get('desired') != 'running' or (self.root / 'STOP.json').exists():
+                self.save(phase='waiting_for_control_application', desired=self.control.get('desired'),
+                          pending_control_ids=pending)
+                return
+            self.runner = subprocess.Popen(command, cwd=self.scripts.parent.parent, env=self.env,
+                stdout=self.log_file(f'runner-{self.state["cycle"]}.log'), stderr=subprocess.STDOUT, **hidden())
+            self.save(phase='running', runner_pid=self.runner.pid, runner_started_at=now(), admission_approved=True,
+                      own_children_alive=True)
         self.enqueue('log', f"Continuation launched: supervisor PID={os.getpid()}, runner PID={self.runner.pid}, "
             f"CUDA PID={self.state['asr_pid']}, code={self.config['runtime_commit']}; status={self.state_path}; "
             f"{self.config.get('batch_workers', 2)} Luna groups at start"
@@ -728,11 +903,11 @@ def main(argv=None):
         print(json.dumps(submit_control(config, 'PAUSE', 'maintenance', {'reason': args.reason}), indent=2))
         return 0
     if args.action == 'maintenance-resume':
-        blocker = maintenance_resume_blocker(config)
+        request, blocker = submit_maintenance_resume(config, args.reason)
         if blocker:
             print(json.dumps({'resumed': False, 'blocker': blocker}, indent=2))
             return 2
-        print(json.dumps(submit_control(config, 'RESUME', 'maintenance', {'reason': args.reason}), indent=2))
+        print(json.dumps(request, indent=2))
         return 0
     if args.action == 'set-batch-workers':
         print(json.dumps(write_batch_workers(config, args.batch_workers, args.reason), indent=2))

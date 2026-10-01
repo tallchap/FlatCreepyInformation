@@ -162,6 +162,25 @@ class Tests(unittest.TestCase):
         self.assertEqual('paused', supervisor.control['desired'])
         self.assertTrue((self.root / 'STOP.json').exists())
 
+    def test_pending_remote_pause_blocks_asr_launch_boundary(self):
+        supervisor = self.supervisor()
+        module.submit_control(self.config, 'pause', source='relay_log', identifier='pending-asr-pause')
+        with patch.object(supervisor, 'verify_runtime'), patch.object(module.subprocess, 'Popen') as launch:
+            supervisor.start_asr()
+        launch.assert_not_called()
+        self.assertEqual('waiting_for_control_application', supervisor.state['phase'])
+        self.assertEqual(['pending-asr-pause'], supervisor.state['pending_control_ids'])
+
+    def test_pending_remote_pause_blocks_runner_launch_boundary(self):
+        supervisor = self.supervisor()
+        supervisor.state.update(cycle=1, asr_pid=123)
+        module.submit_control(self.config, 'pause', source='relay_log', identifier='pending-runner-pause')
+        with patch.object(supervisor, 'verify_runtime'), patch.object(module.subprocess, 'Popen') as launch:
+            supervisor.start_runner()
+        launch.assert_not_called()
+        self.assertEqual('waiting_for_control_application', supervisor.state['phase'])
+        self.assertEqual(['pending-runner-pause'], supervisor.state['pending_control_ids'])
+
     def test_runtime_gate_rejects_dirty_or_wrong_commit(self):
         supervisor = self.supervisor()
         good = type('Result', (), {'stdout': self.config['runtime_commit']})()

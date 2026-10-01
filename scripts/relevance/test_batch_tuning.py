@@ -154,10 +154,20 @@ class MaintenanceControlTests(unittest.TestCase):
             whisper_python='python', relay_session_file=str(self.base / 'wallet.json'), instance='shadow',
             origin='mac', ffmpeg='ffmpeg', range_cache=str(self.base / 'cache'), runtime_commit='a' * 40)
 
-    def drained(self, request, remote_after=True):
-        control.atomic(self.cont / 'control-state.json', {'desired': 'paused', 'processed_ids': [request['id']]})
+    def drained(self, request, remote_after=True, remote_count=0):
+        applied = {**request, 'applied_at': control.now()}
+        control.atomic(self.cont / 'control-state.json', {'desired': 'paused', 'processed_ids': [request['id']],
+            'transitions': [applied], 'last_applied_order': control.control_order(request)})
         control.atomic(self.cont / 'status.json', {'phase': 'paused', 'own_children_alive': False,
-            'last_remote_poll_at': '9999' if remote_after else '0000', 'remote_poll_error': None})
+            'last_remote_poll_at': control.now() if remote_after else '0001-01-01T00:00:00+00:00',
+            'remote_poll_error': None, 'remote_blob_sha': 'blob-before-resume',
+            'remote_control_count': remote_count})
+
+    def fresh_remote_poll(self):
+        state = control.read(self.cont / 'status.json')
+        state.update(last_remote_poll_at=control.now(), remote_poll_error=None,
+                     remote_blob_sha='blob-after-resume')
+        control.atomic(self.cont / 'status.json', state)
 
     def test_maintenance_pause_writes_stop_immediately(self):
         control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
@@ -183,6 +193,91 @@ class MaintenanceControlTests(unittest.TestCase):
         request = control.submit_control(self.config, 'PAUSE', 'local')
         self.drained(request)
         self.assertIn('local PAUSE', control.maintenance_resume_blocker(self.config))
+
+    def test_supervisor_rejects_user_pause_injected_during_cli_resume(self):
+        request = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
+        self.drained(request)
+        path = self.write_config()
+        original = control._submit_control_unlocked
+
+        def inject(config, action, *args, **kwargs):
+            if action.upper() == 'RESUME':
+                original(config, 'PAUSE', 'local', {'reason': 'user interleaving'})
+            return original(config, action, *args, **kwargs)
+
+        with patch.object(control, '_submit_control_unlocked', side_effect=inject):
+            self.assertEqual(0, control.main(['--config', str(path), 'maintenance-resume']))
+        supervisor = control.Supervisor(control.load_config(path))
+        with patch.object(supervisor, 'refresh_remote_controls', side_effect=self.fresh_remote_poll):
+            supervisor.apply_controls()
+        self.assertEqual('paused', supervisor.control['desired'])
+        resume = next(row for row in supervisor.control['transitions'] if row['action'] == 'RESUME')
+        self.assertIn('blocked_at', resume)
+        self.assertIn('local PAUSE', resume['block_reason'])
+
+    def test_supervisor_requires_remote_poll_after_resume_request(self):
+        pause = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
+        self.drained(pause)
+        time.sleep(.01)
+        resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+        self.assertIsNone(blocker)
+        supervisor = control.Supervisor(self.config)
+        with patch.object(supervisor, 'refresh_remote_controls', return_value=('unchanged', 0)):
+            supervisor.apply_controls()
+        self.assertEqual('paused', supervisor.control['desired'])
+        transition = next(row for row in supervisor.control['transitions'] if row['id'] == resume['id'])
+        self.assertIn('remote-control read after the maintenance resume request', transition['block_reason'])
+
+    def test_unchanged_board_resume_applies_after_fresh_supervisor_poll(self):
+        pause = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
+        self.drained(pause, remote_count=3)
+        time.sleep(.01)
+        resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+        self.assertIsNone(blocker)
+        supervisor = control.Supervisor(self.config)
+        with patch.object(supervisor, 'refresh_remote_controls', side_effect=self.fresh_remote_poll) as refresh:
+            supervisor.apply_controls()
+        refresh.assert_called_once()
+        self.assertEqual('running', supervisor.control['desired'])
+        transition = next(row for row in supervisor.control['transitions'] if row['id'] == resume['id'])
+        self.assertIn('applied_at', transition)
+        self.assertEqual(pause['id'], transition['expected_maintenance_pause_id'])
+
+    def test_delayed_remote_pause_beyond_resume_fence_still_pauses(self):
+        pause = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
+        self.drained(pause, remote_count=4)
+        time.sleep(.01)
+        resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+        self.assertIsNone(blocker)
+        supervisor = control.Supervisor(self.config)
+        with patch.object(supervisor, 'refresh_remote_controls', side_effect=self.fresh_remote_poll):
+            supervisor.apply_controls()
+        self.assertEqual('running', supervisor.control['desired'])
+        control.submit_control(self.config, 'PAUSE', 'relay_log',
+            {'issued_at': '2026-10-01T00:00:00Z', 'remote_sequence': 4}, 'delayed-remote-pause')
+        supervisor.apply_controls()
+        self.assertEqual('paused', supervisor.control['desired'])
+        self.assertTrue(supervisor.control['transitions'][-1]['late_remote_pause_after_maintenance_resume'])
+
+    def test_forced_refresh_materializes_pending_remote_pause_and_blocks_resume(self):
+        pause = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
+        self.drained(pause)
+        time.sleep(.01)
+        resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+        self.assertIsNone(blocker)
+        supervisor = control.Supervisor(self.config)
+
+        def refresh():
+            control.submit_control(self.config, 'PAUSE', 'relay_log',
+                {'issued_at': '2026-10-01T00:00:00Z', 'remote_sequence': 0}, 'pending-board-pause')
+            self.fresh_remote_poll()
+            return 'new-blob', 1
+
+        with patch.object(supervisor, 'refresh_remote_controls', side_effect=refresh):
+            supervisor.apply_controls()
+        self.assertEqual('paused', supervisor.control['desired'])
+        transition = next(row for row in supervisor.control['transitions'] if row['id'] == resume['id'])
+        self.assertIn('blocked_at', transition)
 
     def write_config(self, **extra):
         path = self.base / 'private-config.json'
