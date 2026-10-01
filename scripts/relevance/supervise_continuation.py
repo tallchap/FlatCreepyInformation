@@ -240,14 +240,23 @@ class Supervisor:
         self.jobs.put((kind, data))
 
     def relay(self, *arguments):
-        result = subprocess.run([sys.executable, '-X', 'utf8', str(Path(self.config['relay']) / 'relay.py'),
-            *arguments], cwd=self.config['relay'], env=self.env, capture_output=True, text=True,
-            encoding='utf-8', timeout=900, **hidden())
-        with (self.cont / 'relay-operations.log').open('a', encoding='utf-8') as output:
-            output.write(now() + ' ' + ' '.join(arguments[:2]) + '\n' + result.stdout + result.stderr + '\n')
-        if result.returncode:
+        command = [sys.executable, '-X', 'utf8', str(Path(self.config['relay']) / 'relay.py'), *arguments]
+        safe_conflict = ('response upload was not attached because the board changed '
+                         '(board main advanced from the transaction snapshot); retry from fresh state')
+        for attempt in range(1, 4):
+            result = subprocess.run(command, cwd=self.config['relay'], env=self.env, capture_output=True,
+                text=True, encoding='utf-8', timeout=900, **hidden())
+            with (self.cont / 'relay-operations.log').open('a', encoding='utf-8') as output:
+                output.write(now() + ' ' + ' '.join(arguments[:2]) + f' attempt={attempt}\n'
+                             + result.stdout + result.stderr + '\n')
+            if not result.returncode:
+                return result.stdout
+            lines = (result.stdout + '\n' + result.stderr).splitlines()
+            if arguments[0] == 'send' and safe_conflict in lines and attempt < 3:
+                # The board explicitly rejected attachment, not the verified
+                # upload. Identical paths/tag let Relay reuse the same bundle.
+                continue
             raise RuntimeError(f'Relay {arguments[0]} exited {result.returncode}; see relay-operations.log')
-        return result.stdout
 
     def remote_reader(self):
         history_path = self.cont / 'remote-control-history.json'

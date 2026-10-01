@@ -248,6 +248,31 @@ class Tests(unittest.TestCase):
         for key in ('runner_pid', 'asr_pid', 'asr_launcher_pid'):
             self.assertIsNone(supervisor.state[key])
 
+    def test_relay_retries_only_exact_unattached_upload_board_conflict_up_to_three(self):
+        supervisor = self.supervisor()
+        error = ('response upload was not attached because the board changed '
+                 '(board main advanced from the transaction snapshot); retry from fresh state\n')
+        fail = module.subprocess.CompletedProcess([], 1, 'verified upload\n', error)
+        success = module.subprocess.CompletedProcess([], 0, 'attached\n', '')
+        arguments = ('send', self.config['job_id'], 'immutable-checkpoint', '--kind', 'response', '--tag', 'same-tag')
+        with patch.object(module.subprocess, 'run', side_effect=[fail, success]) as run:
+            self.assertEqual('attached\n', supervisor.relay(*arguments))
+        self.assertEqual(2, run.call_count)
+        self.assertEqual(run.call_args_list[0], run.call_args_list[1])
+        with patch.object(module.subprocess, 'run', return_value=fail) as run:
+            with self.assertRaises(RuntimeError):
+                supervisor.relay(*arguments)
+        self.assertEqual(3, run.call_count)
+        other = module.subprocess.CompletedProcess([], 1, '', 'Unknown transport outcome\n')
+        with patch.object(module.subprocess, 'run', return_value=other) as run:
+            with self.assertRaises(RuntimeError):
+                supervisor.relay(*arguments)
+        self.assertEqual(1, run.call_count)
+        with patch.object(module.subprocess, 'run', return_value=fail) as run:
+            with self.assertRaises(RuntimeError):
+                supervisor.relay('respond', self.config['job_id'])
+        self.assertEqual(1, run.call_count)
+
 
 if __name__ == '__main__':
     unittest.main()
