@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import time
 import unicodedata
+import uuid
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_RUN = Path('.context/relevance')
@@ -48,11 +49,37 @@ def now():
     return dt.datetime.now(dt.timezone.utc).isoformat()
 
 
+def replace_with_retry(source, destination, timeout=3.0):
+    """Retry only Windows readers briefly denying delete/replace sharing.
+
+    Never regenerate the staged payload or unlink the destination. All other
+    errors propagate immediately; permanent access denial remains a bounded
+    failure and preserves the previous committed file.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            remaining = deadline - time.monotonic()
+            if os.name != 'nt' or getattr(exc, 'winerror', None) not in {5, 32, 33} or remaining <= 0:
+                raise
+            time.sleep(min(0.025, remaining))
+
+
 def atomic(path, data):
+    path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + '.tmp')
-    tmp.write_text(json.dumps(data,ensure_ascii=False,indent=2,default=str),encoding='utf-8')
-    tmp.replace(path)
+    tmp = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
+    try:
+        with tmp.open('x', encoding='utf-8') as stream:
+            stream.write(json.dumps(data,ensure_ascii=False,indent=2,default=str))
+            stream.flush()
+            os.fsync(stream.fileno())
+        replace_with_retry(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def digest(data):
