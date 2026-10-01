@@ -2,7 +2,7 @@ import { Storage } from "@google-cloud/storage";
 import { BigQuery } from "@google-cloud/bigquery";
 import Redis from "ioredis";
 import https from "https";
-import { spawn } from "child_process";
+import { spawn, execFile } from "child_process";
 import { unlinkSync, statSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -354,6 +354,18 @@ async function ingestToBunny(videoId, sourceUrl = null) {
   }
 }
 
+// Height of the first video stream at url; 0 = no video stream; null = probe failed.
+function probeVideoHeight(url) {
+  return new Promise((resolve) => {
+    execFile(
+      "ffprobe",
+      ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", url],
+      { timeout: 120_000 },
+      (err, stdout) => resolve(err ? null : Number(String(stdout).trim()) || 0),
+    );
+  });
+}
+
 async function deleteBunnyVideo(guid) {
   await new Promise((resolve) => {
     const req = https.request({
@@ -373,7 +385,15 @@ async function deleteBunnyVideo(guid) {
 async function bunnyFromGcsCopy(video, gcsPath) {
   const start = Date.now();
   const gcsUrl = `https://storage.googleapis.com/${GCS_BUCKET}/${gcsPath}`;
-  console.log(`  [${video.id}] GCS copy exists → Bunny fetching it (${gcsUrl})`);
+  // Bunny happily encodes an audio-only file into a 720p "speaker icon" video,
+  // so a ready status proves nothing. Check for a real video stream first.
+  const height = await probeVideoHeight(gcsUrl);
+  if (!height) {
+    console.log(`  [${video.id}] GCS copy has no video stream (${height === 0 ? "audio-only" : "probe failed"}); using RapidAPI`);
+    await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-gcs-source-unusable", status: "info", detail: { reason: height === 0 ? "no-video-stream" : "probe-failed", gcsUrl } });
+    return false;
+  }
+  console.log(`  [${video.id}] GCS copy exists (${height}p) → Bunny fetching it (${gcsUrl})`);
   await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-gcs-source", status: "info", detail: { gcsUrl } });
   video.bunnyStatus = await ingestToBunny(video.id, gcsUrl);
   if (video.bunnyStatus !== "queued") {
