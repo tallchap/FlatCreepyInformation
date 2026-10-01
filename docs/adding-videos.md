@@ -4,7 +4,10 @@ How to take a list of YouTube videos (for example a youtube-research-server pull
 for one speaker) and get each one fully into Snippysaurus: searchable, in the
 speaker's chat, and clippable at up to 1080p.
 
-One script does all of it: `scripts/ingest-batch.ts`.
+Two scripts:
+- `scripts/ingest-batch.ts` does transcripts, chat and the first download attempt.
+- `scripts/ytdlp-to-bunny.py` is the yt-dlp fallback, run on Shadow, for anything
+  still missing or below 1080p.
 
 ## What "fully added" means
 
@@ -70,8 +73,16 @@ npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "Max Tegmark" --confirme
 
 ### What the video phase does
 
-For each ID without a finished or in-progress Bunny asset, it starts one
-`bunny-downloader` Cloud Run execution. That is the same job `/transcribe` uses.
+For each ID without a finished or in-progress Bunny asset:
+
+- **If GCS already has the file** (`gs://snippysaurus-clips/videos/{id}.mp4`, left
+  by an older research batch) and it has a video stream, Bunny fetches it
+  straight from GCS. This step exists because the Cloud Run downloader skips any ID
+  whose GCS file exists, even in Bunny-only mode. That bug made 15 of the
+  Tegmark videos "succeed" in 2 seconds with nothing uploaded. A GCS file with no
+  video stream (one Tegmark file was audio-only) is left for the yt-dlp fallback.
+- **Otherwise** it starts one `bunny-downloader` Cloud Run execution. That is the
+  same job `/transcribe` uses.
 
 - RapidAPI downloads the video from YouTube on its servers and returns a temporary link.
 - The job passes that link to Bunny's fetch-from-URL API. Bunny's servers pull the
@@ -133,6 +144,32 @@ brand-new rows are reported as "deferred". Rerun `--repair` later.
 Rerun verify about 2 hours after the run to confirm every Bunny encode finished.
 For any video still at `none`, rerun `--only videos` (it skips the ones that worked).
 
+## 5. yt-dlp fallback on Shadow
+
+For every ID where Bunny has no finished video, or one below 1080p when YouTube
+has 1080p:
+
+```powershell
+$env:BUNNY_STREAM_API_KEY = "<key>"
+python -X utf8 scripts\ytdlp-to-bunny.py --ids ids.txt --workdir C:\ytdlp-bunny --dry-run
+python -X utf8 scripts\ytdlp-to-bunny.py --ids ids.txt --workdir C:\ytdlp-bunny
+```
+
+For each candidate it downloads the best ≤1080p mp4 with yt-dlp and checks the
+height with ffprobe. It then uploads the file straight to Bunny and waits for the
+encode. Once Bunny reports it finished, the script deletes the local file and every
+older Bunny asset for that ID (failed, stuck or lower-res). If the encode fails,
+the local file is kept. It skips:
+
+- videos already at 1080p,
+- videos where YouTube has nothing better than what Bunny has,
+- videos with a Bunny asset still processing, younger than `--stale-min` (default 120 min).
+
+Its report is `<workdir>/ytdlp-to-bunny-report.json`. Run it through Relay
+(`--needs shadow,windows,ffmpeg,claude`) with the script and ID list attached. Shadow
+has a residential IP, so YouTube doesn't block it the way it blocks cloud IPs. Run it
+again about an hour later to catch encodes that were still running the first time.
+
 ## Gotchas
 
 - **No dedup anywhere else.** `/transcribe` and the CSV "Bulk Import" button
@@ -144,8 +181,8 @@ For any video still at `none`, rerun `--only videos` (it skips the ones that wor
 - **Stopping a transcript run mid-video** can leave a video in BigQuery with no
   chat file. The next run skips it as "already in BigQuery". Run
   `--only verify --repair` to fill the gap.
-- **RapidAPI rejects some videos** ("too long", livestreams, private). Verify
-  shows them as `Bunny: none` after retries.
+- **RapidAPI rejects some videos** ("too long", livestreams, private), and
+  sometimes falls back to 720p when YouTube has 1080p. Step 5 catches both.
 - **Resolution follows the source.** If YouTube only has 720p, you get 720p.
 
 ## Cost (Max Tegmark set, 76 videos / ~44 h, 2026-10-01)

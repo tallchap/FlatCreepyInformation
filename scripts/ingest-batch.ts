@@ -3,10 +3,15 @@
  * Bulk-ingest YouTube videos into Snippysaurus — the same steps as one
  * /transcribe submit, run from a terminal instead of a browser tab.
  *
- * Phase "videos": for each ID with no ready Bunny asset, fire one
- *   `bunny-downloader` Cloud Run execution (RapidAPI 1080p → 720p fallback →
- *   Bunny fetch). One execution per video, so a task retry can only ever
- *   re-download that one video.
+ * Phase "videos": for each ID with no ready Bunny asset —
+ *   - if gs://snippysaurus-clips/videos/{id}.mp4 holds a real video (an older
+ *     research batch put it there), Bunny fetches it straight from GCS;
+ *   - otherwise fire one `bunny-downloader` Cloud Run execution (RapidAPI
+ *     1080p → 720p fallback → Bunny fetch). One execution per video, so a task
+ *     retry can only ever re-download that one video.
+ *   The downloader skips any ID already in GCS even in bunny-only mode, which
+ *   is why the GCS case is handled here. Whatever is still missing or below
+ *   1080p afterwards goes to scripts/ytdlp-to-bunny.py (run on Shadow).
  * Phase "transcripts": for each ID not already in youtube_videos —
  *   metadata → transcribe_log → transcript → speaker passes 2+3 → Google Doc →
  *   BigQuery → vector store. The search-window table is rebuilt once at the end.
@@ -126,6 +131,24 @@ async function bunnyStatus(videoId: string): Promise<{ ready: boolean; inFlight:
   };
 }
 
+const GCS_PUBLIC = "https://storage.googleapis.com/snippysaurus-clips/videos";
+
+// Height of the GCS copy's video stream; 0 if the file has no video stream;
+// null if there is no GCS copy. Needs ffprobe on PATH.
+async function gcsVideoHeight(videoId: string): Promise<number | null> {
+  const head = await fetch(`${GCS_PUBLIC}/${videoId}.mp4`, { method: "HEAD" });
+  if (!head.ok) return null;
+  const { execFile } = await import("child_process");
+  return new Promise((resolve) => {
+    execFile(
+      "ffprobe",
+      ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=height", "-of", "csv=p=0", `${GCS_PUBLIC}/${videoId}.mp4`],
+      { timeout: 60000 },
+      (err, stdout) => resolve(err ? null : Number(String(stdout).trim()) || 0),
+    );
+  });
+}
+
 async function videosPhase(ids: string[], note: (b: string, id: string) => void) {
   console.log("── Videos: Bunny check + Cloud Run triggers ──");
   const { google } = await import("googleapis");
@@ -142,6 +165,30 @@ async function videosPhase(ids: string[], note: (b: string, id: string) => void)
       if (s.ready || s.inFlight) {
         console.log(`  [${videoId}] skip: Bunny ${s.ready ? "already has it" : "is already encoding it"}`);
         note("video-already-in-bunny", videoId);
+        continue;
+      }
+      const gcs = await gcsVideoHeight(videoId);
+      if (gcs) {
+        if (DRY_RUN) {
+          console.log(`  [${videoId}] would have Bunny fetch the ${gcs}p GCS copy`);
+          note("video-would-fetch-gcs", videoId);
+          continue;
+        }
+        const res = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/fetch`, {
+          method: "POST",
+          headers: { AccessKey: (process.env.BUNNY_STREAM_API_KEY || "").trim(), "Content-Type": "application/json" },
+          body: JSON.stringify({ url: `${GCS_PUBLIC}/${videoId}.mp4`, title: videoId }),
+        });
+        if (!res.ok) throw new Error(`Bunny fetch from GCS ${res.status}: ${(await res.text()).slice(0, 200)}`);
+        console.log(`  [${videoId}] Bunny fetching ${gcs}p copy from GCS`);
+        note("video-fetched-from-gcs", videoId);
+        continue;
+      }
+      if (gcs === 0) {
+        // The GCS file exists but has no video stream. The downloader would skip
+        // this ID because the file exists, so leave it for the yt-dlp fallback.
+        console.log(`  [${videoId}] GCS copy has no video stream — left for scripts/ytdlp-to-bunny.py`);
+        note("video-needs-ytdlp", videoId);
         continue;
       }
       if (DRY_RUN) {
