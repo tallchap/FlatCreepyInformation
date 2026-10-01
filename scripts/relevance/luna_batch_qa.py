@@ -500,6 +500,41 @@ def apply_speaker_metadata(directory, speaker, output):
     return apply_publication_metadata(directory, speaker, recipe['title'], recipe['reason'], output)
 
 
+def preserve_cancelled_intent(state, role):
+    """Permit a proven unsent intent; submitted/ambiguous calls remain blocked.
+
+    Both the durable state and its last paired transport events must say the
+    HTTP request was never dispatched. Preserve the old state before reuse.
+    """
+    prior = read(state)
+    require(prior.get('status') == 'cancelled_before_dispatch'
+            and prior.get('dispatched') is False and prior.get('charge_unknown') is False
+            and prior.get('role') == role,
+            'Prior API call has no durable response; inspect call-state before explicitly retrying (no automatic duplicate charges)')
+    events_path = state.with_name('transport-events.jsonl')
+    require(events_path.exists(), 'Unsent API intent missing paired transport evidence')
+    events = [json.loads(line) for line in events_path.read_text(encoding='utf-8').splitlines() if line.strip()]
+    require(len(events) >= 2, 'Unsent API intent missing paired transport evidence')
+    start, end = events[-2:]
+    require(start.get('event') == 'request_start' and end.get('event') == 'request_end'
+            and all(start.get(key) == end.get(key) for key in ('request_hash', 'role', 'attempt', 'pid'))
+            and end.get('request_hash') == state.parent.name and end.get('role') == role
+            and end.get('attempt') == prior.get('attempt')
+            and end.get('status') == 'cancelled_before_dispatch'
+            and end.get('dispatched') is False and end.get('charge_unknown') is False
+            and end.get('http_status') is None and end.get('response_id') is None,
+            'Unsent API intent transport evidence mismatch')
+    original = state.read_bytes()
+    archive = state.with_name('cancelled-intent-' + hashlib.sha256(original).hexdigest() + '.json')
+    if archive.exists():
+        require(archive.read_bytes() == original, 'Cancelled intent archive drift')
+    else:
+        with archive.open('xb') as handle:
+            handle.write(original)
+            handle.flush()
+            os.fsync(handle.fileno())
+
+
 def review_packages(packages, output, role='finalizer', min_release_confidence=DEFAULT_MIN_RELEASE_CONFIDENCE):
     check_stop(output)
     require(role in ('finalizer', 'verifier'), 'Unknown reviewer role')
@@ -517,7 +552,8 @@ def review_packages(packages, output, role='finalizer', min_release_confidence=D
     if api_called:
         check_stop(output)
         state = out / 'call-state.json'
-        require(not state.exists(), 'Prior API call has no durable response; inspect call-state before explicitly retrying (no automatic duplicate charges)')
+        if state.exists():
+            preserve_cancelled_intent(state, role)
         import requests
         for attempt in range(1, 4):
             check_stop(output)
