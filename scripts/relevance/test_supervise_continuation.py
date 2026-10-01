@@ -116,7 +116,53 @@ class Tests(unittest.TestCase):
 
     def test_stale_remote_control_reads_pause_without_auto_resume(self):
         supervisor = self.supervisor()
-        supervisor.last_remote_success = time.monotonic() - 80
+        supervisor.last_remote_success = time.monotonic() - module.REMOTE_STALE_SECONDS - 5
+        with patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        self.assertEqual('paused', supervisor.control['desired'])
+        self.assertIn('stale', supervisor.control['pause_reason'])
+        launch.assert_not_called()
+
+    def test_remote_control_timing_retains_fail_closed_margin(self):
+        self.assertEqual(30, module.REMOTE_READ_TIMEOUT_SECONDS)
+        self.assertEqual(90, module.REMOTE_STALE_SECONDS)
+        self.assertGreaterEqual(module.REMOTE_STALE_SECONDS, module.REMOTE_READ_TIMEOUT_SECONDS * 3)
+
+    def test_remote_control_read_uses_bounded_timeout_and_resets_safety_clock(self):
+        supervisor = self.supervisor()
+        raw = (b'---\nid: TEST-20261001\nstatus: CLAIMED\nposted_by: mac\n'
+               b'owner_instance: shadow\n---\n## Log\n')
+        payload = dict(type='file', path='jobs/TEST-20261001.md', encoding='base64', size=len(raw),
+            content=base64.b64encode(raw).decode(),
+            sha=hashlib.sha1(f'blob {len(raw)}\0'.encode() + raw).hexdigest())
+        before = time.monotonic()
+        supervisor.last_remote_success = before - module.REMOTE_STALE_SECONDS + 1
+        result = module.subprocess.CompletedProcess([], 0, stdout=json.dumps(payload), stderr='')
+        with patch.object(module.subprocess, 'run', return_value=result) as run:
+            supervisor.refresh_remote_controls()
+        self.assertEqual(module.REMOTE_READ_TIMEOUT_SECONDS, run.call_args.kwargs['timeout'])
+        self.assertGreaterEqual(supervisor.last_remote_success, before)
+        self.assertTrue(supervisor.first_remote_success.is_set())
+
+    def test_remote_read_just_inside_stale_boundary_does_not_pause(self):
+        supervisor = self.supervisor()
+        supervisor.last_remote_success = time.monotonic() - module.REMOTE_STALE_SECONDS + 5
+        with patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        self.assertEqual('running', supervisor.control['desired'])
+        launch.assert_not_called()
+
+    def test_failed_remote_read_does_not_refresh_clock_and_eventually_pauses(self):
+        supervisor = self.supervisor()
+        stale = time.monotonic() - module.REMOTE_STALE_SECONDS - 5
+        supervisor.last_remote_success = stale
+        with patch.object(module.subprocess, 'run',
+                side_effect=module.subprocess.TimeoutExpired(['gh', 'api'], module.REMOTE_READ_TIMEOUT_SECONDS)):
+            with self.assertRaises(module.subprocess.TimeoutExpired):
+                supervisor.refresh_remote_controls()
+        self.assertEqual(stale, supervisor.last_remote_success)
+        supervisor.record_remote_failure(
+            module.subprocess.TimeoutExpired(['gh', 'api'], module.REMOTE_READ_TIMEOUT_SECONDS))
         with patch.object(supervisor, 'start_asr') as launch:
             self.once(supervisor)
         self.assertEqual('paused', supervisor.control['desired'])

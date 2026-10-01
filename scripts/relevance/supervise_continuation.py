@@ -25,6 +25,8 @@ import uuid
 
 
 _CONTROL_THREAD_LOCK = threading.RLock()
+REMOTE_READ_TIMEOUT_SECONDS = 30
+REMOTE_STALE_SECONDS = 90
 
 
 def now():
@@ -430,7 +432,7 @@ class Supervisor:
             history = read(history_path).get('commands', [])
             command = ['gh', 'api', f"repos/tallchap/relay/contents/jobs/{self.config['job_id']}.md?ref=main"]
             result = subprocess.run(command, cwd=self.config['relay'], env=self.env, capture_output=True,
-                text=True, encoding='utf-8', timeout=20, check=True, **hidden())
+                text=True, encoding='utf-8', timeout=REMOTE_READ_TIMEOUT_SECONDS, check=True, **hidden())
             meta, body, blob = decode_job(json.loads(result.stdout), self.config['job_id'])
             if meta.get('posted_by') != self.config['origin'] or meta.get('owner_instance') != self.config['instance']:
                 raise ValueError('Relay origin/worker routing identity changed')
@@ -816,9 +818,9 @@ class Supervisor:
                         self.pause('Root/cache/checkpoint volume below 20 GiB free; explicit resume required after capacity recovery')
                         self.enqueue('log', f"PAUSING: disk free {free} bytes is below 20 GiB; explicit resume required "
                             f"after capacity recovery. No originals or hash-bound media deleted. Status={self.state_path}.")
-                    if time.monotonic() - self.last_remote_success > 75 and self.control['desired'] == 'running':
-                        self.pause('Remote control reads stale beyond 75 seconds; explicit resume required after recovery')
-                        self.enqueue('log', f"PAUSING because remote control polling is stale beyond75s; "
+                    if time.monotonic() - self.last_remote_success > REMOTE_STALE_SECONDS and self.control['desired'] == 'running':
+                        self.pause(f'Remote control reads stale beyond {REMOTE_STALE_SECONDS} seconds; explicit resume required after recovery')
+                        self.enqueue('log', f"PAUSING because remote control polling is stale beyond{REMOTE_STALE_SECONDS}s; "
                             f"automatic resume disabled; status={self.state_path}.")
                     if (self.control['desired'] == 'running' and self.server is not None
                             and (self.root / 'STOP.json').exists() and not self.state.get('production_completed')
