@@ -21,10 +21,12 @@ class AuditTests(unittest.TestCase):
         return {'id':'response-test','status':'completed','model':audit.MODEL,'usage':{'input_tokens':10000,'output_tokens':1000},
                 'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps(out)}]}]}
 
-    def test_seven_exemptions_multi_speaker_and_variants(self):
+    def test_keep_list_exemptions_multi_speaker_and_variants(self):
         for name in audit.PROTECTED:
             with self.subTest(name=name):self.assertIn(name,audit.protected({'speaker_source':'Host, '+name}))
         self.assertIn('Yann LeCun',audit.protected({'title':'YANN LE CUN interview'}))
+        self.assertIn('Geoffrey Hinton',audit.protected({'title':'Geoff Hinton on AI risk'}))
+        self.assertFalse(audit.protected({'speaker_source':'Joao Soares'}))
         self.assertFalse(audit.protected({'speaker_source':'Samy Bengio, Jack Altman, Daniela Amodei'}))
         self.assertFalse(audit.protected({'transcript':'Sam Altman is mentioned'}))
 

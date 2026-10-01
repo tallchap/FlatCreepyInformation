@@ -26,6 +26,9 @@ PROTECTED = {
     'Max Tegmark': r'\b(?:max\s+)?tegmark\b',
     'Yoshua Bengio': r'\byoshua\s+bengio\b',
     'Yann LeCun': r'\b(?:yann\s+)?le\s*cun\b',
+    # Added to the keep list 2026-10-01.
+    'Geoffrey Hinton': r'\b(?:geoff(?:rey)?\s+)?hinton\b',
+    'Nate Soares': r'\bnate\s+soares\b',
 }
 SAFETY = ['direct', 'adjacent', 'indirect', 'none']
 TIMELINE = ['direct', 'mechanism', 'governance', 'indirect', 'adjacent', 'infrastructure', 'none']
@@ -304,7 +307,7 @@ def verify(run):
         if row['protected_matches']:
             checks['protected_metadata_never_called_or_rejected'] &= r['status']=='preserved' and not r.get('api_called')
         if r['status']=='eligible':checks['eligible_evidence_passes'] &= all(r['evidence_checks'].values()) and r['assessment']['eligible'] and r['assessment']['original']
-    receipt={'time':now(),'requested':'Assess all non-exempt Snippy videos with full stored transcripts; preserve seven named speakers.',
+    receipt={'time':now(),'requested':f'Assess all non-exempt Snippy videos with full stored transcripts; preserve {len(PROTECTED)} named speakers.',
              'conducted':summary,'checks':checks,'missing_transcripts':summary['counts'].get('unassessed',0),
              'feedback_loop':'Not part of this one-time audit; no ranking rules modified.', 'passed':all(checks.values())}
     atomic(run/'verification.json',receipt)
