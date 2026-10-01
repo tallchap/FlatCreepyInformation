@@ -241,6 +241,12 @@ def _maintenance_resume_snapshot_unlocked(config, resume_request=None):
     latest = requests[-1]
     if latest.get('action') != 'PAUSE' or latest.get('source') != 'maintenance':
         return f"Newest control is {latest.get('source')} {latest.get('action')}, not this maintenance pause", None
+    # A later maintenance drain cannot grant permission to undo a user pause.
+    # Preserve explicit user intent independently of the maintenance ordering.
+    explicit = next((item for item in reversed(requests)
+                     if item.get('source') in ('local', 'relay_log')), None)
+    if explicit and explicit.get('action') == 'PAUSE':
+        return f"Prior {explicit['source']} PAUSE requires an explicit user RESUME", None
     if resume_request:
         required = {'expected_maintenance_pause_id', 'expected_maintenance_pause_order',
                     'expected_control_state_sha256', 'observed_remote_poll_at',

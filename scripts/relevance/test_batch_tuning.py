@@ -194,6 +194,43 @@ class MaintenanceControlTests(unittest.TestCase):
         self.drained(request)
         self.assertIn('local PAUSE', control.maintenance_resume_blocker(self.config))
 
+    def test_maintenance_drain_cannot_replace_an_applied_user_pause(self):
+        for source in ('local', 'relay_log'):
+            with self.subTest(source=source):
+                user = control.submit_control(self.config, 'PAUSE', source)
+                maintenance = control.submit_control(self.config, 'PAUSE', 'maintenance')
+                self.drained(maintenance)
+                state = control.read(self.cont / 'control-state.json')
+                requests = [control.read(p) for p in (self.cont / 'control-requests').glob('*.json')]
+                state['processed_ids'] = [item['id'] for item in requests]
+                state['transitions'] = [{**item, 'applied_at': control.now()}
+                                        for item in sorted(requests, key=control.control_order)]
+                control.atomic(self.cont / 'control-state.json', state)
+                resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+                self.assertIsNone(resume)
+                self.assertIn('explicit user RESUME', blocker)
+                self.assertEqual('paused', control.read(self.cont / 'control-state.json')['desired'])
+                self.assertFalse(any(control.read(path)['action'] == 'RESUME'
+                                     for path in (self.cont / 'control-requests').glob('*.json')))
+
+    def test_explicit_user_resume_allows_later_maintenance_resume(self):
+        user_pause = control.submit_control(self.config, 'PAUSE', 'local')
+        user_resume = control.submit_control(self.config, 'RESUME', 'relay_log')
+        maintenance = control.submit_control(self.config, 'PAUSE', 'maintenance')
+        self.drained(maintenance)
+        state = control.read(self.cont / 'control-state.json')
+        state['processed_ids'] = [user_pause['id'], user_resume['id'], maintenance['id']]
+        state['transitions'] = [{**item, 'applied_at': control.now()}
+                                for item in (user_pause, user_resume, maintenance)]
+        control.atomic(self.cont / 'control-state.json', state)
+        resume, blocker = control.submit_maintenance_resume(self.config, 'screen')
+        self.assertIsNone(blocker)
+        self.assertIsNotNone(resume)
+        supervisor = control.Supervisor(self.config)
+        with patch.object(supervisor, 'refresh_remote_controls', side_effect=self.fresh_remote_poll):
+            supervisor.apply_controls()
+        self.assertEqual('running', supervisor.control['desired'])
+
     def test_supervisor_rejects_user_pause_injected_during_cli_resume(self):
         request = control.submit_control(self.config, 'PAUSE', 'maintenance', {'reason': 'tuning'})
         self.drained(request)
