@@ -26,6 +26,10 @@ import publish_astra
 TERMINAL = {'published', 'already_published', 'awaiting_astra', 'failed'}
 
 
+class ContinuationIntegrityError(ValueError):
+    """An immutable admission/evidence gate changed; drain the whole runner."""
+
+
 @contextmanager
 def runner_lock(path):
     """Hold one nonblocking process lock on both Windows and POSIX."""
@@ -246,7 +250,7 @@ def verify(root):
 
 class Runner:
     def __init__(self, root, whisper, limit=None, machine=None, namespace=None, batch_workers=1, experiment_id=None,
-                 stream_id=None, max_candidates=None):
+                 stream_id=None, max_candidates=None, continuation_id=None, continuation_authorization=None):
         if batch_workers not in range(1, 11):
             raise ValueError('Batch workers must be between 1 and 10')
         if batch_workers > 2 and not experiment_id:
@@ -257,14 +261,24 @@ class Runner:
             raise ValueError('Streaming requires a unique stream-id, 1-5 max-candidates, and at most two batch workers')
         if max_candidates is not None and not stream_id:
             raise ValueError('max-candidates requires a frozen stream-id')
+        if bool(continuation_id) != bool(continuation_authorization):
+            raise ValueError('Continuation requires both its job ID and explicit authorization file')
+        if continuation_id and (experiment_id or stream_id or limit is not None or batch_workers > 2):
+            raise ValueError('Continuation requires unlimited frozen scope and at most two batch workers')
         self.root, self.whisper, self.limit = root.resolve(), whisper, limit
+        self.continuation_id = continuation_id
+        self.continuation_authorization = Path(continuation_authorization).resolve() if continuation_authorization else None
+        self.continuation = None
+        self.recovery_proofs = {}
+        if continuation_id:
+            self.validate_continuation_authorization()
         frozen_path = self.root / 'experiment-plan.json'
         if experiment_id and (self.root / 'experiment-status.json').exists():
             previous = luna.read(self.root / 'experiment-status.json')
             if (previous.get('experiment_id') == experiment_id and previous.get('phase') in ('paused', 'cancelled')
                     and previous.get('drained_at')):
                 raise ValueError('Drained paused/cancelled experiment cannot restart; its frozen scope remains closed')
-        if frozen_path.exists() and (not experiment_id or luna.read(frozen_path).get('experiment_id') != experiment_id):
+        if not continuation_id and frozen_path.exists() and (not experiment_id or luna.read(frozen_path).get('experiment_id') != experiment_id):
             status_path = self.root / 'experiment-status.json'
             previous = luna.read(status_path) if status_path.exists() else {}
             if (not stream_id or previous.get('phase') not in ('paused', 'cancelled') or not previous.get('drained_at')
@@ -299,6 +313,151 @@ class Runner:
         self.batch_claims = set()
         self.last_id = None
 
+    def validate_continuation_authorization(self):
+        if not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{0,79}', self.continuation_id):
+            raise ValueError('Continuation ID must be the canonical uppercase Relay job ID')
+        authorization = luna.read(self.continuation_authorization)
+        if (authorization.get('job_id') != self.continuation_id
+                or authorization.get('scope') != 'all_remaining_frozen_manifest'
+                or authorization.get('codex_on_shadow') is not True
+                or authorization.get('manifest_sha256') != luna.sha(self.root / 'input/manifest.json')):
+            raise ValueError('Continuation authorization does not match job, frozen manifest, scope, or executor')
+        recoverable = authorization.get('recoverable_failed_ids', [])
+        proofs = authorization.get('recovery_proofs', {})
+        if len(recoverable) != len(set(recoverable)) or set(recoverable) != set(proofs):
+            raise ValueError('Recovery authorization requires one proof for each unique failed candidate')
+        for vid, proof in proofs.items():
+            backup = Path(proof['backup_path'])
+            if (proof.get('no_prior_paid_membership') is not True or proof.get('maximum_recovery_attempts') != 1
+                    or proof.get('classification') != 'windows_local_downstream_disconnect_misclassified_as_transfer_failure'
+                    or not backup.is_file() or luna.sha(backup) != proof.get('record_sha256')
+                    or luna.read(backup).get('candidate_id') != vid or luna.read(backup).get('status') != 'failed'):
+                raise ValueError('Recovery requires an immutable diagnosed local failure backup: ' + vid)
+            evidence = proof.get('failure_evidence', {})
+            artifact = evidence.get('artifact', {})
+            if (evidence.get('full_decode_exit') != 0 or evidence.get('ffprobe_exit') != 0
+                    or not Path(artifact.get('path', '')).is_file()
+                    or luna.sha(artifact['path']) != artifact.get('sha256')):
+                raise ValueError('Recovery failure evidence is missing or changed: ' + vid)
+        self.recovery_proofs = proofs
+        return authorization
+
+    def candidate_pending(self, vid):
+        row = self.records.get(vid, {})
+        if row.get('status') not in TERMINAL:
+            return True
+        # Only the exact old failed record is eligible for the one authorized
+        # recovery. A newly failed recovery remains terminal across restarts.
+        proof = getattr(self, 'recovery_proofs', {}).get(vid)
+        return bool(proof and row.get('status') == 'failed'
+                    and luna.sha(self.root / 'records' / f'{vid}.json') == proof['record_sha256'])
+
+    def continuation_plan(self):
+        """Authorize remaining coverage without rewriting any old paid membership."""
+        self.validate_continuation_authorization()
+        path = self.continuation_authorization.parent / 'continuation-plan.json'
+        manifest_hash = luna.sha(self.input / 'manifest.json')
+        auth_hash = luna.sha(self.continuation_authorization)
+        wanted = {row['candidate_id']: row for row in self.candidates}
+        if set(self.records) - set(wanted):
+            raise ValueError('Ledger contains candidates outside the frozen manifest')
+        if path.exists():
+            plan = luna.read(path)
+            unsigned = {key: value for key, value in plan.items() if key != 'plan_sha256'}
+            if (plan.get('continuation_id') != self.continuation_id or plan.get('manifest_sha256') != manifest_hash
+                    or plan.get('authorization_sha256') != auth_hash or plan.get('plan_sha256') != audit.digest(unsigned)):
+                raise ValueError('Frozen continuation identity, authorization, or manifest changed')
+        else:
+            recovery = set(self.recovery_proofs)
+            if not recovery <= set(wanted) or any(not self.candidate_pending(vid) for vid in recovery):
+                raise ValueError('Recovery candidate is missing its original failed record')
+            protected = {vid for vid, row in self.records.items() if row['status'] in TERMINAL} - recovery
+            targets = set(wanted) - protected
+            assigned, slots, preserved = set(), [], {}
+            for old in ('experiment-plan.json', 'stream-plan.json', 'runner-config.json', 'checkpoint-paths.json'):
+                old_path = self.root / old
+                if old_path.exists():
+                    preserved[old] = luna.sha(old_path)
+            # Every known batch, even a completed one, retains its old frozen plan.
+            # Incomplete batches resume from original directories and run_hash so
+            # successful and ambiguous paid requests never escape their caches.
+            for old_path in sorted((self.root / 'batches').glob('*/batch-plan.json')):
+                old = luna.read(old_path)
+                ids = old['slot_candidate_ids']
+                if (not 1 <= len(ids) <= 5 or len(ids) != len(set(ids)) or set(ids) - set(wanted)
+                        or set(old['candidate_ids']) - set(ids)):
+                    raise ValueError('Existing paid batch membership is invalid')
+                preserved[old_path.relative_to(self.root).as_posix()] = luna.sha(old_path)
+                if recovery.intersection(old['candidate_ids']):
+                    raise ValueError('Recovery candidate already belongs to a paid request')
+                pending = targets.intersection(ids) - recovery
+                if pending:
+                    if pending - set(old['candidate_ids']) or pending & assigned:
+                        raise ValueError('Pending candidate omitted from or duplicated across frozen paid batches')
+                    assigned.update(pending)
+                    slots.append({'batch_name': old_path.parent.name, 'origin': 'existing_paid_batch',
+                                  'candidate_ids': ids, 'execution_candidate_ids': sorted(pending),
+                                  'items': [wanted[vid] for vid in ids]})
+            # Unplanned directories with paid state cannot be safely regrouped.
+            for batch in (self.root / 'batches').glob('*'):
+                if batch.is_dir() and not (batch / 'batch-plan.json').exists() and any(
+                        any(batch.rglob(name)) for name in ('call-state.json', 'request.json', 'pipeline-results.json')):
+                    raise ValueError('Paid artifacts lack frozen batch membership: ' + batch.name)
+            recoverable = [row for row in self.candidates if row['candidate_id'] in recovery]
+            for index in range(0, len(recoverable), 5):
+                items = recoverable[index:index+5]
+                ids = [row['candidate_id'] for row in items]
+                name = f'{self.continuation_id}-recovery-{index//5+1:04d}'
+                if (self.root / 'batches' / name).exists():
+                    raise ValueError('Recovery namespace has artifacts without authorization plan')
+                slots.append({'batch_name': name, 'origin': 'authorized_local_failure_recovery',
+                              'candidate_ids': ids, 'execution_candidate_ids': ids, 'items': items})
+                assigned.update(ids)
+            for lane in ('eligible', 'review'):
+                remaining = [row for row in self.candidates if row['lane'] == lane
+                             and row['candidate_id'] in targets - assigned]
+                for index in range(0, len(remaining), 5):
+                    items = remaining[index:index+5]
+                    name = f'{self.continuation_id}-{lane}-{index//5+1:04d}'
+                    if (self.root / 'batches' / name).exists():
+                        raise ValueError('Continuation namespace has artifacts without authorization plan')
+                    ids = [row['candidate_id'] for row in items]
+                    slots.append({'batch_name': name, 'origin': 'remaining_manifest',
+                                  'candidate_ids': ids, 'execution_candidate_ids': ids, 'items': items})
+                    assigned.update(ids)
+            if assigned != targets:
+                raise ValueError('Continuation does not cover every remaining candidate')
+            plan = {'schema_version': 'snippy-full-continuation-v1', 'continuation_id': self.continuation_id,
+                    'created_at': audit.now(), 'manifest_sha256': manifest_hash, 'authorization_sha256': auth_hash,
+                    'target_candidate_count': len(targets), 'candidate_ids': sorted(targets), 'slots': slots,
+                    'recoverable_failed_ids': sorted(recovery),
+                    'protected_record_sha256': {vid: luna.sha(self.root / 'records' / f'{vid}.json') for vid in sorted(protected)},
+                    'baseline_record_sha256': {vid: luna.sha(self.root / 'records' / f'{vid}.json') for vid in sorted(self.records)},
+                    'preserved_file_sha256': preserved, 'maximum_batch_members': 5, 'maximum_batch_workers': 2,
+                    'min_release_confidence': .95, 'max_passes': luna.MAX_PASSES}
+            plan['plan_sha256'] = audit.digest(plan)
+            audit.atomic(path, plan)
+        ids = [vid for slot in plan['slots'] for vid in slot['execution_candidate_ids']]
+        if (len(ids) != len(set(ids)) or set(ids) != set(plan['candidate_ids'])
+                or len(ids) != plan['target_candidate_count']
+                or set(plan['candidate_ids']) | set(plan['protected_record_sha256']) != set(wanted)
+                or set(plan['candidate_ids']) & set(plan['protected_record_sha256'])
+                or any(not 1 <= len(slot['candidate_ids']) <= 5
+                       or not set(slot['execution_candidate_ids']) <= set(slot['candidate_ids'])
+                       or slot['items'] != [wanted[vid] for vid in slot['candidate_ids']]
+                       or Path(slot['batch_name']).name != slot['batch_name'] for slot in plan['slots'])):
+            raise ValueError('Frozen continuation candidate membership is invalid')
+        for vid, digest in plan['protected_record_sha256'].items():
+            record = self.root / 'records' / f'{vid}.json'
+            if not record.exists() or luna.sha(record) != digest:
+                raise ValueError('Protected prior disposition changed: ' + vid)
+        for relative, digest in plan['preserved_file_sha256'].items():
+            source = (self.root / relative).resolve()
+            if not source.is_relative_to(self.root) or not source.exists() or luna.sha(source) != digest:
+                raise ValueError('Prior checkpoint or paid batch plan changed: ' + relative)
+        self.continuation = plan
+        return plan
+
     def pause_candidates(self, items, stage):
         for item in items:
             vid = item['candidate_id']
@@ -316,6 +475,8 @@ class Runner:
 
     def save(self, vid, status, **values):
         with self.lock:
+            if getattr(self, 'continuation', None) and vid in self.continuation['protected_record_sha256']:
+                raise ContinuationIntegrityError('Continuation cannot rewrite a protected prior disposition: ' + vid)
             row = {**self.records.get(vid, {}), 'candidate_id': vid, 'status': status, 'updated_at': audit.now(), **values}
             audit.atomic(self.root / 'records' / f'{vid}.json', row)
             self.records[vid] = row
@@ -342,6 +503,8 @@ class Runner:
             requested_bytes = sum(row.get('transfer', {}).get('upstream_requested_bytes', 0) for row in shadow_rows)
             audit.atomic(self.root / 'status.json', {'time': audit.now(), 'pid': os.getpid(), 'machine': self.machine,
                 'batch_namespace': self.namespace, 'batch_workers': self.batch_workers,
+                'continuation_id': getattr(self, 'continuation_id', None),
+                'continuation_plan_sha256': (getattr(self, 'continuation', None) or {}).get('plan_sha256'),
                 'active_batches': [dict(self.active_batches[name]) for name in sorted(self.active_batches)],
                 'phase': self.phase, 'requested': 1644, 'covered': done, 'remaining': 1644 - done,
                 'counts': dict(counts), 'active_ids': sorted(self.active_ids), 'luna_cost_usd': checkpoint_cost + current_cost,
@@ -358,6 +521,18 @@ class Runner:
             audit.atomic(self.root / 'astra-handoff-queue.json', {'time': audit.now(),
                 'items': [r for r in self.records.values() if r['status'] == 'awaiting_astra'],
                 'operational_failures': [r for r in self.records.values() if r['status'] == 'failed']})
+            if getattr(self, 'continuation', None):
+                path = self.continuation_authorization.parent / 'continuation-status.json'
+                previous = luna.read(path) if path.exists() else {}
+                scoped = Counter('recovery_pending' if self.records.get(vid, {}).get('status') == 'failed' and self.candidate_pending(vid)
+                                 else self.records.get(vid, {}).get('status', 'unadmitted') for vid in self.continuation['candidate_ids'])
+                audit.atomic(path, {**previous, 'continuation_id': self.continuation_id,
+                    'plan_sha256': self.continuation['plan_sha256'], 'time': audit.now(), 'pid': os.getpid(),
+                    'phase': self.phase, 'error': self.error, 'counts': dict(scoped),
+                    'target_candidate_count': len(self.continuation['candidate_ids']),
+                    'covered': sum(scoped[state] for state in TERMINAL),
+                    'remaining': sum(count for state, count in scoped.items() if state not in TERMINAL),
+                    'active_batches': [dict(self.active_batches[name]) for name in sorted(self.active_batches)]})
 
     def pulse(self):
         while not self.stop.wait(30):
@@ -375,10 +550,12 @@ class Runner:
             if shutil.disk_usage(self.root).free < 10 * 1024**3:
                 self.save(vid, 'failed', stage='disk_space_low', error='disk_space_low: less than 10 GiB free; no render attempted')
                 return None
-            self.save(vid, 'preparing')
+            recovery = getattr(self, 'recovery_proofs', {}).get(vid)
+            admission = {'recovery_attempted_at': audit.now(), 'recovery_prior_record_sha256': recovery['record_sha256']} if recovery and self.records.get(vid, {}).get('status') == 'failed' else {}
+            self.save(vid, 'preparing', **admission)
             packet = luna.read(self.input / 'candidates' / f'{vid}.json')
             if audit.digest(packet) != item['packet_sha256']:
-                raise ValueError('Input packet changed since manifest')
+                raise ContinuationIntegrityError('Input packet changed since manifest')
             try:
                 recipe = seed(packet, self.sources[vid])
             except ValueError as exc:
@@ -390,7 +567,19 @@ class Runner:
             args = SimpleNamespace(output=self.root / 'rendered', max_transfer_bytes=256 * 1024**2)
             with self.render_slots:
                 luna.check_stop(self.root)
-                result = media.render(args, recipe, packet, valid)
+                cached = self.records.get(vid, {}).get('directory')
+                if cached and (Path(cached) / 'result.json').exists():
+                    from bounded_window_cache import open_window
+                    directory = Path(cached).resolve()
+                    if not directory.is_relative_to(self.root):
+                        raise ValueError('Prepared media directory is outside this run')
+                    open_window(directory, self.input)
+                    if audit.digest(luna.read(directory / 'recipe.json')) != audit.digest(recipe):
+                        raise ValueError('Prepared recipe differs from its frozen source envelope')
+                    media.verify_current_source(packet['gcs_object'])
+                    result = luna.read(directory / 'result.json')
+                else:
+                    result = media.render(args, recipe, packet, valid)
             directory = Path(result['clip_path']).parent
             self.save(vid, 'transcribing', directory=str(directory), transfer=result['transfer'], output_bytes=result['output_bytes'])
             luna.check_stop(self.root)
@@ -403,7 +592,12 @@ class Runner:
         except luna.OperationalPause:
             self.pause_candidates([item], 'preparation')
             return None
+        except ContinuationIntegrityError:
+            raise
         except Exception as exc:
+            if self.stop_requested():
+                self.pause_candidates([item], 'preparation')
+                return None
             self.save(vid, 'failed', stage='preparation', error=f'{type(exc).__name__}: {exc}')
             return None
         finally:
@@ -411,6 +605,12 @@ class Runner:
                 self.active_ids.discard(vid)
 
     def batch_slots(self):
+        if getattr(self, 'continuation_id', None):
+            plan = self.continuation_plan()
+            for slot in plan['slots']:
+                if any(self.candidate_pending(vid) for vid in slot['execution_candidate_ids']):
+                    yield self.root / 'batches' / slot['batch_name'], slot['items']
+            return
         if getattr(self, 'stream_id', None):
             plan = self.stream_plan()
             for slot in plan['slots']:
@@ -440,7 +640,12 @@ class Runner:
             if batch.name in self.batch_claims:
                 raise RuntimeError('Batch already submitted in this runner: ' + batch.name)
             self.batch_claims.add(batch.name)
-            group = [row for row in slot if self.records.get(row['candidate_id'], {}).get('status') not in TERMINAL]
+            executable = None
+            if getattr(self, 'continuation', None):
+                frozen = next(item for item in self.continuation['slots'] if item['batch_name'] == batch.name)
+                executable = set(frozen['execution_candidate_ids'])
+            group = [row for row in slot if self.candidate_pending(row['candidate_id'])
+                     and (executable is None or row['candidate_id'] in executable)]
             self.active_batches[batch.name] = {'name': batch.name, 'phase': 'preparing',
                                                'candidate_ids': [row['candidate_id'] for row in group]}
         stage = 'preparation'
@@ -462,7 +667,12 @@ class Runner:
                     return not any(self.records.get(row['candidate_id'], {}).get('status') == 'failed' for row in group)
             stage = 'luna'
             self.batch_phase(batch, 'luna')
-            plan = bound_batch_plan(batch, [row['candidate_id'] for row in slot], directories, self.input / 'candidates')
+            try:
+                plan = bound_batch_plan(batch, [row['candidate_id'] for row in slot], directories, self.input / 'candidates')
+            except ValueError as exc:
+                if getattr(self, 'continuation', None):
+                    raise ContinuationIntegrityError('Frozen paid batch evidence failed: ' + str(exc)) from exc
+                raise
             if any(row['candidate_id'] not in plan['candidate_ids'] and self.records.get(row['candidate_id'], {}).get('status') not in TERMINAL for row in group):
                 raise ValueError('Nonterminal candidate was not part of frozen paid batch; explicit reconciliation required')
             for vid in plan['candidate_ids']:
@@ -490,13 +700,21 @@ class Runner:
                 except luna.OperationalPause:
                     raise
                 except Exception as exc:
+                    if self.stop_requested():
+                        raise luna.OperationalPause('Publication interrupted during operator pause') from exc
                     self.save(vid, 'failed', stage='publication', error=f'{type(exc).__name__}: {exc}', retry_recipe=str(recipe), retry_media=str(clip))
             with self.lock:
                 return not any(self.records[row['candidate_id']]['status'] == 'failed' for row in group)
         except luna.OperationalPause:
             self.pause_candidates(group, stage)
             return True
+        except ContinuationIntegrityError:
+            self.pause_candidates(group, 'integrity_failure')
+            raise
         except Exception as exc:
+            if self.stop_requested():
+                self.pause_candidates(group, stage)
+                return True
             for item in group:
                 vid = item['candidate_id']
                 if self.records.get(vid, {}).get('status') not in TERMINAL:
@@ -539,11 +757,16 @@ class Runner:
                 active.remove(future)
                 try:
                     succeeded = future.result()
+                except ContinuationIntegrityError as exc:
+                    succeeded = False
+                    stop_error = 'Immutable continuation integrity failure: ' + str(exc)
+                    self.phase, self.error = 'draining_after_integrity_failure', stop_error
+                    self.heartbeat()
                 except Exception as exc:
                     succeeded = False
                     self.error = f'{type(exc).__name__}: {exc}'
                 failures = 0 if succeeded else failures + 1
-                if failures >= 3 and stop_error is None:
+                if failures >= 3 and stop_error is None and not getattr(self, 'continuation_id', None):
                     stop_error = 'Three consecutive batch failures; stopped scheduling and drained active work before resume'
                     self.phase = 'draining_after_batch_failures'
                     self.error = stop_error
@@ -733,12 +956,21 @@ class Runner:
         phase('experiment_completed', 'finished_at')
 
     def run(self):
+        # Validate immutable authorization and all protected checkpoint bytes
+        # before preflight queries, imports, candidate writes, or paid work.
+        continuation_plan = self.continuation_plan() if self.continuation_id else None
+        if continuation_plan:
+            path = self.continuation_authorization.parent / 'continuation-status.json'
+            status = luna.read(path) if path.exists() else {'started_at': audit.now(), 'attempts': []}
+            status['attempts'].append({'pid': os.getpid(), 'started_at': audit.now()})
+            audit.atomic(path, status)
         thread = threading.Thread(target=self.pulse, daemon=True)
         thread.start()
         try:
             luna.check_stop(self.root)
             stream_plan = self.stream_plan() if self.stream_id else None
-            admitted_ids = set(stream_plan['candidate_ids']) if stream_plan else None
+            admission = continuation_plan or stream_plan
+            admitted_ids = set(admission['candidate_ids']) if admission else None
             self.phase = 'verifying_previous_publications'
             for vid, receipt in self.prior.items():
                 luna.check_stop(self.root)
@@ -770,6 +1002,8 @@ class Runner:
                 self.run_experiment()
                 return
             self.phase = 'processing_batches'
+            if continuation_plan:
+                self.phase = 'continuation_processing'
             if self.stream_id:
                 plan = stream_plan
                 self.limit = None  # The immutable stream slots are the admission bound.
@@ -790,13 +1024,31 @@ class Runner:
                     counts=dict(Counter(self.records.get(vid, {}).get('status', 'pending') for vid in plan['candidate_ids'])))
                 audit.atomic(status_path, status)
                 return
+            if continuation_plan:
+                # Recheck every protected baseline and original paid batch plan.
+                self.continuation_plan()
+                if any(self.candidate_pending(vid) for vid in continuation_plan['candidate_ids']):
+                    raise ValueError('Continuation exhausted its slots without complete candidate dispositions')
+                self.phase = 'continuation_completed'
+                path = self.continuation_authorization.parent / 'continuation-status.json'
+                status = luna.read(path)
+                status.update(finished_at=audit.now(), phase=self.phase)
+                audit.atomic(path, status)
+                verify(self.root)
+                return
             self.phase = 'coverage_finished'
             verify(self.root)
         except luna.OperationalPause:
             self.phase, self.error = 'paused', None
             audit.atomic(self.root / 'pause-status.json', {'phase': 'paused', 'drained_at': audit.now(),
                 'reason': 'Operator STOP.json; in-flight operations finished before return',
-                'stream_id': self.stream_id, 'experiment_id': self.experiment_id})
+                'stream_id': self.stream_id, 'experiment_id': self.experiment_id,
+                'continuation_id': self.continuation_id})
+            if continuation_plan:
+                path = self.continuation_authorization.parent / 'continuation-status.json'
+                status = luna.read(path)
+                status.update(phase='paused', drained_at=audit.now())
+                audit.atomic(path, status)
             if self.stream_id:
                 path = self.root / 'stream-status.json'
                 status = luna.read(path) if path.exists() else {'stream_id': self.stream_id}
@@ -823,6 +1075,9 @@ def main():
     parser.add_argument('--experiment-id')
     parser.add_argument('--stream-id')
     parser.add_argument('--max-candidates', type=int, choices=range(1, 6))
+    parser.add_argument('--continuation-id')
+    parser.add_argument('--continuation-authorization', type=Path)
+    parser.add_argument('--continuation-plan-only', action='store_true', help='Freeze/verify admission without network or execution')
     args = parser.parse_args()
     if args.private_env_file:
         private_environment(args.private_env_file)
@@ -832,8 +1087,16 @@ def main():
         raise SystemExit(0 if result['passed'] else 1)
     args.root.mkdir(parents=True, exist_ok=True)
     with runner_lock(args.root / 'runner.lock'):
-        Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers,
-               args.experiment_id, args.stream_id, args.max_candidates).run()
+        runner = Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers,
+                        args.experiment_id, args.stream_id, args.max_candidates, args.continuation_id, args.continuation_authorization)
+        if args.continuation_plan_only:
+            if not args.continuation_id:
+                parser.error('--continuation-plan-only requires --continuation-id and --continuation-authorization')
+            plan = runner.continuation_plan()
+            print(json.dumps({'plan_sha256': plan['plan_sha256'], 'target_candidate_count': plan['target_candidate_count'],
+                              'slot_count': len(plan['slots']), 'protected_prior_records': len(plan['protected_record_sha256'])}))
+        else:
+            runner.run()
 
 
 if __name__ == '__main__':
