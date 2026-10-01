@@ -2,6 +2,7 @@
 """Publish a verified Astra clip once; original source media remains untouched."""
 import argparse,base64,hashlib,json,os,re,subprocess
 from contextlib import contextmanager
+from functools import wraps
 from pathlib import Path
 from urllib.parse import quote
 import google.auth
@@ -57,6 +58,21 @@ def publication_lock(path):
             else:
                 import fcntl
                 fcntl.flock(handle,fcntl.LOCK_UN)
+
+
+def publication_locked(function):
+    """Serialize the complete publication body without hiding its audited AST."""
+    @wraps(function)
+    def locked(recipe_path,media_path,qa_path,out,min_release_confidence=0.95,
+               scope_plan=None,scope_authorization=None):
+        recipe_path,media_path,qa_path,out=map(Path,(recipe_path,media_path,qa_path,out))
+        # Real production receipts live at root/publications/<id>.json. Legacy/test
+        # callers retain their existing directory while still getting an OS lock.
+        root=out.parent.parent if out.parent.name=='publications' else out.parent
+        with publication_lock(root/'publication.lock'):
+            return function(recipe_path,media_path,qa_path,out,min_release_confidence,
+                            scope_plan,scope_authorization)
+    return locked
 
 
 def process_alive(pid):
@@ -335,7 +351,8 @@ def active_fixed_owner_authority(root):
     return authorization_path,plan_path
 
 
-def _publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95,scope_plan=None,scope_authorization=None):
+@publication_locked
+def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95,scope_plan=None,scope_authorization=None):
     recipe=json.loads(recipe_path.read_text());qa=json.loads(qa_path.read_text())
     if recipe['decision'] not in ('approve','revise') or not recipe['clip_worthy']:raise ValueError('Not approved')
     if bool(scope_plan)!=bool(scope_authorization):raise ValueError('Scope plan and authorization must be supplied together')
@@ -399,15 +416,6 @@ def _publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95,scop
     receipt={'passed':True,'time':audit.now(),'snippet_id':sid,'video_id':vid,'gcs_url':public,'gcs_generation':stored['generation'],'media_sha256':sha,'recipe_hash':rh,'uploaded_bytes':media_path.stat().st_size,'row':{k:str(v) for k,v in rows[0].items()},'query_jobs':jobs,'query_bytes_billed':sum(j['bytes_billed'] for j in jobs)}
     audit.atomic(out,receipt);print(json.dumps(receipt,indent=2))
     audit.atomic(attempt_path,{'time':audit.now(),'candidate_id':vid,'status':'verified','receipt':str(out),'query_jobs':jobs})
-
-
-def publish(recipe_path,media_path,qa_path,out,min_release_confidence=0.95,scope_plan=None,scope_authorization=None):
-    recipe_path,media_path,qa_path,out=map(Path,(recipe_path,media_path,qa_path,out))
-    # Real production receipts live at root/publications/<id>.json. Legacy/test
-    # callers retain their existing directory while still getting an OS lock.
-    root=out.parent.parent if out.parent.name=='publications' else out.parent
-    with publication_lock(root/'publication.lock'):
-        return _publish(recipe_path,media_path,qa_path,out,min_release_confidence,scope_plan,scope_authorization)
 
 if __name__=='__main__':
     p=argparse.ArgumentParser();p.add_argument('--recipe',type=Path,required=True);p.add_argument('--media',type=Path,required=True);p.add_argument('--qa',type=Path,required=True);p.add_argument('--out',type=Path,required=True);p.add_argument('--min-release-confidence',type=float,default=0.95);p.add_argument('--scope-plan',type=Path);p.add_argument('--scope-authorization',type=Path);a=p.parse_args();publish(a.recipe,a.media,a.qa,a.out,a.min_release_confidence,a.scope_plan,a.scope_authorization)

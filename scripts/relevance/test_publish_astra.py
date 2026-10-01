@@ -296,4 +296,12 @@ class PublishTests(unittest.TestCase):
                                       capture_output=True,text=True,timeout=10)
             self.assertEqual(result.returncode,17,result.stdout+result.stderr)
 
+    def test_publish_callable_acquires_lock_before_entering_guarded_body(self):
+        with tempfile.TemporaryDirectory() as d:
+            root=Path(d)
+            with p.publication_lock(root/'publication.lock'):
+                with self.assertRaises(p.PublicationLockBusy):
+                    p.publish(root/'missing-recipe.json',root/'missing-media.mp4',
+                              root/'missing-qa.json',root/'receipt.json')
+
 if __name__=='__main__':unittest.main()

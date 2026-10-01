@@ -95,6 +95,25 @@ class CodeVerificationTests(unittest.TestCase):
         self.assertFalse(report['checks']['private_env_outside_repository'])
         self.assertFalse(report['checks']['private_env_untracked'])
 
+    def test_callable_decorator_preserves_audited_publication_guard_body(self):
+        (self.repo / verifier.CORE[2]).write_text(
+            'def publication_locked(function):\n'
+            '    def locked(*args, **kwargs):\n'
+            '        with publication_lock():\n'
+            '            return function(*args, **kwargs)\n'
+            '    return locked\n\n'
+            '@publication_locked\n'
+            'def publish():\n'
+            '    if not verified:\n'
+            '        raise ValueError("blocked")\n'
+            '    if not current_scope:\n'
+            '        raise ValueError("wrong scope")\n'
+            '    return True\n')
+        report=self.verify()
+        self.assertTrue(report['checks']['original_publication_guards_preserved'],report['publication_guards'])
+        self.assertEqual(report['publication_guards']['base_guard_count'],1)
+        self.assertEqual(report['publication_guards']['current_guard_count'],2)
+
     def test_extra_stop_gate_does_not_change_role_binding_sections(self):
         self.edit('    body = build_request(packages)', '    check_stop(output)\n    body = build_request(packages)')
         self.assertTrue(self.verify()['checks']['request_roles_and_post_response_gates_unchanged'])
