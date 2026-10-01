@@ -541,6 +541,37 @@ class Runner:
             except Exception as exc:
                 print('Heartbeat error:', str(exc), flush=True)
 
+    def isolated_source_failure(self, vid, exc):
+        """Exclude only concrete unavailable/short sources from the outage breaker."""
+        response = getattr(exc, 'response', None)
+        if isinstance(exc, requests.HTTPError) and response is not None and response.status_code in (404, 410):
+            return 'source_missing_' + str(response.status_code)
+        if str(exc) != 'Output QA failed':
+            return None
+        try:
+            packet = luna.read(self.input / 'candidates' / f'{vid}.json')
+            recipe = luna.read(self.root / 'recipes' / f'{vid}.json')
+            for directory in (self.root / 'rendered').glob(vid + '-*'):
+                if not all((directory / name).exists() for name in ('qa.json', 'recipe.json', 'source.json', 'source-ffprobe.json', 'transfer.json')):
+                    continue
+                if luna.read(directory / 'recipe.json') != recipe:
+                    continue
+                source = luna.read(directory / 'source.json')
+                if any(str(source.get(key)) != str(packet['gcs_object'][key]) for key in ('bucket', 'name', 'generation', 'size')):
+                    continue
+                qa = luna.read(directory / 'qa.json').get('checks', {})
+                required = {'video', 'audio', 'duration', 'native_dimensions', 'native_fps', 'full_decode'}
+                if (not required <= set(qa) or qa.get('duration') is not False
+                        or not all(value is True for key, value in qa.items() if key != 'duration')
+                        or luna.read(directory / 'transfer.json').get('errors')):
+                    continue
+                duration = float(luna.read(directory / 'source-ffprobe.json')['format']['duration'])
+                if max(edit['end_seconds'] for edit in recipe['edits']) > duration + .3:
+                    return 'source_eof_duration_mismatch'
+        except (OSError, ValueError, KeyError, TypeError):
+            pass
+        return None
+
     def prepare(self, item):
         vid = item['candidate_id']
         try:
@@ -598,7 +629,8 @@ class Runner:
             if self.stop_requested():
                 self.pause_candidates([item], 'preparation')
                 return None
-            self.save(vid, 'failed', stage='preparation', error=f'{type(exc).__name__}: {exc}')
+            self.save(vid, 'failed', stage='preparation', error=f'{type(exc).__name__}: {exc}',
+                      isolated_source_failure=self.isolated_source_failure(vid, exc))
             return None
         finally:
             with self.lock:
@@ -747,7 +779,19 @@ class Runner:
                     except StopIteration:
                         exhausted = True
                         break
-                    future = pool.submit(self.process_batch, batch, slot)
+                    def process(batch=batch, slot=slot):
+                        succeeded = self.process_batch(batch, slot)
+                        if succeeded or not getattr(self, 'continuation_id', None):
+                            return succeeded
+                        failed = [self.records.get(item['candidate_id'], {}) for item in slot
+                                  if self.records.get(item['candidate_id'], {}).get('status') == 'failed']
+                        # A bad/missing source is an isolated terminal skip. Every
+                        # unclassified, provider, auth, ASR, or publication failure
+                        # retains the existing three-consecutive-batch breaker.
+                        return bool(failed) and all(row.get('stage') == 'preparation' and row.get('isolated_source_failure')
+                                                    in ('source_missing_404', 'source_missing_410', 'source_eof_duration_mismatch')
+                                                    for row in failed)
+                    future = pool.submit(process)
                     active.add(future)
                     future.add_done_callback(completed.put)
                     submitted += 1
@@ -766,7 +810,7 @@ class Runner:
                     succeeded = False
                     self.error = f'{type(exc).__name__}: {exc}'
                 failures = 0 if succeeded else failures + 1
-                if failures >= 3 and stop_error is None and not getattr(self, 'continuation_id', None):
+                if failures >= 3 and stop_error is None:
                     stop_error = 'Three consecutive batch failures; stopped scheduling and drained active work before resume'
                     self.phase = 'draining_after_batch_failures'
                     self.error = stop_error

@@ -115,18 +115,73 @@ class ContinuationTests(unittest.TestCase):
         self.assertEqual(runner.records[ids[0]]['status'], 'paused')
         self.assertEqual(runner.records[ids[1]]['status'], 'awaiting_astra')
 
-    def test_known_batch_failures_do_not_stop_continuation_but_integrity_failure_does(self):
+    def test_systemic_batch_failures_stop_continuation_after_three_and_drain(self):
         runner = self.runner()
         slots = [(self.root / 'batches' / str(i), []) for i in range(8)]
         with patch.object(runner, 'batch_slots', return_value=iter(slots)), \
                 patch.object(runner, 'process_batch', return_value=False) as process:
-            self.assertTrue(runner.run_batches())
-            self.assertEqual(process.call_count, 8)
+            with self.assertRaisesRegex(RuntimeError, 'Three consecutive batch failures'):
+                runner.run_batches()
+            self.assertGreaterEqual(process.call_count, 3)
+            self.assertLessEqual(process.call_count, 4)
         with patch.object(runner, 'batch_slots', return_value=iter(slots)), \
                 patch.object(runner, 'process_batch', side_effect=p.ContinuationIntegrityError('frozen packet changed')) as process:
             with self.assertRaisesRegex(RuntimeError, 'Immutable continuation integrity failure'):
                 runner.run_batches()
             self.assertLessEqual(process.call_count, 2)
+
+    def test_proven_source_skips_continue_but_asr_provider_auth_and_publication_failures_count(self):
+        for stage, cause, stopped in [('preparation', 'source_missing_404', False),
+                                      ('preparation', 'source_missing_410', False),
+                                      ('preparation', 'source_eof_duration_mismatch', False),
+                                      ('preparation', None, True), ('luna', None, True),
+                                      ('publication', 'source_missing_404', True)]:
+            with self.subTest(stage=stage, cause=cause):
+                runner = self.runner()
+                slots = [(self.root / 'batches' / str(i), [self.candidates[i]]) for i in range(8)]
+                def process(batch, slot):
+                    runner.records[slot[0]['candidate_id']] = {'candidate_id': slot[0]['candidate_id'], 'status': 'failed', 'stage': stage,
+                                                              'isolated_source_failure': cause}
+                    return False
+                with patch.object(runner, 'batch_slots', return_value=iter(slots)), patch.object(runner, 'process_batch', side_effect=process) as work:
+                    if stopped:
+                        with self.assertRaisesRegex(RuntimeError, 'Three consecutive batch failures'):
+                            runner.run_batches()
+                        self.assertLessEqual(work.call_count, 4)
+                    else:
+                        self.assertTrue(runner.run_batches())
+                        self.assertEqual(work.call_count, 8)
+
+    def test_missing_source_classifier_never_exempts_auth_or_unknown_errors(self):
+        runner = self.runner()
+        for code in (404, 410, 401, 403, 429, 503):
+            response = p.requests.Response()
+            response.status_code = code
+            error = p.requests.HTTPError('concrete HTTP response', response=response)
+            self.assertEqual(runner.isolated_source_failure('vid', error),
+                             'source_missing_' + str(code) if code in (404, 410) else None)
+        self.assertIsNone(runner.isolated_source_failure('vid', RuntimeError('404 text is not HTTP evidence')))
+
+    def test_eof_classifier_requires_duration_only_failure_and_matching_short_source(self):
+        runner = self.runner()
+        vid = self.candidates[0]['candidate_id']
+        obj = {'bucket': 'b', 'name': 'n', 'generation': 'g', 'size': '50'}
+        p.audit.atomic(runner.input / 'candidates' / f'{vid}.json', {'gcs_object': obj})
+        recipe = {'edits': [{'start_seconds': 10, 'end_seconds': 100}]}
+        p.audit.atomic(self.root / 'recipes' / f'{vid}.json', recipe)
+        directory = self.root / 'rendered' / (vid + '-test')
+        p.audit.atomic(directory / 'recipe.json', recipe)
+        p.audit.atomic(directory / 'source.json', obj)
+        p.audit.atomic(directory / 'source-ffprobe.json', {'format': {'duration': 98}})
+        p.audit.atomic(directory / 'transfer.json', {'errors': []})
+        qa = {'video': True, 'audio': True, 'duration': False, 'native_dimensions': True, 'native_fps': True, 'full_decode': True}
+        p.audit.atomic(directory / 'qa.json', {'checks': qa})
+        self.assertEqual(runner.isolated_source_failure(vid, ValueError('Output QA failed')), 'source_eof_duration_mismatch')
+        p.audit.atomic(directory / 'qa.json', {'checks': {**qa, 'native_fps': False}})
+        self.assertIsNone(runner.isolated_source_failure(vid, ValueError('Output QA failed')))
+        p.audit.atomic(directory / 'qa.json', {'checks': qa})
+        p.audit.atomic(directory / 'source-ffprobe.json', {'format': {'duration': 101}})
+        self.assertIsNone(runner.isolated_source_failure(vid, ValueError('Output QA failed')))
 
     def test_full_scope_retains_old_paid_membership_and_protects_all_prior_dispositions(self):
         for index in range(49):
