@@ -23,7 +23,7 @@ gcloud run jobs update bunny-downloader --region us-central1 --project youtubetr
 ```
 
 ## Bunny-only mode and existing GCS copies
-When `videos/{id}.mp4` already exists in GCS, bunny-only mode hands that copy to Bunny. If Bunny can't make a
+When `videos/{id}.mp4` already exists in GCS and ffprobe finds a video stream, bunny-only mode hands that copy to Bunny. (Bunny encodes an audio-only file into a 720p speaker-icon video, so the probe has to come first.) If Bunny can't make a
 video from it (an audio-only or broken copy, or a failed fetch), the asset is deleted and the RapidAPI path runs.
 Before 2026-10-01 it skipped these videos as "already in GCS", so they never reached Bunny.
 
