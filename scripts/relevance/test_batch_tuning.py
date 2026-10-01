@@ -39,7 +39,7 @@ class BatchTuningTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             p.Runner(self.root, 'whisper', batch_workers=4, continuation_id=self.job, continuation_authorization=self.auth)
 
-    def test_signed_authorization_bound_to_frozen_plan_allows_four(self):
+    def test_hash_bound_authorization_bound_to_frozen_plan_allows_four(self):
         path = self.tuning(self.frozen_plan_sha())
         runner = p.Runner(
             self.root, 'whisper', batch_workers=4, continuation_id=self.job, continuation_authorization=self.auth,
@@ -56,7 +56,7 @@ class BatchTuningTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'different continuation plan'):
             runner.continuation_plan()
 
-    def test_unsigned_overcap_or_changed_local_caps_are_rejected(self):
+    def test_self_hash_mismatch_overcap_or_changed_local_caps_are_rejected(self):
         sha = self.frozen_plan_sha()
         for changes in ({'maximum_batch_workers': 7}, {'render_slots': 3}, {'asr_slots': 2},
                         {'maximum_batch_members': 6}, {'continuation_id': 'OTHER-JOB'},
@@ -68,7 +68,7 @@ class BatchTuningTests(unittest.TestCase):
         tampered = p.luna.read(path)
         tampered['maximum_batch_workers'] = 5
         p.audit.atomic(path, tampered)
-        with self.assertRaisesRegex(ValueError, 'unsigned'):
+        with self.assertRaisesRegex(ValueError, 'self-hash mismatch'):
             p.load_batch_tuning(path, self.job)
 
     def test_tuning_requires_continuation(self):

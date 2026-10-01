@@ -107,15 +107,15 @@ def load_batch_tuning(path, continuation_id):
     """
     path = Path(path).resolve()
     tuning = luna.read(path)
-    unsigned = {key: value for key, value in tuning.items() if key != 'authorization_sha256'}
+    hash_payload = {key: value for key, value in tuning.items() if key != 'authorization_sha256'}
     maximum = tuning.get('maximum_batch_workers')
     if (tuning.get('schema_version') != 'snippy-batch-tuning-v1' or tuning.get('continuation_id') != continuation_id
             or type(maximum) is not int or not 2 <= maximum <= TUNING_MAX_BATCH_WORKERS
             or tuning.get('maximum_batch_members') != 5 or tuning.get('render_slots') != 2 or tuning.get('asr_slots') != 1
             or not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{0,79}', str(tuning.get('tuning_job_id', '')))
             or not re.fullmatch(r'[0-9a-f]{64}', str(tuning.get('continuation_plan_sha256', '')))
-            or tuning.get('authorization_sha256') != audit.digest(unsigned)):
-        raise ValueError('Batch tuning authorization is invalid, unsigned, or exceeds frozen local caps')
+            or tuning.get('authorization_sha256') != audit.digest(hash_payload)):
+        raise ValueError('Batch tuning authorization is invalid, has a self-hash mismatch, or exceeds frozen local caps')
     if getattr(luna.RENDER_LOCK, '_initial_value', None) != 2 or not isinstance(luna.ASR_LOCK, type(threading.Lock())):
         raise ValueError('Local render/ASR caps differ from the tuning authorization')
     control = Path(tuning.get('control_path', ''))
