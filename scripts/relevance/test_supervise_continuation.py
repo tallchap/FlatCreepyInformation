@@ -178,6 +178,30 @@ class Tests(unittest.TestCase):
     def test_actual_current_process_is_alive(self):
         self.assertTrue(module.alive(module.os.getpid()))
 
+    def test_no_compute_before_successful_initial_remote_read(self):
+        supervisor = self.supervisor()
+        with patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        launch.assert_not_called()
+        self.assertEqual('waiting_for_initial_remote_control_read', supervisor.state['phase'])
+
+    def test_first_remote_pause_is_applied_before_any_compute(self):
+        supervisor = self.supervisor()
+        supervisor.first_remote_success.set()
+        original = supervisor.apply_controls
+        calls = []
+        def apply():
+            calls.append(1)
+            # First loop scan precedes reader delivery; the launch-boundary
+            # scan must observe the already-successful reader's request.
+            if len(calls) == 2:
+                module.submit_control(self.config, 'PAUSE', source='relay_log', identifier='first-remote-pause')
+            original()
+        with patch.object(supervisor, 'apply_controls', side_effect=apply), patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        launch.assert_not_called()
+        self.assertEqual('paused', supervisor.control['desired'])
+
 
 if __name__ == '__main__':
     unittest.main()

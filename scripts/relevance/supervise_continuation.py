@@ -32,6 +32,7 @@ def read(path, default=None):
 
 
 def atomic(path, value):
+    from audit import replace_with_retry
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name('.' + path.name + '.' + uuid.uuid4().hex + '.tmp')
@@ -40,7 +41,7 @@ def atomic(path, value):
             json.dump(value, stream, indent=2, ensure_ascii=False)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
 
@@ -193,6 +194,7 @@ class Supervisor:
         self.open_logs = []
         self.finished = False
         self.last_remote_success = time.monotonic()
+        self.first_remote_success = threading.Event()
         self._coverage_cache, self._coverage_at = None, 0
         self.env = dict(os.environ, PYTHONUTF8='1', RELAY_SESSION_FILE=config['relay_session_file'],
             RELAY_SESSION_PINNED='1', RELAY_INSTANCE=config['instance'],
@@ -260,6 +262,7 @@ class Supervisor:
                 self.save(last_remote_poll_at=now(), remote_poll_error=None, remote_blob_sha=blob,
                           remote_control_count=len(history))
                 self.last_remote_success = time.monotonic()
+                self.first_remote_success.set()
             except Exception as exc:
                 self.save(remote_poll_error=f'{type(exc).__name__}: {exc}', remote_poll_failed_at=now())
                 if isinstance(exc, ValueError):
@@ -567,7 +570,14 @@ class Supervisor:
                         else:
                             self.save(phase='draining')
                     elif self.server is None:
-                        self.start_asr()
+                        if not self.first_remote_success.is_set():
+                            self.save(phase='waiting_for_initial_remote_control_read')
+                        else:
+                            # The reader writes requests before setting readiness.
+                            # Re-read them here to close the first-poll/launch race.
+                            self.apply_controls()
+                            if self.control['desired'] == 'running':
+                                self.start_asr()
                     elif self.state.get('phase') == 'asr_starting':
                         self.asr_ready()
                     elif self.server.poll() is not None:
