@@ -330,8 +330,8 @@ class Supervisor:
                     self.pending_tasks.discard(kind)
                 self.jobs.task_done()
 
-    def coverage(self):
-        if self._coverage_cache and time.monotonic() - self._coverage_at < 5:
+    def coverage(self, force=False):
+        if not force and self._coverage_cache and time.monotonic() - self._coverage_at < 5:
             return self._coverage_cache
         rows = [read(path) for path in (self.root / 'records').glob('*.json')]
         counts = dict(Counter(row.get('status', 'unknown') for row in rows))
@@ -576,6 +576,7 @@ class Supervisor:
                         self.start_runner()
                     elif self.runner is not None and self.runner.poll() is not None:
                         status = read(self.root / 'status.json')
+                        coverage = self.coverage(force=True)
                         complete = (self.runner.returncode == 0 and status.get('phase') == 'continuation_completed'
                                     and coverage['remaining'] == 0)
                         atomic(self.root / 'STOP.json', {'time': now(), 'job_id': self.config['job_id'],
