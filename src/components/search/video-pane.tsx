@@ -36,7 +36,7 @@ export function VideoPane({
           <a
             href={`/edit?v=${videoId}`}
             target="_blank"
-            className="inline-flex items-center px-4 py-1.5 text-xs font-semibold text-[#faf6ee] bg-[#1f2e25] rounded-full transition-colors hover:bg-[#2f4537]"
+            className="inline-flex items-center px-4 py-1.5 text-xs font-semibold text-[#faf6ee] bg-[#a35a33] rounded-full transition-colors hover:bg-[#8f4d2b]"
           >
             Snip It
           </a>
