@@ -39,10 +39,13 @@ interface VectorUploadParams {
   speakerSource: string; // comma-separated speaker names
   languageCode: string;
   segments: TranscriptSegment[];
+  // Upload files for just these speakers (co-speaker attributes still come
+  // from the full speakerSource). Used to backfill one missing speaker.
+  onlySpeakers?: string[];
 }
 
 export async function uploadToVectorStore(params: VectorUploadParams): Promise<void> {
-  const { videoId, title, channel, publishedDate, duration, speakerSource, languageCode, segments } = params;
+  const { videoId, title, channel, publishedDate, duration, speakerSource, languageCode, segments, onlySpeakers } = params;
 
   if (!process.env.OPENAI_API_KEY) {
     console.error("Vector upload skipped: OPENAI_API_KEY not set");
@@ -75,7 +78,10 @@ export async function uploadToVectorStore(params: VectorUploadParams): Promise<v
   const publishedYear = publishedDate ? Number(publishedDate.split("-")[0]) || null : null;
   const dateStr = publishedDate || "Unknown";
 
+  const onlySlugs = onlySpeakers ? new Set(onlySpeakers.map(slugify)) : null;
+
   for (const speaker of allSpeakers) {
+    if (onlySlugs && !onlySlugs.has(slugify(speaker))) continue;
     const speakerSlug = slugify(speaker);
     const others = allSpeakers
       .filter((s) => s !== speaker)
