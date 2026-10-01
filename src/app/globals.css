@@ -296,3 +296,32 @@ video::-webkit-media-controls-picture-in-picture-button {
 .site-main{padding:24px 48px}
 @media(max-width:900px){.site-header{padding:0 24px}.site-main{padding:20px 24px}.site-brand{font-size:24px}.site-link{padding:9px 12px;font-size:12px}}
 @media(max-width:650px){.site-header{height:auto;min-height:111px;flex-direction:column;justify-content:center;gap:12px;padding:14px 18px 12px}.site-brand{font-size:25px;letter-spacing:-1.3px}.site-brand img{height:38px;width:35px}.site-links{gap:2px}.site-link{font-size:11px;padding:7px 13px}.site-main{padding:15px 18px}}
+
+/* Cream page surface — the Browse look (src/components/browse/browse.module.css), shared by Chat, Search and
+   Transcribe and mirrored by Snippy Daily (tallchap/snippy-daily-clips site/public/public.css). It bleeds 16px into
+   .site-main's padding like Browse's .surface, re-points the shadcn tokens to the cream palette so Card/Button/Input/
+   Select pick it up unchanged, and turns buttons into pills. Portalled popovers/dialogs render outside it and keep
+   the default white theme. */
+.cream-surface{
+  --forest:#1f2e25;--cream:#faf6ee;--tan:#f5ecd2;--rule:#e6dfcc;--outline:#d4cdb8;--ink-muted:#706e66;
+  --display:var(--font-display),Georgia,serif;
+  --background:var(--cream);--foreground:var(--forest);--card:#fff;--card-foreground:var(--forest);
+  --primary:var(--forest);--primary-foreground:var(--cream);--secondary:var(--tan);--secondary-foreground:var(--forest);
+  --muted:var(--tan);--muted-foreground:var(--ink-muted);--accent:var(--tan);--accent-foreground:var(--forest);
+  --border:var(--rule);--input:var(--outline);--ring:var(--forest);
+  margin:-16px;min-height:calc(100vh - 150px);padding:36px 36px 80px;background:var(--cream);color:var(--forest);
+}
+.cream-surface :is(button,a,input,textarea,select,[role=combobox]):focus-visible{outline:2px solid var(--forest);outline-offset:3px}
+.cream-surface :is([data-slot=button],[data-slot=dialog-trigger]){border-radius:999px;font-weight:600}
+.cream-surface :is([data-slot=button],[data-slot=dialog-trigger])[class*="bg-primary"]:hover:not(:disabled){background:#2f4537}
+.cream-surface :is([data-slot=button],[data-slot=dialog-trigger])[class*="bg-background"]{border-width:1.5px;border-color:var(--outline);background:#fff;box-shadow:none}
+.cream-surface :is([data-slot=button],[data-slot=dialog-trigger]):is([class*="bg-background"],[class*="hover:bg-accent"]):hover:not(:disabled){background:var(--tan)}
+.cream-surface [data-slot=card]{border:1.5px solid var(--rule);border-radius:14px;box-shadow:none}
+.cream-surface :is([data-slot=input],[data-slot=textarea],[data-slot=select-trigger]){background:#fff;border-width:1.5px;border-radius:10px;box-shadow:none}
+.cream-surface :is([data-slot=input],[data-slot=textarea],[data-slot=select-trigger]):focus-visible{border-color:var(--forest);outline:none;box-shadow:0 0 0 3px #1f2e2514}
+/* Page header — Browse's directoryHeader: serif display title, one line of context, a 2px forest rule. */
+.surface-head{display:flex;align-items:flex-end;justify-content:space-between;gap:24px;padding:24px 0 32px;margin-bottom:24px;border-bottom:2px solid var(--forest)}
+.surface-head h1{margin:0;font-family:var(--display);font-size:56px;font-weight:700;line-height:1;letter-spacing:-.02em}
+.surface-head p{margin:12px 0 0;color:#4a4a4a;font-size:16px}
+@media(max-width:900px){.surface-head h1{font-size:44px}}
+@media(max-width:650px){.cream-surface{padding:24px 16px 56px}.surface-head{flex-direction:column;align-items:flex-start;gap:16px;padding:12px 0 24px}.surface-head h1{font-size:36px}}
