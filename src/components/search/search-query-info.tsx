@@ -12,7 +12,7 @@ export function SearchQueryInfo() {
         <Info size={16} />
       </PopoverTrigger>
       <PopoverContent>
-        <div className="p-2 bg-blue-50 rounded-md text-sm">
+        <div className="p-2 bg-[#f5ecd2] rounded-md text-sm">
           <p className="font-medium">Search Tips:</p>
 
           <p>

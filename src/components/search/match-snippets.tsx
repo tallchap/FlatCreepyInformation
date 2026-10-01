@@ -41,7 +41,7 @@ export function MatchSnippets({
         const content = (
           <>
             <span
-              className={isClickable ? "text-blue-600 hover:underline shrink-0" : "text-gray-400 shrink-0"}
+              className={isClickable ? "font-semibold text-[#1f2e25] underline-offset-4 hover:underline shrink-0" : "text-gray-400 shrink-0"}
             >
               {isClickable ? fmt(seconds) : "--:--"}
             </span>

@@ -18,14 +18,14 @@ type Props = {
 
 export function VideoResult({ video, onTimestampClick }: Props) {
   return (
-    <Card className="hover:border-blue-200 transition-all">
+    <Card className="hover:border-[#d4cdb8] transition-all">
       <CardContent>
         <div className="flex flex-col md:flex-row justify-between gap-4">
           <div className="flex flex-col gap-2">
             <Link
               href={video.Youtube_Link}
               rel="noopener noreferrer"
-              className="text-lg font-medium text-blue-800 hover:underline"
+              className="font-[family-name:var(--font-display)] text-xl font-semibold leading-snug text-[#1f2e25] underline-offset-4 hover:underline"
             >
               {video.Video_Title}
             </Link>
