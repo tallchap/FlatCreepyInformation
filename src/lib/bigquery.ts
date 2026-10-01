@@ -2,7 +2,7 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import { TABLE_REFS, useNewTranscriptTables } from "@/lib/bigquery-schema";
 
-function parseServiceAccount(raw: string | undefined) {
+export function parseServiceAccount(raw: string | undefined) {
   if (!raw) return {};
   try {
     return JSON.parse(raw);

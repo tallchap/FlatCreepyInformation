@@ -725,14 +725,18 @@ export async function addToBigQuery(transcript: any, metadata: any) {
       });
     }
 
-    // Rebuild search windows table so new video is immediately searchable
-    await rebuildSearchWindows();
+    // Rebuild search windows table so new video is immediately searchable.
+    // Batch callers (scripts/ingest-batch.ts) set SKIP_SEARCH_WINDOW_REBUILD
+    // and rebuild once at the end instead of once per video.
+    if (process.env.SKIP_SEARCH_WINDOW_REBUILD !== "true") {
+      await rebuildSearchWindows();
+    }
   }
 
   console.log("Successfully stored in BigQuery");
 }
 
-async function rebuildSearchWindows() {
+export async function rebuildSearchWindows() {
   try {
     await bigQuery.query({
       query: `
