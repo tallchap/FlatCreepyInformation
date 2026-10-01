@@ -27,6 +27,8 @@ import uuid
 _CONTROL_THREAD_LOCK = threading.RLock()
 REMOTE_READ_TIMEOUT_SECONDS = 30
 REMOTE_STALE_SECONDS = 90
+FIXED_SUBSET_EXPECTED_COUNT = 340
+FINAL_RESPONSE_INTENT_SCHEMA = 'snippy-fixed-subset-final-response-intent-v1'
 
 
 def now():
@@ -50,6 +52,14 @@ def atomic(path, value):
         replace_with_retry(temporary, path)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def file_sha256(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def object_digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 
 
 def hidden():
@@ -130,6 +140,27 @@ def decode_job(payload, job_id):
     if meta.get('id') != job_id:
         raise ValueError('Remote job ID mismatch')
     return meta, match[2], payload['sha']
+
+
+def parse_relay_show(text, job_id):
+    """Parse the canonical `relay show` frontmatter used for reconciliation."""
+    match = re.match(r'^---\n(.*?)\n---\n', text, re.S)
+    if not match:
+        raise ValueError('Malformed canonical Relay show output')
+    meta = {}
+    for line in match.group(1).splitlines():
+        if ':' not in line:
+            continue
+        key, value = (part.strip() for part in line.split(':', 1))
+        if value.startswith('"') and value.endswith('"'):
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                pass
+        meta[key] = None if value == 'null' else value
+    if meta.get('id') != job_id:
+        raise ValueError('Canonical Relay show returned a different job')
+    return meta
 
 
 def remote_controls(body, authors):
@@ -377,6 +408,9 @@ class Supervisor:
         self.endpoint = None
         self.open_logs = []
         self.finished = False
+        self.pending_final_response = None
+        self.reader_thread = self.worker_thread = None
+        self.background_threads_quiesced = False
         self.remote_lock = threading.Lock()
         self.last_remote_success = time.monotonic()
         self.first_remote_success = threading.Event()
@@ -389,6 +423,87 @@ class Supervisor:
             SNIPPY_ORIGINAL_RANGE_CACHE=config['range_cache'])
         self.control = read(self.cont / 'control-state.json') or {
             'desired': 'running', 'processed_ids': [], 'transitions': [], 'initial_self_test': self_test}
+        self.scope = self.validate_scope_authority()
+        self.authorized_ids = self.scope.get('authorized_candidate_ids')
+        self.owner_record = None
+
+    def validate_scope_authority(self):
+        """Re-read the immutable fixed-subset authority at admission/resume gates."""
+        auth_path = (self.cont / 'authorization.json').resolve()
+        plan_path = (self.cont / 'continuation-plan.json').resolve()
+        if not auth_path.exists() and not plan_path.exists():
+            return {'scope': None}
+        if not auth_path.exists() or not plan_path.exists():
+            raise ValueError('Continuation authorization and plan must either both exist or both be absent')
+        auth, plan = read(auth_path), read(plan_path)
+        if auth.get('scope') != 'fixed_subset_frozen_manifest':
+            return {'scope': auth.get('scope'), 'authorization_file_sha256': file_sha256(auth_path),
+                    'continuation_plan_file_sha256': file_sha256(plan_path)}
+        auth_unsigned = {key: value for key, value in auth.items() if key != 'authorization_sha256'}
+        plan_unsigned = {key: value for key, value in plan.items() if key != 'plan_sha256'}
+        selected_name = auth.get('selected_ids_file')
+        if (auth.get('schema_version') != 'snippy-fixed-subset-authorization-v1'
+                or auth.get('job_id') != self.config['job_id']
+                or auth.get('authorization_sha256') != object_digest(auth_unsigned)
+                or not isinstance(selected_name, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+', selected_name)):
+            raise ValueError('Fixed-subset supervisor authorization identity/self-hash failed')
+        selected_path = (self.cont / selected_name).resolve()
+        if not selected_path.is_relative_to(self.cont.resolve()):
+            raise ValueError('Selected ID file escapes continuation directory')
+        raw = selected_path.read_bytes()
+        if (not raw or raw.startswith(b'\xef\xbb\xbf') or b'\r' in raw or not raw.endswith(b'\n')
+                or file_sha256(selected_path) != auth.get('selected_ids_sha256')):
+            raise ValueError('Selected ID bytes/hash are invalid')
+        try:
+            ids = raw[:-1].decode('ascii').split('\n')
+        except UnicodeDecodeError as exc:
+            raise ValueError('Selected IDs must be ASCII') from exc
+        manifest_path, cull_path = self.root / 'input/manifest.json', self.root / 'input/culled-ids.json'
+        if (len(ids) != len(set(ids)) or len(ids) != auth.get('candidate_count')
+                or len(ids) != FIXED_SUBSET_EXPECTED_COUNT
+                or any(not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) for vid in ids)
+                or auth.get('manifest_sha256') != file_sha256(manifest_path)
+                or auth.get('original_manifest_sha256') != file_sha256(manifest_path)
+                or auth.get('culled_ids_sha256') != file_sha256(cull_path)
+                or plan.get('schema_version') != 'snippy-fixed-subset-plan-v1'
+                or plan.get('continuation_id') != self.config['job_id']
+                or plan.get('plan_sha256') != object_digest(plan_unsigned)
+                or plan.get('authorization_sha256') != file_sha256(auth_path)
+                or plan.get('authorized_candidate_ids') != ids
+                or plan.get('authorized_candidate_count') != len(ids)
+                or plan.get('selected_ids_sha256') != auth.get('selected_ids_sha256')
+                or plan.get('manifest_sha256') != auth.get('manifest_sha256')
+                or plan.get('culled_ids_sha256') != auth.get('culled_ids_sha256')):
+            raise ValueError('Fixed-subset supervisor scope/plan binding failed')
+        return {'scope': auth['scope'], 'authorization_file_sha256': file_sha256(auth_path),
+                'authorization_sha256': auth['authorization_sha256'],
+                'continuation_plan_file_sha256': file_sha256(plan_path),
+                'continuation_plan_sha256': plan['plan_sha256'],
+                'selected_ids_sha256': auth['selected_ids_sha256'],
+                'manifest_sha256': auth['manifest_sha256'], 'culled_ids_sha256': auth['culled_ids_sha256'],
+                'authorized_candidate_ids': ids}
+
+    def write_owner_record(self):
+        """Publish the identity of the process holding the root-global owner lock."""
+        self.scope = self.validate_scope_authority()
+        if self.scope.get('scope') != 'fixed_subset_frozen_manifest':
+            return None
+        record = {'schema_version': 'snippy-production-owner-v1', 'job_id': self.config['job_id'],
+                  'pid': os.getpid(), 'runtime_commit': self.config['runtime_commit'],
+                  'continuation_authorization': {'path': str((self.cont / 'authorization.json').resolve()),
+                                                 'sha256': self.scope['authorization_file_sha256']},
+                  'continuation_plan': {'path': str((self.cont / 'continuation-plan.json').resolve()),
+                                        'sha256': self.scope['continuation_plan_file_sha256']},
+                  'selected_ids_sha256': self.scope['selected_ids_sha256'],
+                  'manifest_sha256': self.scope['manifest_sha256'],
+                  'culled_ids_sha256': self.scope['culled_ids_sha256'],
+                  'lock_path': str((self.root / 'production-owner.lock').resolve()),
+                  'created_at': now(), 'active': True}
+        record['owner_record_sha256'] = object_digest(record)
+        atomic(self.root / 'production-owner.json', record)
+        atomic(self.cont / 'production-owner.json', record)
+        self.owner_record = record
+        return record
 
     def save(self, **values):
         with self.state_lock:
@@ -401,10 +516,13 @@ class Supervisor:
 
     def enqueue(self, kind, data=None):
         with self.state_lock:
+            if self.finished:
+                return False
             if kind in ('checkpoint', 'finalize') and kind in self.pending_tasks:
-                return
+                return False
             self.pending_tasks.add(kind)
         self.jobs.put((kind, data))
+        return True
 
     def relay(self, *arguments):
         command = [sys.executable, '-X', 'utf8', str(Path(self.config['relay']) / 'relay.py'), *arguments]
@@ -433,6 +551,8 @@ class Supervisor:
             command = ['gh', 'api', f"repos/tallchap/relay/contents/jobs/{self.config['job_id']}.md?ref=main"]
             result = subprocess.run(command, cwd=self.config['relay'], env=self.env, capture_output=True,
                 text=True, encoding='utf-8', timeout=REMOTE_READ_TIMEOUT_SECONDS, check=True, **hidden())
+            if self.exit.is_set():
+                return None
             meta, body, blob = decode_job(json.loads(result.stdout), self.config['job_id'])
             if meta.get('posted_by') != self.config['origin'] or meta.get('owner_instance') != self.config['instance']:
                 raise ValueError('Relay origin/worker routing identity changed')
@@ -469,10 +589,29 @@ class Supervisor:
             try:
                 self.refresh_remote_controls()
             except Exception as exc:
-                self.record_remote_failure(exc)
+                if not self.exit.is_set():
+                    self.record_remote_failure(exc)
             self.exit.wait(max(0.1, 30 - (time.monotonic() - began)))
 
     def checkpoint(self, final=False):
+        if self.scope.get('scope') == 'fixed_subset_frozen_manifest':
+            from fixed_subset_checkpoint import create_checkpoint, mark_delivered
+            snapshot = create_checkpoint(self.root, self.cont, self.checkpoint_dir,
+                ffmpeg=self.config.get('ffmpeg'), final=final)
+            # The final bundle is attached by `respond`, so sending it first
+            # would duplicate bytes and falsely mark fallbacks delivered before
+            # the terminal response is accepted.
+            if not final:
+                tag = ('fixed-subset-' + str(snapshot['recorded_candidates']) + '-'
+                       + snapshot['manifest_sha256'][:12])
+                self.relay('send', self.config['job_id'], snapshot['directory'], '--kind', 'response',
+                           '--tag', tag)
+                mark_delivered(self.cont, snapshot)
+                self.save(last_checkpoint_at=now(), last_checkpoint_directory=snapshot['directory'],
+                          last_checkpoint_covered=self.coverage()['covered'],
+                          last_checkpoint_manifest_sha256=snapshot['manifest_file_sha256'],
+                          last_checkpoint_new_fallback_ids=snapshot['new_fallback_ids'])
+            return snapshot
         from checkpoint_shadow import create_checkpoint
         result = subprocess.run([sys.executable, '-X', 'utf8', str(self.scripts / 'production_report.py'),
             '--root', str(self.root)], env=self.env, capture_output=True, text=True, timeout=300, **hidden())
@@ -493,7 +632,7 @@ class Supervisor:
             'continuation-status.json', 'status.json', 'control-state.json', 'remote-control-history.json',
             'admission-approved.json', 'final-verification.json', 'code-verification.json',
             'pause-self-test.json', 'preflight-reconciliation.md', 'CONTROL.md', 'control.ps1',
-            'batch-tuning-authorization.json', 'batch-workers.json')
+            'batch-tuning-authorization.json', 'batch-workers.json', 'production-owner.json')
         paths = [self.cont / name for name in names]
         for name in ('drains', 'control-requests', 'stop-history', 'recovery-prior-records', 'admission-history'):
             paths.extend((self.cont / name).glob('*.json'))
@@ -518,6 +657,11 @@ class Supervisor:
                 kind, data = self.jobs.get(timeout=1)
             except queue.Empty:
                 continue
+            if self.finished:
+                with self.state_lock:
+                    self.pending_tasks.discard(kind)
+                self.jobs.task_done()
+                continue
             try:
                 if kind == 'log':
                     self.relay('log', self.config['job_id'], data)
@@ -537,13 +681,47 @@ class Supervisor:
                     self.pending_tasks.discard(kind)
                 self.jobs.task_done()
 
+    def quiesce_background_threads(self):
+        """Stop and join control/delivery threads before releasing owner locks."""
+        self.exit.set()
+        deadline = time.monotonic() + REMOTE_READ_TIMEOUT_SECONDS + 5
+        threads = [thread for thread in (self.reader_thread, self.worker_thread) if thread is not None]
+        for thread in threads:
+            if thread is threading.current_thread() or not thread.is_alive():
+                continue
+            thread.join(max(0, deadline - time.monotonic()))
+        alive_threads = [thread.name for thread in threads if thread.is_alive()]
+        self.background_threads_quiesced = not alive_threads
+        self.save(background_threads_quiesced=self.background_threads_quiesced,
+                  background_threads_alive=alive_threads)
+        if alive_threads:
+            raise RuntimeError('Background threads did not quiesce before owner release: '
+                               + ', '.join(alive_threads))
+
     def coverage(self, force=False):
         if not force and self._coverage_cache and time.monotonic() - self._coverage_at < 5:
             return self._coverage_cache
-        rows = [read(path) for path in (self.root / 'records').glob('*.json')]
+        if self.authorized_ids is not None:
+            rows = [read(self.root / 'records' / f'{vid}.json')
+                    if (self.root / 'records' / f'{vid}.json').exists()
+                    else {'candidate_id': vid, 'status': 'unadmitted'} for vid in self.authorized_ids]
+            if self.scope.get('scope') == 'fixed_subset_frozen_manifest':
+                from production import validate_preflight_hold_receipt
+                plan = read(self.cont / 'continuation-plan.json')
+                preflight = validate_preflight_hold_receipt(
+                    self.root, self.cont, plan, required=False)
+                rows = [{**row, 'source_record_status': row.get('status'),
+                         'status': preflight[row['candidate_id']]['effective_status']}
+                        if row['candidate_id'] in preflight else row for row in rows]
+            requested = len(self.authorized_ids)
+        else:
+            rows = [read(path) for path in (self.root / 'records').glob('*.json')]
+            requested = 1644
         counts = dict(Counter(row.get('status', 'unknown') for row in rows))
         covered = sum(counts.get(key, 0) for key in ('published', 'already_published', 'awaiting_astra', 'failed'))
-        self._coverage_cache = {'counts': counts, 'covered': covered, 'remaining': 1644 - covered, 'recorded': len(rows)}
+        self._coverage_cache = {'counts': counts, 'covered': covered, 'remaining': requested - covered,
+                                'recorded': sum(row.get('status') != 'unadmitted' for row in rows),
+                                'requested': requested}
         self._coverage_at = time.monotonic()
         return self._coverage_cache
 
@@ -579,6 +757,8 @@ class Supervisor:
                 if item.get('job_id') != self.config['job_id'] or item.get('action') not in ('PAUSE', 'RESUME'):
                     raise ValueError('Invalid durable control request')
                 action = item['action']
+                if action == 'RESUME':
+                    self.validate_scope_authority()
                 if action == 'RESUME' and item.get('source') == 'maintenance':
                     blocker = ('Maintenance resume arrived after the remote-refresh window; retry it'
                                if item['id'] not in pending_maintenance else remote_error)
@@ -623,16 +803,29 @@ class Supervisor:
                 if action == 'PAUSE':
                     self.pause('Explicit ' + item['source'] + ' pause ' + item['id'])
                 else:
+                    retrying_finalization = bool(self.state.get('finalization_failed'))
                     self.control['resume_stop_sha256'] = stop_digest(self.root)
                     self.control_save()
-                    self.save(desired='running', resume_requested_at=now())
+                    self.save(desired='running', resume_requested_at=now(),
+                              finalization_failed=False if retrying_finalization else self.state.get(
+                                  'finalization_failed', False),
+                              finalization_retry_requested_at=now() if retrying_finalization else self.state.get(
+                                  'finalization_retry_requested_at'),
+                              finalization_retry_control_id=item['id'] if retrying_finalization else self.state.get(
+                                  'finalization_retry_control_id'))
                 self.enqueue('log', f"Control {action} accepted ({item['source']}, id={item['id']}); "
                              f"supervisor PID={os.getpid()}; durable status={self.state_path}.")
 
     def admission_approved(self):
+        self.scope = self.validate_scope_authority()
         gate = read(self.cont / 'admission-approved.json')
-        return (gate.get('approved') is True and gate.get('job_id') == self.config['job_id']
-                and gate.get('runtime_commit') == self.config['runtime_commit'])
+        approved = (gate.get('approved') is True and gate.get('job_id') == self.config['job_id']
+                    and gate.get('runtime_commit') == self.config['runtime_commit'])
+        if self.scope.get('scope') == 'fixed_subset_frozen_manifest':
+            approved = approved and all(gate.get(key) == self.scope[key] for key in (
+                'authorization_file_sha256', 'authorization_sha256', 'continuation_plan_file_sha256',
+                'continuation_plan_sha256', 'selected_ids_sha256', 'manifest_sha256', 'culled_ids_sha256'))
+        return approved
 
     def log_file(self, name):
         stream = (self.cont / name).open('a', encoding='utf-8')
@@ -647,6 +840,7 @@ class Supervisor:
     def start_asr(self):
         from production import runner_lock
         self.verify_runtime()
+        self.validate_scope_authority()
         # An OS lock, not a stale PID file, gates a second production writer.
         with runner_lock(self.root / 'runner.lock'):
             pass
@@ -702,6 +896,7 @@ class Supervisor:
 
     def start_runner(self):
         self.verify_runtime()
+        self.validate_scope_authority()
         command = [sys.executable, '-X', 'utf8', str(self.scripts / 'production.py'), '--root', str(self.root),
             '--private-env-file', self.config['private_env_file'], '--machine', 'Shadow',
             '--whisper-cli', str(self.scripts / 'whisper_cuda_client.py'), '--continuation-id', self.config['job_id'],
@@ -757,12 +952,33 @@ class Supervisor:
             "Only explicit SNIPPY_CONTROL RESUME or local resume restarts work.")
 
     def finalize(self):
-        result = subprocess.run([sys.executable, '-X', 'utf8', str(self.scripts / 'continuation_verify.py'),
+        fixed_scope = self.scope.get('scope') == 'fixed_subset_frozen_manifest'
+        prefinal = None
+        if fixed_scope:
+            # Deliver every still-new fallback while the owner is alive, then
+            # make that immutable receipt a prerequisite of final verification.
+            # The terminal response itself is deliberately deferred until the
+            # root owner lock has been released below.
+            prefinal = self.checkpoint(final=False)
+        verifier = 'fixed_subset_verify.py' if fixed_scope else 'continuation_verify.py'
+        result = subprocess.run([sys.executable, '-X', 'utf8', str(self.scripts / verifier),
             '--root', str(self.root), '--continuation-dir', str(self.cont)], cwd=self.scripts.parent.parent,
             env=self.env, capture_output=True, text=True, encoding='utf-8', timeout=3600, **hidden())
         (self.cont / 'final-verifier.log').write_text(result.stdout + result.stderr, encoding='utf-8')
         if result.returncode:
             raise RuntimeError('Final continuation verification failed; no success response submitted')
+        if fixed_scope:
+            self.pending_final_response = {
+                'prefinal_checkpoint_directory': prefinal['directory'],
+                'prefinal_checkpoint_manifest_sha256': prefinal['manifest_file_sha256'],
+                'final_verification_file_sha256': file_sha256(self.cont / 'final-verification.json'),
+            }
+            self.save(phase='final_response_prepared', final_response_prepared_at=now(),
+                      own_children_alive=False, **self.pending_final_response)
+            with self.state_lock:
+                self.finished = True
+            self.exit.set()
+            return
         snapshot = self.checkpoint(final=True)
         # Allowlist files explicitly; endpoint/config/wallet can never enter this bundle.
         delivery = self.cont / 'final-delivery'
@@ -771,7 +987,8 @@ class Supervisor:
         names = ('authorization.json', 'continuation-plan.json', 'continuation-status.json', 'status.json',
                  'control-state.json', 'remote-control-history.json', 'final-verification.json', 'final-verification.md',
                  'final-dispositions.csv', 'code-verification.json', 'preflight-reconciliation.json',
-                 'preflight-reconciliation.md', 'pause-self-test.json', 'CONTROL.md', 'control.ps1')
+                 'preflight-reconciliation.md', 'pause-self-test.json', 'CONTROL.md', 'control.ps1',
+                 'production-owner.json')
         for name in names:
             path = self.cont / name
             if path.is_file():
@@ -789,19 +1006,213 @@ class Supervisor:
         self.save(phase='response_ready', response_submitted_at=now(), own_children_alive=False)
         self.finished = True
 
+    def load_final_response_intent(self):
+        path = self.cont / 'final-response-intent.json'
+        if not path.is_file():
+            return None
+        intent = read(path)
+        unsigned = {key: value for key, value in intent.items() if key != 'intent_sha256'}
+        snapshot = Path(intent.get('snapshot_directory', '')).resolve()
+        release = Path(intent.get('release_directory', '')).resolve()
+        checkpoint_root = self.checkpoint_dir.resolve()
+        response_id = intent.get('response_id')
+        if (intent.get('schema_version') != FINAL_RESPONSE_INTENT_SCHEMA
+                or intent.get('job_id') != self.config['job_id']
+                or intent.get('owner_instance') != self.config['instance']
+                or intent.get('intent_sha256') != object_digest(unsigned)
+                or intent.get('status') not in ('prepared', 'accepted')
+                or (intent.get('status') == 'accepted'
+                    and not re.fullmatch(r'R-[0-9a-f]{16}', str(response_id or '')))
+                or not snapshot.is_dir() or not snapshot.is_relative_to(checkpoint_root)
+                or not release.is_dir() or not release.is_relative_to(checkpoint_root)
+                or file_sha256(snapshot / 'checkpoint-manifest.json')
+                    != intent.get('snapshot_manifest_file_sha256')
+                or file_sha256(release / 'release-manifest.json')
+                    != intent.get('release_manifest_file_sha256')
+                or intent.get('snapshot_new_fallback_ids') != []):
+            raise RuntimeError('Durable final response intent is invalid or stale')
+        return intent
+
+    def save_final_response_intent(self, intent):
+        value = {key: item for key, item in intent.items() if key != 'intent_sha256'}
+        value['intent_sha256'] = object_digest(value)
+        atomic(self.cont / 'final-response-intent.json', value)
+        return value
+
+    def canonical_ready_response(self, intent):
+        meta = parse_relay_show(self.relay('show', self.config['job_id']), self.config['job_id'])
+        if meta.get('status') == 'CLAIMED':
+            return None
+        response_id = meta.get('response_id')
+        if (meta.get('status') != 'READY'
+                or meta.get('posted_by') != self.config['origin']
+                or meta.get('owner_instance') != self.config['instance']
+                or meta.get('responded_by') != self.config['instance']
+                or meta.get('response_outcome') != 'success'
+                or meta.get('response_note') != intent['note']
+                or not re.fullmatch(r'R-[0-9a-f]{16}', str(response_id or ''))
+                or intent.get('response_id') not in (None, response_id)):
+            raise RuntimeError('Canonical Relay state does not match this final response intent')
+        return meta
+
+    def accept_final_response_intent(self, intent, response_id, reconciled=False):
+        updated = {**intent, 'status': 'accepted', 'response_id': response_id,
+                   'accepted_at': now(), 'accepted_via_reconciliation': bool(reconciled)}
+        return self.save_final_response_intent(updated)
+
+    def submit_fixed_final_response(self):
+        """Respond only after all production locks are free and owner is inactive."""
+        from publish_astra import lock_is_held
+
+        if not self.pending_final_response or not self.drained():
+            raise RuntimeError('Fixed-subset final response attempted before durable drain')
+        if (not self.background_threads_quiesced
+                or any(thread is not None and thread.is_alive()
+                       for thread in (self.reader_thread, self.worker_thread))):
+            raise RuntimeError('Fixed-subset final response attempted before background-thread quiescence')
+        self.scope = self.validate_scope_authority()
+        stop_path = self.root / 'STOP.json'
+        root_owner_path = self.root / 'production-owner.json'
+        continuation_owner_path = self.cont / 'production-owner.json'
+        owner_lock = self.root / 'production-owner.lock'
+        publication_lock = self.root / 'publication.lock'
+        supervisor_lock = self.cont / 'supervisor.lock'
+        if not stop_path.is_file() or not root_owner_path.is_file() or not continuation_owner_path.is_file():
+            raise RuntimeError('Final release evidence is incomplete')
+        owner_raw = root_owner_path.read_bytes()
+        owner = read(root_owner_path)
+        owner_unsigned = {key: value for key, value in owner.items() if key != 'owner_record_sha256'}
+        expected_authority = {'path': str((self.cont / 'authorization.json').resolve()),
+                              'sha256': self.scope['authorization_file_sha256']}
+        expected_plan = {'path': str((self.cont / 'continuation-plan.json').resolve()),
+                         'sha256': self.scope['continuation_plan_file_sha256']}
+        locks = {'production_owner': not lock_is_held(owner_lock),
+                 'publication': not lock_is_held(publication_lock),
+                 'supervisor': not lock_is_held(supervisor_lock)}
+        if (owner.get('schema_version') != 'snippy-production-owner-v1'
+                or owner.get('owner_record_sha256') != object_digest(owner_unsigned)
+                or owner.get('active') is not False or not owner.get('released_at')
+                or owner.get('job_id') != self.config['job_id'] or owner.get('pid') != os.getpid()
+                or owner.get('runtime_commit') != self.config['runtime_commit']
+                or owner.get('continuation_authorization') != expected_authority
+                or owner.get('continuation_plan') != expected_plan
+                or owner.get('lock_path') != str(owner_lock.resolve())
+                or continuation_owner_path.read_bytes() != owner_raw
+                or not all(locks.values())):
+            raise RuntimeError('Inactive production owner or released-lock proof failed')
+        stop = read(stop_path)
+        if stop.get('job_id') != self.config['job_id']:
+            raise RuntimeError('Final STOP marker belongs to a different job')
+
+        self.save(phase='owner_released_preparing_final_response', owner_active=False,
+                  owner_locks_free=locks, own_children_alive=False)
+        intent = self.load_final_response_intent()
+        if intent and intent.get('status') == 'accepted':
+            ready = self.canonical_ready_response(intent)
+            if ready is None:
+                raise RuntimeError('Accepted final response intent regressed to CLAIMED')
+            response_id = ready['response_id']
+        else:
+            if intent is None:
+                snapshot = self.checkpoint(final=True)
+                if snapshot.get('new_fallback_ids') != []:
+                    raise RuntimeError('Final checkpoint contains fallback IDs not delivered before verification')
+                stamp = datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S%fZ')
+                release = self.checkpoint_dir / ('fixed-subset-release-' + stamp + '-' + uuid.uuid4().hex[:8])
+                release.mkdir(parents=True, exist_ok=False)
+                shutil.copy2(root_owner_path, release / 'production-owner.json')
+                shutil.copy2(stop_path, release / 'STOP.json')
+                shutil.copy2(self.cont / 'final-verification.json', release / 'final-verification.json')
+                receipt = {'schema_version': 'snippy-fixed-subset-owner-release-v1', 'created_at': now(),
+                    'job_id': self.config['job_id'], 'supervisor_pid': os.getpid(),
+                    'runtime_commit': self.config['runtime_commit'], 'owner_active': False,
+                    'owner_record_sha256': owner['owner_record_sha256'],
+                    'owner_record_file_sha256': file_sha256(root_owner_path),
+                    'stop_file_sha256': file_sha256(stop_path), 'locks_free': locks,
+                    'own_compute_children_alive': False,
+                    'authorization_file_sha256': self.scope['authorization_file_sha256'],
+                    'continuation_plan_file_sha256': self.scope['continuation_plan_file_sha256'],
+                    'final_verification_file_sha256': file_sha256(self.cont / 'final-verification.json'),
+                    'final_checkpoint_directory': snapshot['directory'],
+                    'final_checkpoint_manifest_sha256': snapshot['manifest_file_sha256']}
+                receipt['release_receipt_sha256'] = object_digest(receipt)
+                atomic(release / 'owner-release-receipt.json', receipt)
+                entries = [{'path': path.name, 'size': path.stat().st_size, 'sha256': file_sha256(path)}
+                           for path in sorted(release.iterdir()) if path.is_file()]
+                manifest = {'schema_version': 'snippy-fixed-subset-owner-release-manifest-v1',
+                    'created_at': now(), 'job_id': self.config['job_id'], 'files': entries,
+                    'file_count': len(entries), 'total_bytes': sum(item['size'] for item in entries)}
+                manifest['manifest_sha256'] = object_digest(manifest)
+                atomic(release / 'release-manifest.json', manifest)
+                note = ('Frozen 340-ID Luna phase completed and final fixed-scope verifier passed. '
+                    'The response was submitted only after the producer, publisher, and supervisor locks '
+                    'were proven free and the production owner was durably inactive. Passing clips were '
+                    'publication-readback verified; Astra/source holds remain explicitly skipped with '
+                    'selected-only fallback evidence. No broad-batch artifacts or remote Astra calls are '
+                    'included. Consumer validation/ack required.')
+                intent = self.save_final_response_intent({
+                    'schema_version': FINAL_RESPONSE_INTENT_SCHEMA, 'created_at': now(),
+                    'job_id': self.config['job_id'], 'owner_instance': self.config['instance'],
+                    'status': 'prepared', 'response_id': None,
+                    'snapshot_directory': snapshot['directory'],
+                    'snapshot_manifest_file_sha256': snapshot['manifest_file_sha256'],
+                    'snapshot_manifest_sha256': snapshot['manifest_sha256'],
+                    'snapshot_new_fallback_ids': snapshot['new_fallback_ids'],
+                    'release_directory': str(release),
+                    'release_manifest_file_sha256': file_sha256(release / 'release-manifest.json'),
+                    'tag': 'fixed-subset-final-' + snapshot['manifest_sha256'][:12], 'note': note})
+            response_arguments = (self.config['job_id'], intent['snapshot_directory'],
+                                  intent['release_directory'], '--tag', intent['tag'], '--note', intent['note'])
+            try:
+                output = self.relay('respond', *response_arguments)
+            except BaseException as respond_error:
+                try:
+                    ready = self.canonical_ready_response(intent)
+                except BaseException as reconcile_error:
+                    raise RuntimeError('Relay respond failed and canonical READY reconciliation failed') from respond_error
+                if ready is None:
+                    raise RuntimeError('Relay respond failed and canonical job remains CLAIMED') from respond_error
+                response_id = ready['response_id']
+                intent = self.accept_final_response_intent(intent, response_id, reconciled=True)
+            else:
+                match = re.search(r'\bR-[0-9a-f]{16}\b', output or '')
+                if match:
+                    response_id = match.group(0)
+                else:
+                    ready = self.canonical_ready_response(intent)
+                    if ready is None:
+                        raise RuntimeError('Relay respond returned success without canonical READY state')
+                    response_id = ready['response_id']
+                intent = self.accept_final_response_intent(intent, response_id)
+        self.save(phase='response_ready', response_submitted_at=now(), own_children_alive=False,
+                   owner_active=False, owner_locks_free=locks,
+                   final_checkpoint_directory=intent['snapshot_directory'],
+                   final_checkpoint_manifest_sha256=intent['snapshot_manifest_file_sha256'],
+                   owner_release_directory=intent['release_directory'],
+                   final_response_id=response_id, final_response_intent_sha256=intent['intent_sha256'])
+
     def run(self):
         from production import runner_lock
-        with runner_lock(self.cont / 'supervisor.lock'):
+        quiescence_error = None
+        # The root lock excludes every production coordinator, not merely a
+        # second process using this continuation directory.
+        with runner_lock(self.root / 'production-owner.lock'), runner_lock(self.cont / 'supervisor.lock'):
+            # Never advertise an active production owner from an unpinned or
+            # dirty checkout, even briefly.
+            self.verify_runtime()
+            self.write_owner_record()
             previous_pids = [self.state.get(key) for key in ('runner_pid', 'asr_pid', 'asr_launcher_pid')]
             if any(alive(pid) for pid in previous_pids):
                 self.pause('Prior recorded compute PID still alive; orphan drain required before explicit resume')
                 self.save(orphan_pids=[pid for pid in previous_pids if alive(pid)])
             self.save(phase='starting', desired=self.control['desired'], started_at=now(), self_test=self.self_test,
                       control_commands={'pause': 'SNIPPY_CONTROL PAUSE', 'resume': 'SNIPPY_CONTROL RESUME'})
-            reader = threading.Thread(target=self.remote_reader, daemon=True)
-            worker = threading.Thread(target=self.background, daemon=True)
-            reader.start()
-            worker.start()
+            self.reader_thread = threading.Thread(
+                target=self.remote_reader, daemon=True, name='snippy-remote-reader')
+            self.worker_thread = threading.Thread(
+                target=self.background, daemon=True, name='snippy-background-worker')
+            self.reader_thread.start()
+            self.worker_thread.start()
             last_log, last_checkpoint = time.monotonic(), time.monotonic()
             last_coverage = self.coverage()['covered']
             try:
@@ -868,7 +1279,7 @@ class Supervisor:
                         else:
                             self.pause(f"Runner exited {self.runner.returncode}, phase={status.get('phase')}; explicit investigation/resume required")
                     if time.monotonic() - last_log >= 180:
-                        self.enqueue('log', f"Continuation {self.state.get('phase')}: coverage={coverage['covered']}/1644, "
+                        self.enqueue('log', f"Continuation {self.state.get('phase')}: coverage={coverage['covered']}/{coverage['requested']}, "
                             f"remaining={coverage['remaining']}, counts={coverage['counts']}, supervisor PID={os.getpid()}, "
                             f"runner PID={self.state.get('runner_pid')}, CUDA PID={self.state.get('asr_pid')}; "
                             f"heartbeat={self.state['time']}; status={self.state_path}.")
@@ -892,8 +1303,41 @@ class Supervisor:
                 atomic(self.root / 'STOP.json', {'time': now(), 'job_id': self.config['job_id'],
                     'reason': 'Supervisor exited; no new admissions'})
                 self.exit.set()
+                # Never release root ownership while accepted runner/ASR work
+                # remains alive. STOP is durable; children drain cooperatively.
+                while not self.drained():
+                    if self.self_test:
+                        break
+                    self.save(phase='exit_draining', own_children_alive=True)
+                    time.sleep(1)
+                try:
+                    self.quiesce_background_threads()
+                except BaseException as exc:
+                    quiescence_error = exc
+                    self.pending_final_response = None
+                    self.save(phase='background_quiescence_failed',
+                              error=f'{type(exc).__name__}: {exc}', automatic_restart=False)
+                if self.owner_record is not None:
+                    released = {**self.owner_record, 'active': False, 'released_at': now()}
+                    released.pop('owner_record_sha256', None)
+                    released['owner_record_sha256'] = object_digest(released)
+                    atomic(self.root / 'production-owner.json', released)
+                    atomic(self.cont / 'production-owner.json', released)
+                    self.save(phase=('owner_deactivated_pending_lock_release'
+                                     if self.pending_final_response else self.state.get('phase')),
+                              owner_active=False, own_children_alive=False)
                 for stream in self.open_logs:
                     stream.close()
+        if quiescence_error is not None:
+            raise quiescence_error
+        if self.pending_final_response:
+            try:
+                self.submit_fixed_final_response()
+            except BaseException as exc:
+                self.save(phase='final_response_failed_after_owner_release',
+                          error=f'{type(exc).__name__}: {exc}', own_children_alive=False,
+                          owner_active=False, automatic_restart=False)
+                raise
         return 0
 
 

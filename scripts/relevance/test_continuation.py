@@ -379,7 +379,10 @@ class ContinuationTests(unittest.TestCase):
             for item in slot:
                 runner.save(item['candidate_id'], 'awaiting_astra')
             return True
-        with patch('production.audit.bq_client', return_value=client), patch.object(runner, 'process_batch', side_effect=process):
+        with patch('production.audit.bq_client', return_value=client), \
+                patch.object(runner, 'process_batch', side_effect=process), \
+                patch('production.validate_preflight_hold_receipt',
+                      side_effect=AssertionError('full-scope completion touched fixed hold receipt')):
             runner.run()
         status = p.luna.read(self.auth.parent / 'continuation-status.json')
         self.assertEqual(status['phase'], 'continuation_completed')

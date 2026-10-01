@@ -10,7 +10,7 @@ from contextlib import contextmanager
 import json
 import math
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import queue
 import re
 import shutil
@@ -26,6 +26,314 @@ import publish_astra
 TERMINAL = {'published', 'already_published', 'awaiting_astra', 'failed'}
 # Scoped throughput tuning may overlap more whole batches; local caps never change.
 TUNING_MAX_BATCH_WORKERS = 6
+FULL_CONTINUATION_SCOPE = 'all_remaining_frozen_manifest'
+FIXED_SUBSET_SCOPE = 'fixed_subset_frozen_manifest'
+FIXED_SUBSET_EXPECTED_COUNT = 340
+PREFLIGHT_HOLD_SCHEMA = 'snippy-fixed-subset-preflight-holds-v1'
+FIXED_SUBSET_LEGACY_PLAN_KEYS = (
+    'schema_version', 'continuation_id', 'created_at', 'manifest_sha256',
+    'culled_ids_sha256', 'authorization_sha256', 'selected_ids_sha256',
+    'authorized_candidate_ids', 'authorized_candidate_count', 'target_candidate_count',
+    'candidate_ids', 'slots', 'preflight_holds', 'protected_record_sha256',
+    'protected_absent_ids', 'baseline_record_sha256', 'preserved_file_sha256',
+    'maximum_batch_members', 'maximum_batch_workers', 'render_slots', 'asr_slots',
+    'publication_writers', 'min_release_confidence', 'max_passes', 'plan_sha256')
+FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES = {
+    'SNIPPY-SELECTED340-LUNA-20261001': {
+        'prior_plan_file_sha256': '1b97f603a59a00d91eed93dc4a7668a2a7387faaa5463d74ad8f5a17fdcf4270',
+        'prior_plan_sha256': '69faa2c849a9fb822e8771d1caa800976db567def920ab75284b7e7d69ca6b4f',
+        'migrated_plan_file_sha256': '530c11ad9cb1b8ffc924f4604858861838e34470eb0951dce7a4a7ae5ae0754f',
+        'migrated_plan_sha256': 'ccb048c9b05ed690edf1fabdb854dfde078e481954a75da4dce0bb770682a153',
+    },
+}
+
+
+def validate_preflight_hold_receipt(root, continuation_dir, plan, required=False,
+                                    verify_mixed_inventory=False):
+    """Return immutable virtual hold dispositions without rewriting old records.
+
+    A selected member of a historical paid batch may be unsafe to replay because
+    the batch also contains out-of-scope IDs.  Those records predate this scoped
+    continuation and must remain byte-for-byte unchanged.  The scoped terminal
+    disposition therefore lives beside the continuation authority, not in the
+    shared production ledger.
+    """
+    root, continuation_dir = Path(root).resolve(), Path(continuation_dir).resolve()
+    planned = plan.get('preflight_holds', [])
+    plan_inventories = validate_mixed_batch_inventories(
+        root, plan, verify_files=verify_mixed_inventory)
+    path = continuation_dir / 'preflight-hold-dispositions.json'
+    known = FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES.get(plan.get('continuation_id'), {})
+    if (known.get('migrated_plan_file_sha256')
+            and luna.sha(continuation_dir / 'continuation-plan.json') !=
+            known['migrated_plan_file_sha256']):
+        raise ContinuationIntegrityError('Migrated fixed-subset plan raw authority changed')
+    if not path.exists():
+        if required and planned:
+            raise ContinuationIntegrityError('Fixed-subset preflight hold receipt is missing')
+        return {}
+    receipt = luna.read(path)
+    unsigned = {key: value for key, value in receipt.items() if key != 'receipt_sha256'}
+    if (receipt.get('schema_version') != PREFLIGHT_HOLD_SCHEMA
+            or receipt.get('job_id') != plan.get('continuation_id')
+            or receipt.get('plan_sha256') != plan.get('plan_sha256')
+            or receipt.get('receipt_sha256') != audit.digest(unsigned)
+            or not receipt.get('created_at')):
+        raise ContinuationIntegrityError('Fixed-subset preflight hold receipt identity changed')
+    expected_ids = [row.get('candidate_id') for row in planned]
+    rows = receipt.get('holds')
+    if (not isinstance(rows, list) or [row.get('candidate_id') for row in rows] != expected_ids
+            or len(expected_ids) != len(set(expected_ids))):
+        raise ContinuationIntegrityError('Fixed-subset preflight hold membership changed')
+    inventories = receipt.get('mixed_batch_inventories')
+    if inventories != plan_inventories:
+        raise ContinuationIntegrityError('Fixed-subset mixed batch inventory membership changed')
+    by_id = {}
+    planned_by_id = {row['candidate_id']: row for row in planned}
+    baseline = plan.get('baseline_record_sha256', {})
+    for row in rows:
+        vid = row['candidate_id']
+        source = root / 'records' / f'{vid}.json'
+        packet = root / 'input' / 'candidates' / f'{vid}.json'
+        planned_row = planned_by_id[vid]
+        expected_hash = baseline.get(vid)
+        if (row.get('effective_status') != 'awaiting_astra'
+                or row.get('reason') != planned_row.get('detail')
+                or row.get('mixed_batch') != planned_row.get('batch_name')
+                or row.get('mixed_batch_plan_sha256') != planned_row.get('batch_plan_sha256')
+                or row.get('record_path') != str(source.resolve())
+                or row.get('record_sha256') != expected_hash
+                or not expected_hash or not source.is_file() or luna.sha(source) != expected_hash
+                or row.get('packet_path') != str(packet.resolve()) or not packet.is_file()):
+            raise ContinuationIntegrityError('Fixed-subset preflight hold evidence changed: ' + vid)
+        by_id[vid] = row
+    return by_id
+
+
+def load_lf_ids(path, expected_sha256=None):
+    """Read one immutable ASCII ID per LF-terminated line."""
+    path = Path(path)
+    raw = path.read_bytes()
+    actual = luna.sha(path)
+    if expected_sha256 is not None and actual != expected_sha256:
+        raise ValueError('Fixed subset ID file hash changed')
+    if not raw or raw.startswith(b'\xef\xbb\xbf') or b'\r' in raw or not raw.endswith(b'\n'):
+        raise ValueError('Fixed subset ID file must be BOM-free, LF-only, and newline terminated')
+    try:
+        ids = raw[:-1].decode('ascii').split('\n')
+    except UnicodeDecodeError as exc:
+        raise ValueError('Fixed subset IDs must be ASCII') from exc
+    if (any(not re.fullmatch(r'[A-Za-z0-9_-]{11}', vid) for vid in ids)
+            or len(ids) != len(set(ids))):
+        raise ValueError('Fixed subset IDs are invalid or duplicated')
+    return ids
+
+
+def validate_fixed_subset_protection_cover(plan, manifest_ids, selected_ids, current_record_ids):
+    """Prove outsiders are exactly and disjointly protected as present/absent.
+
+    ``protected_record_sha256`` may also contain immutable selected terminal
+    records.  Only its out-of-scope keys participate in the outsider cover.
+    Every current ledger filename must belong either to the selected scope or
+    to that protected-existing outsider partition.
+    """
+    manifest, selected, current = set(manifest_ids), set(selected_ids), set(current_record_ids)
+    protected = plan.get('protected_record_sha256')
+    absent_rows = plan.get('protected_absent_ids')
+    if not isinstance(protected, dict) or not isinstance(absent_rows, list):
+        raise ValueError('Fixed-subset outsider protection inventories are malformed')
+    if any(not isinstance(vid, str) for vid in [*protected, *absent_rows]):
+        raise ValueError('Fixed-subset outsider protection inventories are duplicated or invalid')
+    if (len(absent_rows) != len(set(absent_rows))
+            or any(not isinstance(digest, str)
+                   or not re.fullmatch(r'[0-9a-f]{64}', digest)
+                   for digest in protected.values())):
+        raise ValueError('Fixed-subset outsider protection inventories are duplicated or invalid')
+    protected_ids, absent = set(protected), set(absent_rows)
+    protected_outside = protected_ids - selected
+    outside = manifest - selected
+    if selected - manifest:
+        raise ValueError('Fixed-subset selected IDs escape the frozen manifest')
+    if (protected_ids - manifest or absent - manifest or absent & selected
+            or protected_outside & absent or protected_outside | absent != outside):
+        raise ValueError('Fixed-subset outsider protection cover is not exact and disjoint')
+    outside_manifest = current - manifest
+    if outside_manifest:
+        raise ValueError('Ledger record filenames escape the frozen manifest: '
+                         + ','.join(sorted(outside_manifest)[:10]))
+    unauthorized = current - selected - protected_outside
+    if unauthorized:
+        raise ValueError('Ledger records are neither selected nor protected existing outsiders: '
+                         + ','.join(sorted(unauthorized)[:10]))
+    missing = protected_outside - current
+    if missing:
+        raise ValueError('Protected existing outsider records disappeared: '
+                         + ','.join(sorted(missing)[:10]))
+    appeared = current & absent
+    if appeared:
+        raise ValueError('Protected absent outsider records appeared: '
+                         + ','.join(sorted(appeared)[:10]))
+    return {'manifest_ids': manifest, 'selected_ids': selected,
+            'protected_existing_outside_ids': protected_outside,
+            'protected_absent_ids': absent, 'current_record_ids': current}
+
+
+def immutable_batch_inventory(root, batch_name):
+    """Hash the exact recursive file inventory of one historical paid batch.
+
+    Request bodies may contain credentials, so this receipt records only safe
+    relative paths, byte counts, and raw SHA-256 values. Directories are never
+    followed through symlinks or junctions.
+    """
+    root = Path(root).resolve()
+    batches = root / 'batches'
+    if (not isinstance(batch_name, str) or not batch_name
+            or Path(batch_name).name != batch_name or batch_name in ('.', '..')
+            or any(char in batch_name for char in ('/', '\\', ':', '\0'))):
+        raise ContinuationIntegrityError('Mixed historical batch name is unsafe')
+    if (not batches.is_dir() or batches.is_symlink()
+            or getattr(batches, 'is_junction', lambda: False)()):
+        raise ContinuationIntegrityError('Historical batches directory is missing or unsafe')
+    batches_resolved = batches.resolve()
+    if batches_resolved != root / 'batches':
+        raise ContinuationIntegrityError('Historical batches directory escapes the production root')
+    source = batches / batch_name
+    if (not source.is_dir() or source.is_symlink()
+            or getattr(source, 'is_junction', lambda: False)()):
+        raise ContinuationIntegrityError(
+            'Mixed historical batch directory is missing or unsafe: ' + batch_name)
+    resolved = source.resolve()
+    if not resolved.is_relative_to(batches_resolved):
+        raise ContinuationIntegrityError(
+            'Mixed historical batch directory escapes the production root')
+
+    def enumerate_files(directory):
+        found = []
+        # Check each link/reparse point before descent. Path.rglob may traverse
+        # Windows junctions before the caller gets a chance to reject them.
+        for path in sorted(directory.iterdir(), key=lambda item: (item.name.casefold(), item.name)):
+            if path.is_symlink() or getattr(path, 'is_junction', lambda: False)():
+                raise ContinuationIntegrityError(
+                    'Symlink/junction in mixed historical batch: ' + batch_name)
+            actual = path.resolve()
+            if not actual.is_relative_to(resolved):
+                raise ContinuationIntegrityError(
+                    'Mixed historical batch artifact escapes its directory: ' + batch_name)
+            if path.is_dir():
+                found.extend(enumerate_files(path))
+                continue
+            if not path.is_file():
+                raise ContinuationIntegrityError(
+                    'Unsupported artifact in mixed historical batch: ' + batch_name)
+            found.append(path)
+        return found
+
+    paths = enumerate_files(source)
+    files = []
+    for path in paths:
+        before = path.stat()
+        digest = luna.sha(path)
+        after = path.stat()
+        if ((before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+                != (after.st_size, after.st_mtime_ns, after.st_ctime_ns)):
+                raise ContinuationIntegrityError(
+                    'Mixed historical batch changed during inventory: ' + batch_name)
+        files.append({'path': path.relative_to(source).as_posix(),
+                      'size': after.st_size, 'sha256': digest})
+    if [path.relative_to(source).as_posix() for path in enumerate_files(source)] != [
+            row['path'] for row in files]:
+        raise ContinuationIntegrityError(
+            'Mixed historical batch changed during inventory: ' + batch_name)
+    files.sort(key=lambda row: row['path'])
+    if len(files) != len({row['path'].casefold() for row in files}):
+        raise ContinuationIntegrityError(
+            'Duplicate artifact path in mixed historical batch: ' + batch_name)
+    inventory = {'batch_name': batch_name, 'root_relative_path': 'batches/' + batch_name,
+                 'files': files, 'file_count': len(files),
+                 'total_bytes': sum(row['size'] for row in files)}
+    inventory['inventory_sha256'] = audit.digest(inventory)
+    return inventory
+
+
+def validate_mixed_batch_inventories(root, plan, verify_files=False):
+    """Validate the plan-bound exact inventories for all preflight-held batches."""
+    expected = []
+    holds = plan.get('preflight_holds', [])
+    if not isinstance(holds, list) or any(not isinstance(row, dict) for row in holds):
+        raise ContinuationIntegrityError('Fixed-subset preflight holds are malformed')
+    for hold in holds:
+        name = hold.get('batch_name')
+        if name not in expected:
+            expected.append(name)
+    inventories = plan.get('mixed_batch_inventories')
+    if (not isinstance(inventories, list)
+            or any(not isinstance(row, dict) for row in inventories)
+            or [row.get('batch_name') for row in inventories] != expected
+            or len(expected) != len(set(expected))):
+        raise ContinuationIntegrityError('Fixed-subset plan mixed batch inventories are missing or changed')
+    for inventory in inventories:
+        name, files = inventory.get('batch_name'), inventory.get('files')
+        if (set(inventory) != {'batch_name', 'root_relative_path', 'files', 'file_count',
+                              'total_bytes', 'inventory_sha256'}
+                or inventory.get('root_relative_path') != 'batches/' + str(name)
+                or not isinstance(files, list)
+                or any(not isinstance(row, dict) or set(row) != {'path', 'size', 'sha256'}
+                       for row in files)):
+            raise ContinuationIntegrityError('Fixed-subset mixed batch inventory is malformed: ' + str(name))
+        paths = [row.get('path') for row in files]
+        if (paths != sorted(paths)
+                or len(paths) != len({path.casefold() for path in paths if isinstance(path, str)})
+                or any(not isinstance(path, str) or not path
+                       or PurePosixPath(path).is_absolute()
+                       or PurePosixPath(path).as_posix() != path
+                       or any(part in ('', '.', '..') for part in PurePosixPath(path).parts)
+                       or any(char in path for char in ('\\', ':', '\0')) for path in paths)
+                or any(type(row.get('size')) is not int or row['size'] < 0
+                       or not re.fullmatch(r'[0-9a-f]{64}', str(row.get('sha256', '')))
+                       for row in files)
+                or inventory.get('file_count') != len(files)
+                or inventory.get('total_bytes') != sum(row['size'] for row in files)
+                or inventory.get('inventory_sha256') != audit.digest({
+                    key: value for key, value in inventory.items() if key != 'inventory_sha256'})):
+            raise ContinuationIntegrityError('Fixed-subset mixed batch inventory is invalid: ' + str(name))
+        if verify_files and inventory != immutable_batch_inventory(root, name):
+            raise ContinuationIntegrityError('Fixed-subset mixed batch inventory changed: ' + str(name))
+    migration = plan.get('mixed_batch_inventory_migration')
+    known = FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES.get(plan.get('continuation_id'))
+    if migration is None and plan.get('continuation_id') in FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES:
+        raise ContinuationIntegrityError(
+            'Fixed-subset mixed batch inventory migration provenance is missing')
+    if migration is not None and (not isinstance(migration, dict)
+            or set(migration) != {'prior_plan_file_sha256', 'prior_plan_sha256', 'frozen_at'}
+            or not re.fullmatch(r'[0-9a-f]{64}', str(migration.get('prior_plan_file_sha256', '')))
+            or not re.fullmatch(r'[0-9a-f]{64}', str(migration.get('prior_plan_sha256', '')))
+            or not migration.get('frozen_at')
+            or {key: migration.get(key) for key in (
+                'prior_plan_file_sha256', 'prior_plan_sha256')} !=
+            ({key: known.get(key) for key in (
+                'prior_plan_file_sha256', 'prior_plan_sha256')} if known else None)
+            or (known and known.get('migrated_plan_sha256')
+                and plan.get('plan_sha256') != known['migrated_plan_sha256'])):
+        raise ContinuationIntegrityError('Fixed-subset mixed batch inventory migration provenance is invalid')
+    return inventories
+
+
+def process_alive(pid):
+    """Conservative cross-platform PID liveness probe without optional deps."""
+    if type(pid) is not int or pid <= 0:
+        return False
+    if os.name == 'nt':
+        import ctypes
+        handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, pid)
+        if not handle:
+            return False
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 class ContinuationIntegrityError(ValueError):
@@ -279,7 +587,7 @@ def verify(root):
 class Runner:
     def __init__(self, root, whisper, limit=None, machine=None, namespace=None, batch_workers=1, experiment_id=None,
                  stream_id=None, max_candidates=None, continuation_id=None, continuation_authorization=None,
-                 tuning_authorization=None):
+                 tuning_authorization=None, continuation_plan_only=False):
         if batch_workers not in range(1, 11):
             raise ValueError('Batch workers must be between 1 and 10')
         if tuning_authorization and not continuation_id:
@@ -303,9 +611,13 @@ class Runner:
         self.continuation_id = continuation_id
         self.continuation_authorization = Path(continuation_authorization).resolve() if continuation_authorization else None
         self.continuation = None
+        self.continuation_plan_only = bool(continuation_plan_only)
+        self.continuation_scope = None
+        self.authorization = None
+        self.fixed_subset_ids = None
+        self.fixed_subset_set = None
+        self.continuation_file_sha256 = None
         self.recovery_proofs = {}
-        if continuation_id:
-            self.validate_continuation_authorization()
         frozen_path = self.root / 'experiment-plan.json'
         if experiment_id and (self.root / 'experiment-status.json').exists():
             previous = luna.read(self.root / 'experiment-status.json')
@@ -318,6 +630,22 @@ class Runner:
             if (not stream_id or previous.get('phase') not in ('paused', 'cancelled') or not previous.get('drained_at')
                     or previous.get('experiment_id') != luna.read(frozen_path).get('experiment_id')):
                 raise ValueError('Existing bounded experiment requires its matching experiment-id; queue continuation is paused')
+        # Immutable inventory must be loaded before continuation authorization
+        # is evaluated.  Exact-scope validation binds to these bytes and may
+        # never infer a replacement set from the mutable ledger.
+        self.input = self.root / 'input'
+        self.manifest = luna.read(self.input / 'manifest.json')
+        self.candidates = self.manifest['candidates']
+        self.prior = luna.read(self.input / 'already-published.json')
+        self.records = {p.stem: luna.read(p) for p in (self.root / 'records').glob('*.json')}
+        self.sources = {r['video_id']: r for r in audit.inputs(self.input / 'audit-run')}
+        self.forbidden = {r['video_id'] for r in luna.read(self.input / 'culled-ids.json')}
+        if set(self.sources) & self.forbidden:
+            raise ValueError('Frozen production sources intersect the cull exclusion')
+        if continuation_id:
+            self.validate_continuation_authorization()
+        if len(self.candidates) != 1644 or len({r['candidate_id'] for r in self.candidates}) != 1644:
+            raise ValueError('Frozen production manifest must contain exactly 1644 unique candidates')
         self.batch_workers = batch_workers
         self.current_batch_workers = batch_workers
         self.batch_workers_error = None
@@ -328,12 +656,6 @@ class Runner:
         self.render_slots = luna.RENDER_LOCK
         self.machine = machine or ('Shadow' if os.name == 'nt' else 'Mac')
         self.namespace = batch_namespace(self.root, namespace)
-        self.input = self.root / 'input'
-        self.manifest = luna.read(self.input / 'manifest.json')
-        self.candidates = self.manifest['candidates']
-        assert len(self.candidates) == len({r['candidate_id'] for r in self.candidates}) == 1644
-        self.prior = luna.read(self.input / 'already-published.json')
-        self.records = {p.stem: luna.read(p) for p in (self.root / 'records').glob('*.json')}
         self.lock = threading.RLock()
         self.stop = threading.Event()
         self.phase = 'starting'
@@ -341,9 +663,6 @@ class Runner:
         self.responses = {}
         checkpoint_status = self.root / 'checkpoint-status.json'
         self.checkpoint_status = luna.read(checkpoint_status) if checkpoint_status.exists() else {}
-        self.sources = {r['video_id']: r for r in audit.inputs(self.input / 'audit-run')}
-        self.forbidden = {r['video_id'] for r in luna.read(self.input / 'culled-ids.json')}
-        assert not (set(self.sources) & self.forbidden)
         self.active_ids = set()
         self.active_batches = {}
         self.batch_claims = set()
@@ -353,11 +672,51 @@ class Runner:
         if not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{0,79}', self.continuation_id):
             raise ValueError('Continuation ID must be the canonical uppercase Relay job ID')
         authorization = luna.read(self.continuation_authorization)
+        unsigned = {key: value for key, value in authorization.items() if key != 'authorization_sha256'}
+        manifest_path = self.root / 'input/manifest.json'
+        cull_path = self.root / 'input/culled-ids.json'
+        scope = authorization.get('scope')
         if (authorization.get('job_id') != self.continuation_id
-                or authorization.get('scope') != 'all_remaining_frozen_manifest'
+                or scope not in (FULL_CONTINUATION_SCOPE, FIXED_SUBSET_SCOPE)
                 or authorization.get('codex_on_shadow') is not True
-                or authorization.get('manifest_sha256') != luna.sha(self.root / 'input/manifest.json')):
+                or authorization.get('manifest_sha256') != luna.sha(manifest_path)):
             raise ValueError('Continuation authorization does not match job, frozen manifest, scope, or executor')
+        self.authorization = authorization
+        self.continuation_scope = scope
+        if scope == FIXED_SUBSET_SCOPE:
+            selected_relative = authorization.get('selected_ids_file')
+            checkpoint_import_path = self.root / 'checkpoint-import.json'
+            checkpoint_import = luna.read(checkpoint_import_path)
+            if (authorization.get('schema_version') != 'snippy-fixed-subset-authorization-v1'
+                    or authorization.get('authorization_sha256') != audit.digest(unsigned)
+                    or not isinstance(selected_relative, str)
+                    or Path(selected_relative).is_absolute()
+                    or not re.fullmatch(r'[A-Za-z0-9_.-]+', selected_relative)
+                    or authorization.get('culled_ids_sha256') != luna.sha(cull_path)
+                    or authorization.get('original_manifest_sha256') != luna.sha(manifest_path)
+                    or checkpoint_import.get('original_manifest_sha256') != authorization.get('original_manifest_sha256')
+                    or authorization.get('max_batch_members') != 5
+                    or authorization.get('batch_workers') != 2
+                    or authorization.get('render_slots') != 2
+                    or authorization.get('asr_slots') != 1
+                    or authorization.get('publication_writers') != 1
+                    or authorization.get('min_release_confidence') != .95
+                    or authorization.get('max_passes') != luna.MAX_PASSES):
+                raise ValueError('Fixed subset authorization policy or immutable input hashes are invalid')
+            ids_path = (self.continuation_authorization.parent / selected_relative).resolve()
+            if not ids_path.is_relative_to(self.continuation_authorization.parent):
+                raise ValueError('Fixed subset ID file escapes its authorization directory')
+            ids = load_lf_ids(ids_path, authorization.get('selected_ids_sha256'))
+            manifest_ids = {row['candidate_id'] for row in luna.read(manifest_path)['candidates']}
+            culled = {row['video_id'] if isinstance(row, dict) else row for row in luna.read(cull_path)}
+            if (authorization.get('candidate_count') != len(ids)
+                    or len(ids) != FIXED_SUBSET_EXPECTED_COUNT
+                    or set(ids) - manifest_ids or set(ids) & culled):
+                raise ValueError('Fixed subset count, manifest membership, or cull exclusion failed')
+            if authorization.get('recoverable_failed_ids', []) or authorization.get('recovery_proofs', {}):
+                raise ValueError('Fixed subset cannot authorize retries of prior terminal failures')
+            self.fixed_subset_ids, self.fixed_subset_set = ids, set(ids)
+            self.validate_broad_owner_retired()
         recoverable = authorization.get('recoverable_failed_ids', [])
         proofs = authorization.get('recovery_proofs', {})
         if len(recoverable) != len(set(recoverable)) or set(recoverable) != set(proofs):
@@ -378,7 +737,146 @@ class Runner:
         self.recovery_proofs = proofs
         return authorization
 
+    def validate_broad_owner_retired(self):
+        """Bind subset admission to an immutable, drained broad-owner handoff."""
+        if getattr(self, 'continuation_scope', None) != FIXED_SUBSET_SCOPE:
+            return
+        handoff = self.authorization.get('broad_owner_handoff', {})
+        status_path = Path(handoff.get('status_path', ''))
+        control_path = Path(handoff.get('control_state_path', ''))
+        retirement_path = Path(handoff.get('retirement_receipt_path', ''))
+        live_authorization_path = Path(handoff.get('live_authorization_path', ''))
+        live_admission_path = Path(handoff.get('live_admission_path', ''))
+        if (handoff.get('job_id') != 'SNIPPY-LUNA-CONTINUE-20261001'
+                or not all(path.is_absolute() for path in (status_path, control_path, retirement_path,
+                                                           live_authorization_path, live_admission_path))
+                or luna.sha(status_path) != handoff.get('status_sha256')
+                or luna.sha(control_path) != handoff.get('control_state_sha256')
+                or luna.sha(retirement_path) != handoff.get('retirement_receipt_sha256')
+                or luna.sha(live_authorization_path) != handoff.get('live_authorization_sha256')
+                or luna.sha(live_admission_path) != handoff.get('live_admission_sha256')):
+            raise ContinuationIntegrityError('Broad-owner handoff identity or frozen evidence changed')
+        status, control, retirement = luna.read(status_path), luna.read(control_path), luna.read(retirement_path)
+        live_authorization, live_admission = luna.read(live_authorization_path), luna.read(live_admission_path)
+        runner_status = status.get('runner_status') or {}
+        required_pause = handoff.get('required_pause_control_id')
+        if (status.get('job_id') != handoff['job_id'] or status.get('phase') != 'paused'
+                or status.get('desired') != 'paused' or status.get('own_children_alive') is not False
+                or any(status.get(key) is not None for key in ('runner_pid', 'asr_pid', 'asr_launcher_pid'))
+                or runner_status.get('active_batches') not in (None, [])
+                or runner_status.get('active_ids') not in (None, [])
+                or control.get('desired') != 'paused' or required_pause not in control.get('processed_ids', [])
+                or control.get('last_applied_order', [None, None, None])[-1] != required_pause
+                or status.get('supervisor_pid') != handoff.get('supervisor_pid')
+                or process_alive(handoff.get('supervisor_pid'))
+                or retirement.get('retired_job_id') != handoff['job_id']
+                or retirement.get('superseded_by') != self.continuation_id
+                or retirement.get('supervisor_alive') is not False
+                or retirement.get('process_locks_were_free') is not True
+                or live_authorization.get('scope') != 'revoked'
+                or live_authorization.get('superseded_by') != self.continuation_id
+                or live_admission.get('approved') is not False
+                or live_admission.get('superseded_by') != self.continuation_id):
+            raise ContinuationIntegrityError('Broad owner is not immutably paused, drained, and retired')
+
+    def scope_guard(self, vid=None, full=False, verify_mixed_inventory=False):
+        """Revalidate fixed scope at every admission/mutation/media/network gate."""
+        if getattr(self, 'continuation_scope', None) != FIXED_SUBSET_SCOPE:
+            return
+        if vid is not None and vid not in self.fixed_subset_set:
+            raise ContinuationIntegrityError('Candidate is outside the fixed subset: ' + str(vid))
+        # Re-read every immutable authority; in-memory membership is never enough.
+        self.validate_continuation_authorization()
+        path = self.continuation_authorization.parent / 'continuation-plan.json'
+        plan = None
+        if self.continuation is not None:
+            plan = luna.read(path)
+            unsigned = {key: value for key, value in plan.items() if key != 'plan_sha256'}
+            if (plan.get('plan_sha256') != audit.digest(unsigned)
+                    or plan.get('plan_sha256') != self.continuation.get('plan_sha256')
+                    or luna.sha(path) != self.continuation_file_sha256
+                    or plan.get('authorization_sha256') != luna.sha(self.continuation_authorization)
+                    or plan.get('authorized_candidate_ids') != self.fixed_subset_ids
+                    or (FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES.get(
+                        plan.get('continuation_id'), {}).get('migrated_plan_file_sha256')
+                        not in (None, luna.sha(path)))
+                    or (vid is not None and vid not in plan.get('authorized_candidate_ids', []))):
+                raise ContinuationIntegrityError('Frozen fixed-subset plan changed or excludes candidate')
+            if full:
+                for candidate_id, expected in plan.get('protected_record_sha256', {}).items():
+                    record = self.root / 'records' / f'{candidate_id}.json'
+                    if not record.is_file() or luna.sha(record) != expected:
+                        raise ContinuationIntegrityError('Protected prior disposition changed: ' + candidate_id)
+                for candidate_id in plan.get('protected_absent_ids', []):
+                    if (self.root / 'records' / f'{candidate_id}.json').exists():
+                        raise ContinuationIntegrityError('Out-of-scope record appeared: ' + candidate_id)
+                for relative, expected in plan.get('preserved_file_sha256', {}).items():
+                    source = (self.root / relative).resolve()
+                    if not source.is_relative_to(self.root) or not source.is_file() or luna.sha(source) != expected:
+                        raise ContinuationIntegrityError('Prior checkpoint or paid batch plan changed: ' + relative)
+                # Preflight holds are selected, but their records belong to a
+                # historical mixed paid batch.  They remain immutable too; the
+                # scoped disposition is recorded beside this continuation.
+                for hold in plan.get('preflight_holds', []):
+                    candidate_id = hold['candidate_id']
+                    record = self.root / 'records' / f'{candidate_id}.json'
+                    expected = plan.get('baseline_record_sha256', {}).get(candidate_id)
+                    if not expected or not record.is_file() or luna.sha(record) != expected:
+                        raise ContinuationIntegrityError('Preflight-held prior record changed: ' + candidate_id)
+                validate_preflight_hold_receipt(
+                    self.root, self.continuation_authorization.parent, plan, required=False,
+                    verify_mixed_inventory=verify_mixed_inventory)
+        elif path.exists():
+            plan = luna.read(path)
+        if plan is not None:
+            try:
+                validate_fixed_subset_protection_cover(
+                    plan, (row['candidate_id'] for row in self.candidates), self.fixed_subset_ids,
+                    (record.stem for record in (self.root / 'records').glob('*.json')))
+            except ValueError as exc:
+                raise ContinuationIntegrityError(str(exc)) from exc
+        if not self.continuation_plan_only:
+            if plan is None:
+                raise ContinuationIntegrityError('Fixed-subset execution requires a frozen plan')
+            self.validate_live_fixed_owner(plan)
+
+    def validate_live_fixed_owner(self, plan):
+        """Prove the supervisor owns the root OS lock before local or paid work."""
+        owner_path = self.root / 'production-owner.json'
+        owner_lock = self.root / 'production-owner.lock'
+        if not owner_path.is_file():
+            raise ContinuationIntegrityError('Live fixed-subset production owner record is missing')
+        owner_raw = owner_path.read_bytes()
+        owner = luna.read(owner_path)
+        auth_path = self.continuation_authorization.resolve()
+        plan_path = auth_path.parent / 'continuation-plan.json'
+        unsigned = {key: value for key, value in owner.items() if key != 'owner_record_sha256'}
+        if (owner.get('schema_version') != 'snippy-production-owner-v1'
+                or owner.get('owner_record_sha256') != audit.digest(unsigned)
+                or owner.get('active') is not True
+                or owner.get('job_id') != self.continuation_id
+                or owner.get('pid') == os.getpid() or not publish_astra.process_alive(owner.get('pid'))
+                or owner.get('runtime_commit') != publish_astra.runtime_commit()
+                or owner.get('continuation_authorization') != {
+                    'path': str(auth_path), 'sha256': luna.sha(auth_path)}
+                or owner.get('continuation_plan') != {
+                    'path': str(plan_path.resolve()), 'sha256': luna.sha(plan_path)}
+                or owner.get('selected_ids_sha256') != self.authorization.get('selected_ids_sha256')
+                or owner.get('manifest_sha256') != self.authorization.get('manifest_sha256')
+                or owner.get('culled_ids_sha256') != self.authorization.get('culled_ids_sha256')
+                or owner.get('lock_path') != str(owner_lock.resolve())
+                or not owner.get('created_at')):
+            raise ContinuationIntegrityError('Live fixed-subset production owner identity changed')
+        if (not publish_astra.lock_is_held(owner_lock) or owner_path.read_bytes() != owner_raw
+                or not publish_astra.process_alive(owner['pid'])):
+            raise ContinuationIntegrityError('Fixed-subset production owner lock is not continuously held')
+
     def candidate_pending(self, vid):
+        if (getattr(self, 'continuation_scope', None) == FIXED_SUBSET_SCOPE
+                and getattr(self, 'continuation', None)
+                and vid in validate_preflight_hold_receipt(
+                    self.root, self.continuation_authorization.parent, self.continuation, required=False)):
+            return False
         row = self.records.get(vid, {})
         if row.get('status') not in TERMINAL:
             return True
@@ -388,9 +886,162 @@ class Runner:
         return bool(proof and row.get('status') == 'failed'
                     and luna.sha(self.root / 'records' / f'{vid}.json') == proof['record_sha256'])
 
+    def fixed_subset_plan(self):
+        """Freeze exactly the authorized subset and protect every other ledger byte."""
+        self.scope_guard()
+        path = self.continuation_authorization.parent / 'continuation-plan.json'
+        manifest_hash = luna.sha(self.input / 'manifest.json')
+        cull_hash = luna.sha(self.input / 'culled-ids.json')
+        auth_hash = luna.sha(self.continuation_authorization)
+        wanted = {row['candidate_id']: row for row in self.candidates}
+        selected, selected_set = list(self.fixed_subset_ids), set(self.fixed_subset_ids)
+        if set(self.records) - set(wanted):
+            raise ValueError('Ledger contains candidates outside the frozen manifest')
+        if path.exists():
+            plan = luna.read(path)
+            unsigned = {key: value for key, value in plan.items() if key != 'plan_sha256'}
+            if (plan.get('schema_version') != 'snippy-fixed-subset-plan-v1'
+                    or plan.get('continuation_id') != self.continuation_id
+                    or plan.get('manifest_sha256') != manifest_hash
+                    or plan.get('culled_ids_sha256') != cull_hash
+                    or plan.get('authorization_sha256') != auth_hash
+                    or plan.get('authorized_candidate_ids') != selected
+                    or plan.get('selected_ids_sha256') != self.authorization.get('selected_ids_sha256')
+                    or plan.get('plan_sha256') != audit.digest(unsigned)):
+                raise ValueError('Frozen subset plan identity, authorization, IDs, culls, or manifest changed')
+            known = FIXED_SUBSET_PLAN_MIGRATION_AUTHORITIES.get(plan.get('continuation_id'), {})
+            if (known.get('migrated_plan_file_sha256')
+                    and luna.sha(path) != known['migrated_plan_file_sha256']):
+                raise ContinuationIntegrityError('Migrated fixed-subset plan raw authority changed')
+            validate_mixed_batch_inventories(self.root, plan, verify_files=True)
+        else:
+            terminal_selected = {vid for vid in selected if not self.candidate_pending(vid)}
+            targets = selected_set - terminal_selected
+            protected = set(self.records) - targets
+            protected_absent = set(wanted) - selected_set - set(self.records)
+            assigned, slots, holds, preserved = set(), [], [], {}
+            for old in ('experiment-plan.json', 'stream-plan.json', 'runner-config.json', 'checkpoint-paths.json'):
+                old_path = self.root / old
+                if old_path.exists():
+                    preserved[old] = luna.sha(old_path)
+            for old_path in sorted((self.root / 'batches').glob('*/batch-plan.json')):
+                old = luna.read(old_path)
+                ids = old.get('slot_candidate_ids', [])
+                paid = old.get('candidate_ids', [])
+                if (not 1 <= len(ids) <= 5 or len(ids) != len(set(ids)) or set(ids) - set(wanted)
+                        or set(paid) - set(ids)):
+                    raise ValueError('Existing paid batch membership is invalid')
+                preserved[old_path.relative_to(self.root).as_posix()] = luna.sha(old_path)
+                pending = targets.intersection(ids)
+                if not pending:
+                    continue
+                if pending & assigned:
+                    raise ValueError('Selected pending candidate is duplicated across frozen paid batches')
+                assigned.update(pending)
+                if set(ids) - selected_set:
+                    for vid in selected:
+                        if vid in pending:
+                            holds.append({'candidate_id': vid, 'reason': 'mixed_historical_paid_batch',
+                                'batch_name': old_path.parent.name, 'batch_plan_sha256': luna.sha(old_path),
+                                'detail': 'Selected candidate shares frozen historical paid membership with out-of-scope IDs; no replay or regrouping authorized.'})
+                    continue
+                resumable = pending.intersection(paid)
+                omitted = pending - resumable
+                for vid in selected:
+                    if vid in omitted:
+                        holds.append({'candidate_id': vid, 'reason': 'incomplete_historical_paid_batch',
+                            'batch_name': old_path.parent.name, 'batch_plan_sha256': luna.sha(old_path),
+                            'detail': 'Selected candidate was omitted from the historical paid-call membership; explicit root review required before any regrouping.'})
+                if resumable:
+                    slots.append({'batch_name': old_path.parent.name, 'origin': 'existing_selected_paid_batch',
+                                  'candidate_ids': ids, 'execution_candidate_ids': [vid for vid in ids if vid in resumable],
+                                  'items': [wanted[vid] for vid in ids]})
+            # A request/call-state without frozen membership is ambiguous paid
+            # state.  Never regroup any selected member around it.
+            for batch in (self.root / 'batches').glob('*'):
+                if batch.is_dir() and not (batch / 'batch-plan.json').exists() and any(
+                        any(batch.rglob(name)) for name in ('call-state.json', 'request.json', 'pipeline-results.json')):
+                    raise ValueError('Paid artifacts lack frozen batch membership: ' + batch.name)
+            unplanned = targets - assigned
+            for lane in ('eligible', 'review'):
+                remaining = [wanted[vid] for vid in selected if vid in unplanned and wanted[vid]['lane'] == lane]
+                for index in range(0, len(remaining), 5):
+                    items = remaining[index:index+5]
+                    ids = [row['candidate_id'] for row in items]
+                    name = f'{self.continuation_id}-{lane}-{index//5+1:04d}'
+                    if (self.root / 'batches' / name).exists():
+                        raise ValueError('Fixed subset namespace has artifacts without its authorization plan')
+                    slots.append({'batch_name': name, 'origin': 'fixed_subset', 'candidate_ids': ids,
+                                  'execution_candidate_ids': ids, 'items': items})
+                    assigned.update(ids)
+            if assigned != targets:
+                raise ValueError('Fixed subset plan does not account for every pending selected candidate')
+            batch_names = []
+            for hold in holds:
+                if hold['batch_name'] not in batch_names:
+                    batch_names.append(hold['batch_name'])
+            mixed_inventories = [immutable_batch_inventory(self.root, name) for name in batch_names]
+            plan = {'schema_version': 'snippy-fixed-subset-plan-v1', 'continuation_id': self.continuation_id,
+                    'created_at': audit.now(), 'manifest_sha256': manifest_hash, 'culled_ids_sha256': cull_hash,
+                    'authorization_sha256': auth_hash, 'selected_ids_sha256': self.authorization['selected_ids_sha256'],
+                    'authorized_candidate_ids': selected, 'authorized_candidate_count': len(selected),
+                    'target_candidate_count': len(targets), 'candidate_ids': [vid for vid in selected if vid in targets],
+                    'slots': slots, 'preflight_holds': holds,
+                    'mixed_batch_inventories': mixed_inventories,
+                    'protected_record_sha256': {vid: luna.sha(self.root / 'records' / f'{vid}.json') for vid in sorted(protected)},
+                    'protected_absent_ids': sorted(protected_absent),
+                    'baseline_record_sha256': {vid: luna.sha(self.root / 'records' / f'{vid}.json') for vid in sorted(self.records)},
+                    'preserved_file_sha256': preserved, 'maximum_batch_members': 5, 'maximum_batch_workers': 2,
+                    'render_slots': 2, 'asr_slots': 1, 'publication_writers': 1,
+                    'min_release_confidence': .95, 'max_passes': luna.MAX_PASSES}
+            plan['plan_sha256'] = audit.digest(plan)
+            audit.atomic(path, plan)
+            saved = luna.read(path)
+            if saved != plan or luna.sha(path) == '':
+                raise ContinuationIntegrityError('Fixed-subset plan inventory readback failed')
+            validate_mixed_batch_inventories(self.root, saved, verify_files=True)
+        execution = [vid for slot in plan['slots'] for vid in slot['execution_candidate_ids']]
+        held = [row['candidate_id'] for row in plan.get('preflight_holds', [])]
+        protected_selected = set(plan['protected_record_sha256']) & selected_set
+        if (len(execution + held) != len(set(execution + held))
+                or set(execution + held) != set(plan['candidate_ids'])
+                or set(plan['candidate_ids']) | protected_selected != selected_set
+                or set(plan['candidate_ids']) & protected_selected
+                or any(not 1 <= len(slot['candidate_ids']) <= 5
+                       or not set(slot['execution_candidate_ids']) <= selected_set & set(slot['candidate_ids'])
+                       or slot['items'] != [wanted[vid] for vid in slot['candidate_ids']]
+                       or Path(slot['batch_name']).name != slot['batch_name'] for slot in plan['slots'])):
+            raise ValueError('Frozen fixed subset candidate membership is invalid')
+        validate_fixed_subset_protection_cover(
+            plan, wanted, selected_set,
+            (record.stem for record in (self.root / 'records').glob('*.json')))
+        for vid, digest in plan['protected_record_sha256'].items():
+            record = self.root / 'records' / f'{vid}.json'
+            if not record.exists() or luna.sha(record) != digest:
+                raise ValueError('Protected prior disposition changed: ' + vid)
+        for hold in plan.get('preflight_holds', []):
+            vid = hold['candidate_id']
+            record = self.root / 'records' / f'{vid}.json'
+            expected = plan.get('baseline_record_sha256', {}).get(vid)
+            if not expected or not record.exists() or luna.sha(record) != expected:
+                raise ValueError('Preflight-held prior record changed: ' + vid)
+        for vid in plan.get('protected_absent_ids', []):
+            if (self.root / 'records' / f'{vid}.json').exists():
+                raise ValueError('Out-of-scope record appeared after subset admission: ' + vid)
+        for relative, digest in plan['preserved_file_sha256'].items():
+            source = (self.root / relative).resolve()
+            if not source.is_relative_to(self.root) or not source.exists() or luna.sha(source) != digest:
+                raise ValueError('Prior checkpoint or paid batch plan changed: ' + relative)
+        validate_mixed_batch_inventories(self.root, plan, verify_files=False)
+        self.continuation = plan
+        self.continuation_file_sha256 = luna.sha(path)
+        return plan
+
     def continuation_plan(self):
         """Authorize remaining coverage without rewriting any old paid membership."""
         self.validate_continuation_authorization()
+        if self.continuation_scope == FIXED_SUBSET_SCOPE:
+            return self.fixed_subset_plan()
         path = self.continuation_authorization.parent / 'continuation-plan.json'
         manifest_hash = luna.sha(self.input / 'manifest.json')
         auth_hash = luna.sha(self.continuation_authorization)
@@ -504,6 +1155,79 @@ class Runner:
                 self.save(vid, 'paused', previous_status=row.get('status'), pause_stage=stage,
                           pause_reason='Operator STOP.json; no new operations admitted', paused_at=audit.now())
 
+    def apply_preflight_holds(self):
+        """Dispose unsafe mixed memberships without replay or ledger mutation."""
+        if self.continuation_scope != FIXED_SUBSET_SCOPE:
+            return
+        holds = self.continuation.get('preflight_holds', [])
+        if not holds:
+            return
+        path = self.continuation_authorization.parent / 'preflight-hold-dispositions.json'
+        if path.exists():
+            validate_preflight_hold_receipt(
+                self.root, self.continuation_authorization.parent, self.continuation, required=True,
+                verify_mixed_inventory=True)
+            return
+        self.scope_guard(full=True, verify_mixed_inventory=True)
+        rows = []
+        for hold in holds:
+            vid = hold['candidate_id']
+            record = self.root / 'records' / f'{vid}.json'
+            packet = self.input / 'candidates' / f'{vid}.json'
+            rows.append({'candidate_id': vid, 'effective_status': 'awaiting_astra',
+                         'reason': hold['detail'], 'mixed_batch': hold['batch_name'],
+                         'mixed_batch_plan_sha256': hold['batch_plan_sha256'],
+                         'record_path': str(record.resolve()),
+                         'record_sha256': self.continuation['baseline_record_sha256'][vid],
+                         'packet_path': str(packet.resolve())})
+        receipt = {'schema_version': PREFLIGHT_HOLD_SCHEMA, 'job_id': self.continuation_id,
+                   'plan_sha256': self.continuation['plan_sha256'], 'created_at': audit.now(),
+                   'holds': rows,
+                   'mixed_batch_inventories': self.continuation['mixed_batch_inventories']}
+        receipt['receipt_sha256'] = audit.digest(receipt)
+        audit.atomic(path, receipt)
+        validate_preflight_hold_receipt(
+            self.root, self.continuation_authorization.parent, self.continuation, required=True,
+            verify_mixed_inventory=True)
+
+    def verify_fixed_subset_local(self):
+        """Offline completion gate; cloud readback remains bound in publication receipts."""
+        plan = self.fixed_subset_plan()
+        rows, errors = [], []
+        preflight = validate_preflight_hold_receipt(
+            self.root, self.continuation_authorization.parent, plan,
+            required=bool(plan.get('preflight_holds')), verify_mixed_inventory=True)
+        for vid in plan['authorized_candidate_ids']:
+            path = self.root / 'records' / f'{vid}.json'
+            row = luna.read(path) if path.exists() else {'candidate_id': vid, 'status': 'unadmitted'}
+            status = preflight.get(vid, {}).get('effective_status', row.get('status'))
+            rows.append({'candidate_id': vid, 'status': status,
+                         'source_record_status': row.get('status'),
+                         'record_sha256': luna.sha(path) if path.exists() else None})
+            if status not in TERMINAL:
+                errors.append({'code': 'selected_candidate_nonterminal', 'candidate_id': vid,
+                               'status': status})
+            if status in ('published', 'already_published'):
+                receipt = artifact_path(self.root, row.get('publication_receipt', ''))
+                if not receipt.is_file():
+                    errors.append({'code': 'selected_publication_receipt_missing', 'candidate_id': vid})
+            elif status == 'awaiting_astra':
+                packet = artifact_path(self.root, preflight.get(vid, {}).get(
+                    'packet_path', row.get('packet_path', self.input / 'candidates' / f'{vid}.json')))
+                if not packet.is_file():
+                    errors.append({'code': 'selected_astra_packet_missing', 'candidate_id': vid})
+            elif status == 'failed' and not (row.get('error') or row.get('reason')):
+                errors.append({'code': 'selected_failure_reason_missing', 'candidate_id': vid})
+        result = {'schema_version': 'snippy-fixed-subset-local-verification-v1', 'time': audit.now(),
+                  'job_id': self.continuation_id, 'plan_sha256': plan['plan_sha256'],
+                  'selected_ids_sha256': plan['selected_ids_sha256'], 'requested': len(rows),
+                  'counts': dict(Counter(row['status'] for row in rows)), 'rows': rows,
+                  'errors': errors, 'passed': not errors}
+        audit.atomic(self.continuation_authorization.parent / 'subset-verification.json', result)
+        if errors:
+            raise ValueError('Fixed subset local verification failed')
+        return result
+
     def stop_requested(self):
         try:
             luna.check_stop(self.root)
@@ -512,9 +1236,14 @@ class Runner:
             return True
 
     def save(self, vid, status, **values):
+        self.scope_guard(vid)
         with self.lock:
             if getattr(self, 'continuation', None) and vid in self.continuation['protected_record_sha256']:
                 raise ContinuationIntegrityError('Continuation cannot rewrite a protected prior disposition: ' + vid)
+            if (getattr(self, 'continuation_scope', None) == FIXED_SUBSET_SCOPE
+                    and getattr(self, 'continuation', None)
+                    and vid in {row['candidate_id'] for row in self.continuation.get('preflight_holds', [])}):
+                raise ContinuationIntegrityError('Continuation cannot rewrite a preflight-held prior record: ' + vid)
             row = {**self.records.get(vid, {}), 'candidate_id': vid, 'status': status, 'updated_at': audit.now(), **values}
             audit.atomic(self.root / 'records' / f'{vid}.json', row)
             self.records[vid] = row
@@ -529,11 +1258,29 @@ class Runner:
                 raw = luna.read(path)
                 if raw.get('id'):
                     self.responses[raw['id']] = audit.price(raw)
-            counts = Counter(r['status'] for r in self.records.values())
+            scoped_ids = (self.fixed_subset_ids if self.continuation_scope == FIXED_SUBSET_SCOPE
+                          else [row['candidate_id'] for row in self.candidates])
+            preflight = (validate_preflight_hold_receipt(
+                self.root, self.continuation_authorization.parent, self.continuation, required=False)
+                if self.continuation_scope == FIXED_SUBSET_SCOPE and self.continuation else {})
+            scoped_rows = []
+            for vid in scoped_ids:
+                if vid not in self.records:
+                    continue
+                row = self.records[vid]
+                if vid in preflight:
+                    row = {**row, 'source_record_status': row.get('status'),
+                           'status': preflight[vid]['effective_status'],
+                           'reason': preflight[vid]['reason'],
+                           'packet_path': preflight[vid]['packet_path'],
+                           'preflight_hold_receipt': str(
+                               self.continuation_authorization.parent / 'preflight-hold-dispositions.json')}
+                scoped_rows.append(row)
+            counts = Counter(r['status'] for r in scoped_rows)
             done = sum(counts[s] for s in TERMINAL)
             current_cost = sum(self.responses.values())
             checkpoint_cost = self.checkpoint_status.get('luna_cost_usd', 0)
-            shadow_rows = [row for row in self.records.values() if row.get('checkpoint_origin') != 'Mac']
+            shadow_rows = [row for row in scoped_rows if row.get('checkpoint_origin') != 'Mac']
             source_failures = [row for row in shadow_rows if row['status'] == 'failed' and
                                (row.get('isolated_source_failure') or
                                 any(term in str(row.get('error', '')).lower() for term in
@@ -549,30 +1296,37 @@ class Runner:
                 'continuation_id': getattr(self, 'continuation_id', None),
                 'continuation_plan_sha256': (getattr(self, 'continuation', None) or {}).get('plan_sha256'),
                 'active_batches': [dict(self.active_batches[name]) for name in sorted(self.active_batches)],
-                'phase': self.phase, 'requested': 1644, 'covered': done, 'remaining': 1644 - done,
+                'phase': self.phase, 'requested': len(scoped_ids), 'covered': done, 'remaining': len(scoped_ids) - done,
                 'counts': dict(counts), 'active_ids': sorted(self.active_ids), 'luna_cost_usd': checkpoint_cost + current_cost,
                 'checkpoint_luna_cost_usd': checkpoint_cost, 'current_luna_cost_usd': current_cost,
                 'unique_api_responses': self.checkpoint_status.get('unique_api_responses', 0) + len(self.responses),
                 'current_unique_api_responses': len(self.responses), 'error': self.error,
-                'last_id': self.last_id, 'covered_ids': sorted(row['candidate_id'] for row in self.records.values() if row['status'] in TERMINAL),
+                'last_id': self.last_id, 'covered_ids': sorted(row['candidate_id'] for row in scoped_rows if row['status'] in TERMINAL),
                 'already_published': counts['already_published'], 'newly_published': counts['published'],
                 'awaiting_astra': counts['awaiting_astra'], 'source_failed': len(source_failures),
                 'other_failed': counts['failed'] - len(source_failures),
                 'gcs_body_bytes_read': transferred, 'gcs_requested_bytes_upper_bound': requested_bytes,
                 'initial_render_output_bytes': sum(row.get('output_bytes', 0) for row in shadow_rows),
                 'storage_provider': 'Google Cloud Storage', 'bucket': 'snippysaurus-clips'})
-            audit.atomic(self.root / 'astra-handoff-queue.json', {'time': audit.now(),
-                'items': [r for r in self.records.values() if r['status'] == 'awaiting_astra'],
-                'operational_failures': [r for r in self.records.values() if r['status'] == 'failed']})
+            audit.atomic(self.continuation_authorization.parent / 'astra-handoff-queue.json' if self.continuation_scope == FIXED_SUBSET_SCOPE
+                         else self.root / 'astra-handoff-queue.json', {'time': audit.now(),
+                'items': [r for r in scoped_rows if r['status'] == 'awaiting_astra'],
+                'operational_failures': [r for r in scoped_rows if r['status'] == 'failed']})
             if getattr(self, 'continuation', None):
                 path = self.continuation_authorization.parent / 'continuation-status.json'
                 previous = luna.read(path) if path.exists() else {}
-                scoped = Counter('recovery_pending' if self.records.get(vid, {}).get('status') == 'failed' and self.candidate_pending(vid)
-                                 else self.records.get(vid, {}).get('status', 'unadmitted') for vid in self.continuation['candidate_ids'])
+                continuation_ids = self.continuation.get('authorized_candidate_ids', self.continuation['candidate_ids'])
+                scoped = Counter(
+                    preflight[vid]['effective_status'] if vid in preflight
+                    else ('recovery_pending' if self.records.get(vid, {}).get('status') == 'failed'
+                          and self.candidate_pending(vid)
+                          else self.records.get(vid, {}).get('status', 'unadmitted'))
+                    for vid in continuation_ids)
                 audit.atomic(path, {**previous, 'continuation_id': self.continuation_id,
                     'plan_sha256': self.continuation['plan_sha256'], 'time': audit.now(), 'pid': os.getpid(),
                     'phase': self.phase, 'error': self.error, 'counts': dict(scoped),
                     'target_candidate_count': len(self.continuation['candidate_ids']),
+                    'authorized_candidate_count': len(continuation_ids),
                     'covered': sum(scoped[state] for state in TERMINAL),
                     'remaining': sum(count for state, count in scoped.items() if state not in TERMINAL),
                     'active_batches': [dict(self.active_batches[name]) for name in sorted(self.active_batches)]})
@@ -620,6 +1374,7 @@ class Runner:
     def prepare(self, item):
         vid = item['candidate_id']
         try:
+            self.scope_guard(vid)
             luna.check_stop(self.root)
             with self.lock:
                 self.active_ids.add(vid)
@@ -642,6 +1397,7 @@ class Runner:
             audit.atomic(self.root / 'recipes' / f'{vid}.json', recipe)
             args = SimpleNamespace(output=self.root / 'rendered', max_transfer_bytes=256 * 1024**2)
             with self.render_slots:
+                self.scope_guard(vid, full=True)
                 luna.check_stop(self.root)
                 cached = self.records.get(vid, {}).get('directory')
                 if cached and (Path(cached) / 'result.json').exists():
@@ -752,14 +1508,25 @@ class Runner:
                 raise
             if any(row['candidate_id'] not in plan['candidate_ids'] and self.records.get(row['candidate_id'], {}).get('status') not in TERMINAL for row in group):
                 raise ValueError('Nonterminal candidate was not part of frozen paid batch; explicit reconciliation required')
+            decision_scope = {row['candidate_id'] for row in group}
+            self.scope_guard(full=True)
             for vid in plan['candidate_ids']:
+                if vid not in decision_scope:
+                    continue
                 if self.records.get(vid, {}).get('status') not in TERMINAL:
                     self.save(vid, 'reviewing')
+            self.scope_guard(full=True, verify_mixed_inventory=True)
             result = planned_pipeline(plan, batch, self.input / 'candidates', self.whisper)
             self.batch_phase(batch, 'publishing')
             for decision in result['decisions']:
                 luna.check_stop(self.root)
                 vid = decision['candidate_id']
+                if vid not in decision_scope:
+                    if (vid in set(plan['candidate_ids'])
+                            and self.records.get(vid, {}).get('status') in TERMINAL):
+                        continue
+                    raise ContinuationIntegrityError('Paid decision is outside the admitted execution scope: ' + vid)
+                self.scope_guard(vid)
                 if self.records.get(vid, {}).get('status') in TERMINAL:
                     continue
                 if decision['status'] != 'pass' or not decision['complete']:
@@ -770,8 +1537,14 @@ class Runner:
                 receipt_path = self.root / 'publications' / f'{vid}.json'
                 try:
                     with self.publication_lock:
+                        self.scope_guard(vid, full=True, verify_mixed_inventory=True)
                         luna.check_stop(self.root)
-                        publish_astra.publish(recipe, clip, recipe.parent / 'final-qa.json', receipt_path)
+                        if getattr(self, 'continuation_scope', None) == FIXED_SUBSET_SCOPE:
+                            publish_astra.publish(recipe, clip, recipe.parent / 'final-qa.json', receipt_path,
+                                scope_plan=self.continuation_authorization.parent / 'continuation-plan.json',
+                                scope_authorization=self.continuation_authorization)
+                        else:
+                            publish_astra.publish(recipe, clip, recipe.parent / 'final-qa.json', receipt_path)
                         live_receipt(luna.read(receipt_path))
                         self.save(vid, 'published', publication_receipt=str(receipt_path), final_directory=str(recipe.parent))
                 except luna.OperationalPause:
@@ -1084,12 +1857,16 @@ class Runner:
         phase('experiment_completed', 'finished_at')
 
     def run(self):
+        if self.continuation_plan_only:
+            raise ContinuationIntegrityError('Plan-only runner cannot execute production')
         # Validate immutable authorization and all protected checkpoint bytes
         # before preflight queries, imports, candidate writes, or paid work.
         continuation_plan = self.continuation_plan() if self.continuation_id else None
         if continuation_plan:
+            self.apply_preflight_holds()
             path = self.continuation_authorization.parent / 'continuation-status.json'
             status = luna.read(path) if path.exists() else {'started_at': audit.now(), 'attempts': []}
+            status.setdefault('attempts', [])
             status['attempts'].append({'pid': os.getpid(), 'started_at': audit.now()})
             audit.atomic(path, status)
         thread = threading.Thread(target=self.pulse, daemon=True)
@@ -1098,7 +1875,8 @@ class Runner:
             luna.check_stop(self.root)
             stream_plan = self.stream_plan() if self.stream_id else None
             admission = continuation_plan or stream_plan
-            admitted_ids = set(admission['candidate_ids']) if admission else None
+            admitted_ids = (set(admission.get('authorized_candidate_ids', admission['candidate_ids']))
+                            if admission else None)
             self.phase = 'verifying_previous_publications'
             for vid, receipt in self.prior.items():
                 luna.check_stop(self.root)
@@ -1112,6 +1890,7 @@ class Runner:
                 self.save(vid, 'already_published', publication_receipt=str(path))
             # Fail closed on any unexpected existing Astra record; never duplicate it.
             luna.check_stop(self.root)
+            self.scope_guard(full=True)
             query_job = audit.bq_client().query(
                 "SELECT DISTINCT original_video_id FROM `youtubetranscripts-429803.reptranscripts.snippets_auto` WHERE provider='astra'")
             existing = {row['original_video_id'] for row in query_job.result()}
@@ -1155,14 +1934,26 @@ class Runner:
             if continuation_plan:
                 # Recheck every protected baseline and original paid batch plan.
                 self.continuation_plan()
-                if any(self.candidate_pending(vid) for vid in continuation_plan['candidate_ids']):
+                execution_ids = [vid for slot in continuation_plan['slots']
+                                 for vid in slot['execution_candidate_ids']]
+                preflight_holds = continuation_plan.get('preflight_holds', [])
+                preflight = (validate_preflight_hold_receipt(
+                    self.root, self.continuation_authorization.parent, continuation_plan,
+                    required=bool(preflight_holds))
+                    if self.continuation_scope == FIXED_SUBSET_SCOPE else {})
+                if (any(self.candidate_pending(vid) for vid in execution_ids)
+                        or (self.continuation_scope == FIXED_SUBSET_SCOPE
+                            and len(preflight) != len(preflight_holds))):
                     raise ValueError('Continuation exhausted its slots without complete candidate dispositions')
                 self.phase = 'continuation_completed'
                 path = self.continuation_authorization.parent / 'continuation-status.json'
                 status = luna.read(path)
                 status.update(finished_at=audit.now(), phase=self.phase)
                 audit.atomic(path, status)
-                verify(self.root)
+                if self.continuation_scope == FIXED_SUBSET_SCOPE:
+                    self.verify_fixed_subset_local()
+                else:
+                    verify(self.root)
                 return
             self.phase = 'coverage_finished'
             verify(self.root)
@@ -1218,7 +2009,7 @@ def main():
     with runner_lock(args.root / 'runner.lock'):
         runner = Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers,
                         args.experiment_id, args.stream_id, args.max_candidates, args.continuation_id, args.continuation_authorization,
-                        args.tuning_authorization)
+                        args.tuning_authorization, args.continuation_plan_only)
         if args.continuation_plan_only:
             if not args.continuation_id:
                 parser.error('--continuation-plan-only requires --continuation-id and --continuation-authorization')

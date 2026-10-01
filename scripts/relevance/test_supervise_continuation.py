@@ -198,6 +198,86 @@ class Tests(unittest.TestCase):
         self.assertEqual('finalizing', supervisor.state['phase'])
         self.assertIn('finalize', supervisor.pending_tasks)
 
+    def test_finished_supervisor_rejects_late_log_and_checkpoint_work(self):
+        supervisor = self.supervisor()
+        supervisor.finished = True
+        self.assertFalse(supervisor.enqueue('log', 'too late'))
+        self.assertFalse(supervisor.enqueue('checkpoint'))
+        self.assertFalse(supervisor.enqueue('finalize'))
+        self.assertTrue(supervisor.jobs.empty())
+        self.assertEqual(set(), supervisor.pending_tasks)
+
+    def test_quiesce_signals_and_joins_both_background_threads(self):
+        supervisor = self.supervisor()
+        events = []
+
+        class ThreadProbe:
+            def __init__(self, name):
+                self.name = name
+                self.alive = True
+
+            def is_alive(self):
+                return self.alive
+
+            def join(self, timeout):
+                events.append((self.name, supervisor.exit.is_set(), timeout))
+                self.alive = False
+
+        supervisor.reader_thread = ThreadProbe('reader')
+        supervisor.worker_thread = ThreadProbe('worker')
+        supervisor.quiesce_background_threads()
+        self.assertEqual(['reader', 'worker'], [event[0] for event in events])
+        self.assertTrue(all(event[1] for event in events))
+        self.assertTrue(all(0 <= event[2] <= module.REMOTE_READ_TIMEOUT_SECONDS + 5
+                            for event in events))
+        self.assertTrue(supervisor.background_threads_quiesced)
+        self.assertEqual([], supervisor.state['background_threads_alive'])
+
+    def test_run_quiesces_before_both_lock_releases_and_terminal_response(self):
+        supervisor = self.supervisor()
+        supervisor.finished = True
+        supervisor.pending_final_response = {'prepared': True}
+        events = []
+
+        @contextmanager
+        def lock(path):
+            events.append('enter-' + Path(path).name)
+            try:
+                yield
+            finally:
+                events.append('exit-' + Path(path).name)
+
+        def quiesce():
+            events.append('quiesce')
+            supervisor.background_threads_quiesced = True
+
+        def respond():
+            events.append('respond')
+
+        with patch('production.runner_lock', side_effect=lock), \
+                patch.object(module.threading.Thread, 'start'), \
+                patch.object(supervisor, 'verify_runtime'), \
+                patch.object(supervisor, 'write_owner_record'), \
+                patch.object(supervisor, 'quiesce_background_threads', side_effect=quiesce), \
+                patch.object(supervisor, 'submit_fixed_final_response', side_effect=respond):
+            supervisor.run()
+        self.assertLess(events.index('quiesce'), events.index('exit-supervisor.lock'))
+        self.assertLess(events.index('quiesce'), events.index('exit-production-owner.lock'))
+        self.assertLess(events.index('exit-production-owner.lock'), events.index('respond'))
+
+    def test_explicit_resume_clears_finalization_failure_and_requeues_finalize(self):
+        supervisor = self.supervisor()
+        supervisor.state.update(production_completed=True, finalization_failed=True)
+        module.submit_control(self.config, 'resume', identifier='retry-finalization')
+        supervisor.apply_controls()
+        self.assertFalse(supervisor.state['finalization_failed'])
+        self.assertEqual('retry-finalization', supervisor.state['finalization_retry_control_id'])
+        with patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        launch.assert_not_called()
+        self.assertEqual('finalizing', supervisor.state['phase'])
+        self.assertIn('finalize', supervisor.pending_tasks)
+
     def test_unacknowledged_stop_is_not_removed_on_resume_spawn(self):
         supervisor = self.supervisor()
         supervisor.state.update(cycle=1)
