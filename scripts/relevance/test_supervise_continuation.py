@@ -225,6 +225,29 @@ class Tests(unittest.TestCase):
         self.assertIn('checkpoint volume', supervisor.control['pause_reason'])
         self.assertEqual(capacity, supervisor.state['free_disk_bytes_by_path'])
 
+    def test_resource_telemetry_tracks_resume_and_clears_verified_stale_pause_pids(self):
+        supervisor = self.supervisor()
+        supervisor.state.update(own_children_alive=False, asr_pid=33848, asr_launcher_pid=26024)
+        with patch.object(supervisor, 'verify_runtime'), patch.object(module.subprocess, 'Popen', return_value=Process(pid=333)):
+            supervisor.start_asr()
+        self.assertTrue(supervisor.state['own_children_alive'])
+        module.atomic(supervisor.endpoint, {'pid': 333, 'host': '127.0.0.1', 'media_root': str(self.root),
+            'provider': {'device': 'cuda', 'model': 'small.en', 'compute_type': 'float32'}})
+        supervisor.state['own_children_alive'] = False
+        with patch.object(module, 'alive', return_value=True):
+            self.assertTrue(supervisor.asr_ready())
+        self.assertTrue(supervisor.state['own_children_alive'])
+        supervisor.state['own_children_alive'] = False
+        with patch.object(supervisor, 'verify_runtime'), patch.object(module.subprocess, 'Popen', return_value=Process(pid=444)):
+            supervisor.start_runner()
+        self.assertTrue(supervisor.state['own_children_alive'])
+        supervisor.runner = supervisor.server = None
+        supervisor.control['desired'] = 'paused'
+        self.once(supervisor)
+        self.assertFalse(supervisor.state['own_children_alive'])
+        for key in ('runner_pid', 'asr_pid', 'asr_launcher_pid'):
+            self.assertIsNone(supervisor.state[key])
+
 
 if __name__ == '__main__':
     unittest.main()

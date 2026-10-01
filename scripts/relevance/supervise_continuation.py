@@ -438,7 +438,7 @@ class Supervisor:
         self.endpoint = endpoint_path
         self.asr_deadline = time.monotonic() + 60
         self.save(phase='asr_starting', cycle=cycle, asr_launcher_pid=self.server.pid, asr_pid=None,
-                  runner_pid=None, asr_started_at=now(), desired='running')
+                  runner_pid=None, asr_started_at=now(), desired='running', own_children_alive=True)
 
     def asr_ready(self):
         if not self.endpoint.exists():
@@ -457,7 +457,7 @@ class Supervisor:
             self.pause('Persistent CUDA process identity/device mismatch')
             return False
         self.save(phase='self_test_running' if not self.admission_approved() else 'ready', asr_pid=actual,
-                  asr_ready_at=now(), asr_model_load_seconds=endpoint.get('model_load_seconds'))
+                  asr_ready_at=now(), asr_model_load_seconds=endpoint.get('model_load_seconds'), own_children_alive=True)
         return True
 
     def start_runner(self):
@@ -468,7 +468,8 @@ class Supervisor:
             '--continuation-authorization', str(self.cont / 'authorization.json'), '--batch-workers', '2']
         self.runner = subprocess.Popen(command, cwd=self.scripts.parent.parent, env=self.env,
             stdout=self.log_file(f'runner-{self.state["cycle"]}.log'), stderr=subprocess.STDOUT, **hidden())
-        self.save(phase='running', runner_pid=self.runner.pid, runner_started_at=now(), admission_approved=True)
+        self.save(phase='running', runner_pid=self.runner.pid, runner_started_at=now(), admission_approved=True,
+                  own_children_alive=True)
         self.enqueue('log', f"Continuation launched: supervisor PID={os.getpid()}, runner PID={self.runner.pid}, "
             f"CUDA PID={self.state['asr_pid']}, code={self.config['runtime_commit']}; status={self.state_path}; "
             "2 Luna groups, render cap2, ASR cap1; existing publications/Astra holds protected.")
@@ -583,7 +584,8 @@ class Supervisor:
                         self.save(phase='orphan_draining', orphan_pids=orphans)
                     elif self.control['desired'] == 'paused' or (self.root / 'STOP.json').exists() and self.server is not None:
                         if self.server is None and self.runner is None:
-                            self.save(phase='paused', own_children_alive=False)
+                            self.save(phase='paused', own_children_alive=False, runner_pid=None,
+                                      asr_pid=None, asr_launcher_pid=None)
                         elif self.drained():
                             self.record_drain()
                         else:
