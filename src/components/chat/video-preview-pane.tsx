@@ -25,12 +25,12 @@ export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose
   });
 
   return (
-    <Card ref={previewRef} tabIndex={-1} aria-label="Video preview" className="xl:sticky xl:top-4 scroll-mt-4 border-[#dce3d3] shadow-sm h-fit focus:outline-none">
+    <Card ref={previewRef} tabIndex={-1} aria-label="Video preview" className="xl:sticky xl:top-4 scroll-mt-4 border-[#e6dfcc] shadow-none h-fit focus:outline-none">
       <CardHeader className="px-4 sm:px-6 pb-3">
         <div className="flex items-center justify-between gap-2">
           <CardTitle className="text-base">Video preview</CardTitle>
           {onClose && (
-            <button onClick={onClose} className="min-h-11 shrink-0 rounded-lg px-2 text-xs text-[#52683d] hover:bg-[#f2f5ec] focus-visible:outline-2">
+            <button onClick={onClose} className="min-h-11 shrink-0 rounded-lg px-2 text-xs text-[#1f2e25] hover:bg-[#f5ecd2] focus-visible:outline-2">
               Back to chat
             </button>
           )}
@@ -61,12 +61,11 @@ export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose
           />
         </div>
 
-        <div className="pt-2 border-t border-gray-100">
+        <div className="pt-2 border-t border-[#e6dfcc]">
           <Link
             href={`/edit?v=${videoId}`}
             target="_blank"
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white rounded-md transition-colors"
-            style={{ backgroundColor: "#DC2626" }}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-[#faf6ee] bg-[#1f2e25] rounded-full transition-colors hover:bg-[#2f4537]"
           >
             Snip It
           </Link>

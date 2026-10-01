@@ -118,7 +118,7 @@ export function SpeakerSelect({
       <Popover.Trigger asChild disabled={disabled}>
         <button
           aria-label={`Choose speaker, current: ${selectedName || "none"}`}
-          className="flex items-center gap-2 w-full min-w-0 max-w-[320px] rounded-xl border border-[#dce3d3] bg-white px-2 sm:px-3 py-2 text-sm hover:bg-[#f5f7f0] focus:outline-none focus:ring-2 focus:ring-[#99cc66] disabled:cursor-not-allowed disabled:opacity-50"
+          className="flex items-center gap-2 w-full min-w-0 max-w-[320px] rounded-full border-[1.5px] border-[#d4cdb8] bg-white px-2 sm:px-3 py-1.5 text-sm hover:bg-[#f5ecd2] focus:outline-none focus-visible:ring-2 focus-visible:ring-[#1f2e25] disabled:cursor-not-allowed disabled:opacity-50"
           onClick={() => {
             setOpen(true);
             // Focus input on next tick
@@ -128,13 +128,13 @@ export function SpeakerSelect({
           <span
             data-speaker-initial
             aria-hidden="true"
-            className="grid place-items-center shrink-0 w-8 h-8 rounded-lg bg-[#e7eddb] text-[#52683d] font-semibold"
+            className="grid place-items-center shrink-0 w-8 h-8 rounded-full bg-[#1f2e25] text-[#faf6ee] font-[family-name:var(--font-display)] font-semibold"
           >
             {speakerInitial(selectedName)}
           </span>
           <span className="min-w-0 text-left flex-1">
-            <span className="block text-[10px] text-[#78856b]">Speaker</span>
-            <span className="block truncate text-[#20352b] font-medium">
+            <span className="block text-[10px] text-[#706e66]">Speaker</span>
+            <span className="block truncate text-[#1f2e25] font-semibold">
               {selectedName || "Choose a speaker"}
             </span>
           </span>
@@ -158,7 +158,7 @@ export function SpeakerSelect({
               type="text"
               placeholder="Type to search speakers..."
               aria-label="Search speakers"
-              className="min-h-11 w-full rounded border border-gray-300 bg-white px-3 py-2 text-base sm:text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#99cc66] focus:border-transparent"
+              className="min-h-11 w-full rounded border border-gray-300 bg-white px-3 py-2 text-base sm:text-sm placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-[#1f2e25] focus:border-transparent"
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
@@ -174,7 +174,7 @@ export function SpeakerSelect({
                 aria-label={item.label}
                 className={`flex min-h-11 items-center gap-3 w-full text-left px-3 py-2 text-sm rounded-sm cursor-pointer transition-colors ${
                   i === highlightIndex
-                    ? "bg-[#99cc66]/20 text-gray-900"
+                    ? "bg-[#f5ecd2] text-[#1f2e25]"
                     : item.slug === value
                       ? "bg-gray-100 text-gray-900 font-medium"
                       : "text-gray-700 hover:bg-gray-100"
@@ -185,7 +185,7 @@ export function SpeakerSelect({
                 <span
                   data-speaker-initial
                   aria-hidden="true"
-                  className="grid place-items-center shrink-0 w-7 h-7 rounded-lg bg-[#e7eddb] text-[#52683d] text-xs font-semibold"
+                  className="grid place-items-center shrink-0 w-7 h-7 rounded-full bg-[#1f2e25] text-[#faf6ee] font-[family-name:var(--font-display)] text-xs font-semibold"
                 >
                   {speakerInitial(item.label)}
                 </span>

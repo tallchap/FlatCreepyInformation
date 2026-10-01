@@ -47,18 +47,18 @@ function formatContent(text: string): string {
         (_match, title: string, videoId: string, seconds?: string) => {
           const startSec = seconds ? Math.floor(parseFloat(seconds)) : 0;
           const href = `/video/${videoId}?t=${startSec}`;
-          return `<a href="${href}" data-video-id="${videoId}" data-start-sec="${startSec}" data-video-title="${encodeURIComponent(title)}" class="inline-flex items-center gap-1 underline text-blue-600 hover:text-blue-800"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
+          return `<a href="${href}" data-video-id="${videoId}" data-start-sec="${startSec}" data-video-title="${encodeURIComponent(title)}" class="inline-flex items-center gap-1 font-medium underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
         },
       )
       // Regular markdown links [text](url)
       .replace(
         /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline text-blue-600 hover:text-blue-800">$1</a>',
+        '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]">$1</a>',
       )
       // Bare youtu.be URLs
       .replace(
         /(https:\/\/youtu\.be\/([\w-]{11}))/g,
-        '<a href="/video/$2" data-video-id="$2" data-start-sec="0" class="underline text-blue-600 hover:text-blue-800">$1</a>',
+        '<a href="/video/$2" data-video-id="$2" data-start-sec="0" class="underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]">$1</a>',
       )
       // Numbered follow-up suggestions (e.g. "1. find quotes about...")
       // Convert to clickable spans with cleaned text
@@ -128,8 +128,8 @@ export function MessageBubble({
         className={cn(
           "max-w-[92%] sm:max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
           isUser
-            ? "bg-[#e7efda] text-[#20352b]"
-            : "bg-white border border-[#e2e7dc] text-[#20352b]",
+            ? "bg-[#f5ecd2] border-[1.5px] border-[#e6dfcc] text-[#1f2e25]"
+            : "bg-white border-[1.5px] border-[#e6dfcc] text-[#1f2e25]",
           isStreaming && "animate-pulse",
         )}
       >

@@ -1,4 +1,8 @@
 import { ChatWindow } from "@/components/chat/chat-window";
 export default function ChatPage() {
-  return <ChatWindow />;
+  return (
+    <div className="cream-surface">
+      <ChatWindow />
+    </div>
+  );
 }
