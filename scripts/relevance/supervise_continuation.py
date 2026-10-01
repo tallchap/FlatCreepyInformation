@@ -131,6 +131,8 @@ def load_config(path):
         raise ValueError('Private supervisor config missing keys: ' + ', '.join(sorted(required - set(config))))
     for key in ('root', 'continuation_dir', 'relay', 'private_env_file', 'whisper_python', 'relay_session_file', 'ffmpeg', 'range_cache'):
         config[key] = str(Path(config[key]).resolve())
+    if config.get('checkpoint_dir'):
+        config['checkpoint_dir'] = str(Path(config['checkpoint_dir']).resolve())
     continuation = Path(config['continuation_dir'])
     if path.is_relative_to(continuation):
         raise ValueError('Private supervisor config must be outside continuation output')
@@ -177,10 +179,26 @@ def stop_digest(root):
     return hashlib.sha256(path.read_bytes()).hexdigest() if path.exists() else None
 
 
+def disk_capacity(root, range_cache, checkpoint_dir):
+    """Measure each Windows volume once, report capacity at all workload paths."""
+    volumes, paths = {}, {}
+    for value in (root, range_cache, checkpoint_dir):
+        path = Path(value).resolve()
+        existing = path
+        while not existing.exists() and existing.parent != existing:
+            existing = existing.parent
+        volume = existing.anchor.casefold() if os.name == 'nt' else str(existing)
+        if volume not in volumes:
+            volumes[volume] = shutil.disk_usage(existing).free
+        paths[str(path)] = volumes[volume]
+    return paths
+
+
 class Supervisor:
     def __init__(self, config, self_test=False):
         self.config, self.self_test = config, self_test
         self.root, self.cont = Path(config['root']), Path(config['continuation_dir'])
+        self.checkpoint_dir = Path(config.get('checkpoint_dir', self.cont.parent / 'checkpoints')).resolve()
         self.scripts = Path(__file__).resolve().parent
         self.cont.mkdir(parents=True, exist_ok=True)
         self.state_path = self.cont / 'status.json'
@@ -275,7 +293,7 @@ class Supervisor:
             '--root', str(self.root)], env=self.env, capture_output=True, text=True, timeout=300, **hidden())
         if result.returncode:
             raise RuntimeError('Production report failed: ' + result.stderr[-1000:])
-        snapshot = create_checkpoint(self.root, self.cont.parent / 'checkpoints')
+        snapshot = create_checkpoint(self.root, self.checkpoint_dir)
         metadata = self.safe_metadata(Path(snapshot['directory']).with_name(Path(snapshot['directory']).name + '-continuation'))
         self.relay('send', self.config['job_id'], snapshot['directory'], str(metadata), '--kind', 'response', '--tag',
                    'continuation-' + str(snapshot['recorded_candidates']) + '-' + str(int(time.time())))
@@ -538,13 +556,14 @@ class Supervisor:
                 while not self.finished:
                     self.apply_controls()
                     coverage = self.coverage()
-                    free = shutil.disk_usage(self.root).free
+                    capacity = disk_capacity(self.root, self.config['range_cache'], self.checkpoint_dir)
+                    free = min(capacity.values())
                     runner_status = read(self.root / 'status.json')
                     runner_summary = {key: value for key, value in runner_status.items() if key not in ('covered_ids', 'records', 'responses')}
-                    self.save(coverage=coverage, free_disk_bytes=free, runner_status=runner_summary,
+                    self.save(coverage=coverage, free_disk_bytes=free, free_disk_bytes_by_path=capacity, runner_status=runner_summary,
                               desired=self.control['desired'])
                     if free < 20 * 1024**3 and self.control['desired'] == 'running':
-                        self.pause('Disk free below 20 GiB; explicit resume required after capacity recovery')
+                        self.pause('Root/cache/checkpoint volume below 20 GiB free; explicit resume required after capacity recovery')
                         self.enqueue('log', f"PAUSING: disk free {free} bytes is below 20 GiB; explicit resume required "
                             f"after capacity recovery. No originals or hash-bound media deleted. Status={self.state_path}.")
                     if time.monotonic() - self.last_remote_success > 75 and self.control['desired'] == 'running':

@@ -202,6 +202,29 @@ class Tests(unittest.TestCase):
         launch.assert_not_called()
         self.assertEqual('paused', supervisor.control['desired'])
 
+    def test_optional_checkpoint_directory_and_all_storage_paths_reported(self):
+        target = self.base / 'separate-checkpoints'
+        supervisor = module.Supervisor({**self.config, 'checkpoint_dir': str(target)})
+        self.assertEqual(target.resolve(), supervisor.checkpoint_dir)
+        with patch.object(module.shutil, 'disk_usage', return_value=type('Disk', (), {'free': 99})()) as usage:
+            capacity = module.disk_capacity(self.root, self.base / 'cache', target)
+        self.assertEqual(3, len(capacity))
+        self.assertEqual({99}, set(capacity.values()))
+        if module.os.name == 'nt':
+            self.assertEqual(1, usage.call_count)
+
+    @unittest.skipUnless(module.os.name == 'nt', 'Windows separate-volume capacity guard')
+    def test_low_cache_or_checkpoint_volume_pauses_even_when_media_volume_has_space(self):
+        supervisor = self.supervisor()
+        supervisor.checkpoint_dir = Path('D:/continuation/checkpoints')
+        capacity = {str(self.root): 100 * 1024**3, str(supervisor.checkpoint_dir): 19 * 1024**3}
+        with patch.object(module, 'disk_capacity', return_value=capacity), patch.object(supervisor, 'start_asr') as launch:
+            self.once(supervisor)
+        launch.assert_not_called()
+        self.assertEqual('paused', supervisor.control['desired'])
+        self.assertIn('checkpoint volume', supervisor.control['pause_reason'])
+        self.assertEqual(capacity, supervisor.state['free_disk_bytes_by_path'])
+
 
 if __name__ == '__main__':
     unittest.main()
