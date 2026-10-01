@@ -194,7 +194,7 @@ async function pollBunnyUntilReady(videoId, pipelineName, durationSec = null) {
         status: "success",
         detail: { availableResolutions, width, height, elapsedSec, guid },
       });
-      return { outcome: "ready", elapsedSec, guid };
+      return { outcome: "ready", elapsedSec, guid, height };
     }
     // Terminal: error. If Bunny received 0 bytes within 30s we tag it as
     // "empty-source" so the caller can self-heal with a fresh RapidAPI URL.
@@ -352,6 +352,57 @@ async function ingestToBunny(videoId, sourceUrl = null) {
     console.log(`  [${videoId}] Bunny: ingest error: ${err.message}`);
     return "failed";
   }
+}
+
+async function deleteBunnyVideo(guid) {
+  await new Promise((resolve) => {
+    const req = https.request({
+      hostname: "video.bunnycdn.com",
+      path: `/library/${BUNNY_LIBRARY_ID}/videos/${guid}`,
+      method: "DELETE",
+      headers: { AccessKey: BUNNY_STREAM_API_KEY },
+    }, (res) => { res.resume(); res.on("end", resolve); });
+    req.on("error", () => resolve(null));
+    req.end();
+  });
+}
+
+// Bunny-only mode, GCS copy exists: have Bunny fetch it. Returns true when the
+// video is handled (ready, or still encoding at poll timeout); false when the
+// caller should fall through to RapidAPI.
+async function bunnyFromGcsCopy(video, gcsPath) {
+  const start = Date.now();
+  const gcsUrl = `https://storage.googleapis.com/${GCS_BUCKET}/${gcsPath}`;
+  console.log(`  [${video.id}] GCS copy exists → Bunny fetching it (${gcsUrl})`);
+  await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-gcs-source", status: "info", detail: { gcsUrl } });
+  video.bunnyStatus = await ingestToBunny(video.id, gcsUrl);
+  if (video.bunnyStatus !== "queued") {
+    console.log(`  [${video.id}] Bunny refused the GCS copy; falling through to RapidAPI`);
+    return false;
+  }
+  const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration);
+  if (result?.outcome === "ready" && result.height > 0) {
+    video.status = "complete";
+    video.resolution = `${result.height}p (gcs)`;
+    video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
+    markDirty();
+    console.log(`  [${video.id}] DONE (bunny-only from GCS): ${video.resolution}`);
+    return true;
+  }
+  if (result?.outcome === "timeout") {
+    // Still encoding — leave it; a RapidAPI retry would create a duplicate asset.
+    video.status = "complete";
+    video.resolution = "gcs (encoding)";
+    markDirty();
+    return true;
+  }
+  if (result?.guid) await deleteBunnyVideo(result.guid);
+  await logEvent({
+    videoId: video.id, pipeline: "transcribe", step: "bunny-gcs-source-unusable", status: "error",
+    detail: { outcome: result?.outcome, height: result?.height ?? null },
+  });
+  console.log(`  [${video.id}] GCS copy unusable (${result?.outcome}, height ${result?.height ?? "?"}); falling through to RapidAPI`);
+  return false;
 }
 
 const RUN_ID = `run-${Date.now()}`;
@@ -517,7 +568,15 @@ async function processVideo(video) {
   const gcsPath = `${GCS_PREFIX}/${video.id}.mp4`;
 
   const [exists] = await bucket.file(gcsPath).exists();
-  if (exists) {
+  if (exists && MODE === "bunny-only") {
+    // An older research batch left a copy in GCS. Bunny-only mode used to skip
+    // here as "already in GCS", so the video never reached Bunny (15 of the
+    // 2026-10-01 Tegmark set "succeeded" in ~2s with nothing uploaded). Hand
+    // the GCS copy to Bunny instead. If Bunny can't produce a video from it
+    // (audio-only or broken copy, failed fetch), delete that asset and fall
+    // through to the RapidAPI path below.
+    if (await bunnyFromGcsCopy(video, gcsPath)) return;
+  } else if (exists) {
     console.log(`  [${video.id}] SKIP: already in GCS`);
     video.status = "skipped";
     video.gcsUrl = `gs://${GCS_BUCKET}/${gcsPath}`;

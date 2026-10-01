@@ -8,6 +8,25 @@
 - **GCS bucket**: `snippysaurus-clips`
 - **BigQuery source**: `youtubetranscripts-429803.reptranscripts.youtube_videos`
 
+## Build + deploy the image
+
+`Dockerfile` here was reconstructed on 2026-10-01 from the `b68d37d` image history (it had never been committed).
+Tag images with the git commit, then point the job at the new tag.
+
+```bash
+export CLOUDSDK_AUTH_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+SHA=$(git rev-parse --short HEAD)
+gcloud builds submit scripts/cloud-run --project youtubetranscripts-429803 \
+  --tag gcr.io/youtubetranscripts-429803/gcs-downloader:$SHA
+gcloud run jobs update bunny-downloader --region us-central1 --project youtubetranscripts-429803 \
+  --image gcr.io/youtubetranscripts-429803/gcs-downloader:$SHA
+```
+
+## Bunny-only mode and existing GCS copies
+When `videos/{id}.mp4` already exists in GCS, bunny-only mode hands that copy to Bunny. If Bunny can't make a
+video from it (an audio-only or broken copy, or a failed fetch), the asset is deleted and the RapidAPI path runs.
+Before 2026-10-01 it skipped these videos as "already in GCS", so they never reached Bunny.
+
 ## Create `bunny-downloader` (one-time)
 ```bash
 gcloud run jobs create bunny-downloader --region us-central1 \
