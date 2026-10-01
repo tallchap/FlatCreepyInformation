@@ -324,7 +324,8 @@ class TinyReporter:
                 times.setdefault(event['stage'], event['time'])
             coverage.append({'candidate_id': vid, 'lane': lane_ids.get(vid), 'status': state, 'outcome': outcome,
                 'attempted': bool(record), 'stage': record.get('stage'), 'reason': record.get('reason') or record.get('error'),
-                'failure_category': ('source_failed' if SOURCE_ERROR.search(str(record.get('error', ''))) else 'other_failed') if outcome == 'failed' else None,
+                'failure_category': ('source_failed' if record.get('isolated_source_failure') or
+                                     SOURCE_ERROR.search(str(record.get('error', ''))) else 'other_failed') if outcome == 'failed' else None,
                 'stage_events': stages.get(vid, []), 'stage_times': times,
                 'preparation_wall_seconds': elapsed(times.get('preparing'), times.get('prepared')),
                 'review_to_disposition_seconds': elapsed(times.get('reviewing'), record.get('updated_at')),

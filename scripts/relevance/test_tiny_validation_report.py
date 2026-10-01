@@ -134,6 +134,14 @@ class TinyTests(unittest.TestCase):
         self.assertEqual(report['counts']['failed'], 1)
         self.assertEqual(report['coverage'][-1]['failure_category'], 'source_failed')
 
+    def test_typed_isolated_source_failure_is_accurately_reported(self):
+        self.write('records/' + self.ids[-1] + '.json', {'candidate_id': self.ids[-1], 'status': 'failed',
+            'stage': 'preparation', 'error': 'generic typed source failure',
+            'isolated_source_failure': 'source_container_truncated'})
+        report = self.report()
+        self.assertTrue(report['passed'], report['errors'])
+        self.assertEqual(report['coverage'][-1]['failure_category'], 'source_failed')
+
     def test_baseline_changes_and_new_record_overrun_fail(self):
         self.write('records/' + self.baseline + '.json', {'candidate_id': self.baseline, 'status': 'published'})
         self.write('records/outside0001.json', {'candidate_id': 'outside0001', 'status': 'preparing'})

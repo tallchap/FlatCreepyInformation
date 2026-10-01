@@ -535,8 +535,9 @@ class Runner:
             checkpoint_cost = self.checkpoint_status.get('luna_cost_usd', 0)
             shadow_rows = [row for row in self.records.values() if row.get('checkpoint_origin') != 'Mac']
             source_failures = [row for row in shadow_rows if row['status'] == 'failed' and
-                               any(term in str(row.get('error', '')).lower() for term in
-                                   ('source generation', 'source not', '403', '404', '410', '412', 'gcs did not honor'))]
+                               (row.get('isolated_source_failure') or
+                                any(term in str(row.get('error', '')).lower() for term in
+                                    ('source generation', 'source not', '403', '404', '410', '412', 'gcs did not honor')))]
             transferred = sum(row.get('transfer', {}).get('upstream_body_bytes_read', 0) for row in shadow_rows)
             requested_bytes = sum(row.get('transfer', {}).get('upstream_requested_bytes', 0) for row in shadow_rows)
             audit.atomic(self.root / 'status.json', {'time': audit.now(), 'pid': os.getpid(), 'machine': self.machine,
@@ -585,6 +586,8 @@ class Runner:
 
     def isolated_source_failure(self, vid, exc):
         """Exclude only concrete unavailable/short sources from the outage breaker."""
+        if isinstance(exc, media.SourceIntegrityError):
+            return 'source_container_truncated'
         response = getattr(exc, 'response', None)
         if isinstance(exc, requests.HTTPError) and response is not None and response.status_code in (404, 410):
             return 'source_missing_' + str(response.status_code)
@@ -865,7 +868,8 @@ class Runner:
                         # unclassified, provider, auth, ASR, or publication failure
                         # retains the existing three-consecutive-batch breaker.
                         return bool(failed) and all(row.get('stage') == 'preparation' and row.get('isolated_source_failure')
-                                                    in ('source_missing_404', 'source_missing_410', 'source_eof_duration_mismatch')
+                                                    in ('source_missing_404', 'source_missing_410',
+                                                        'source_eof_duration_mismatch', 'source_container_truncated')
                                                     for row in failed)
                     future = pool.submit(process)
                     active.add(future)

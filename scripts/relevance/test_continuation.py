@@ -134,6 +134,7 @@ class ContinuationTests(unittest.TestCase):
         for stage, cause, stopped in [('preparation', 'source_missing_404', False),
                                       ('preparation', 'source_missing_410', False),
                                       ('preparation', 'source_eof_duration_mismatch', False),
+                                      ('preparation', 'source_container_truncated', False),
                                       ('preparation', None, True), ('luna', None, True),
                                       ('publication', 'source_missing_404', True)]:
             with self.subTest(stage=stage, cause=cause):
@@ -161,6 +162,21 @@ class ContinuationTests(unittest.TestCase):
             self.assertEqual(runner.isolated_source_failure('vid', error),
                              'source_missing_' + str(code) if code in (404, 410) else None)
         self.assertIsNone(runner.isolated_source_failure('vid', RuntimeError('404 text is not HTTP evidence')))
+        self.assertEqual(runner.isolated_source_failure(
+            'vid', p.media.SourceIntegrityError('truncated')),
+            'source_container_truncated')
+
+    def test_heartbeat_counts_typed_container_corruption_as_source_failure(self):
+        vid = self.record(0, 'failed')
+        record = {'candidate_id': vid, 'status': 'failed', 'stage': 'preparation',
+                  'error': 'SourceIntegrityError: generation-pinned container is truncated',
+                  'isolated_source_failure': 'source_container_truncated'}
+        p.audit.atomic(self.root / 'records' / f'{vid}.json', record)
+        runner = self.runner()
+        runner.heartbeat()
+        status = p.luna.read(self.root / 'status.json')
+        self.assertEqual(status['source_failed'], 1)
+        self.assertEqual(status['other_failed'], 0)
 
     def test_eof_classifier_requires_duration_only_failure_and_matching_short_source(self):
         runner = self.runner()

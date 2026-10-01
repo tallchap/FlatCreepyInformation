@@ -184,6 +184,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(report['remaining'], 0)
         self.assertFalse(report['checks']['no_operational_failures'])
 
+    def test_typed_isolated_source_failure_is_not_other_failed(self):
+        reporter = Reporter(self.root, expected_count=2)
+        row = {'candidate_id': self.ids[0], 'status': 'failed', 'stage': 'preparation',
+               'error': 'generic typed source failure',
+               'isolated_source_failure': 'source_container_truncated'}
+        self.assertEqual(reporter.failure_kind(row), 'source_failed')
+
     def test_mac_checkpoint_hashes_and_reservation_are_preserved(self):
         vid = self.ids[0]
         record = self.hold(vid)

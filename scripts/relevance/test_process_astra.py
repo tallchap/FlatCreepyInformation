@@ -2,6 +2,7 @@ import copy
 import io
 import json
 from pathlib import Path
+import struct
 import tempfile
 import shutil
 import subprocess
@@ -10,7 +11,7 @@ from unittest.mock import Mock
 from urllib.request import Request, urlopen
 
 import audit
-from process_astra import RangeProxy, validate
+from process_astra import RangeProxy, SourceIntegrityError, inspect_mp4_extents, validate
 
 
 class ValidationTests(unittest.TestCase):
@@ -107,6 +108,72 @@ class FakeSession:
         self.calls.append((url, kwargs))
         lo, hi = kwargs['headers']['Range'][6:].split('-')
         return FakeResponse(self.data, int(lo), int(hi) if hi else len(self.data) - 1, self.status)
+
+
+class ContainerIntegrityTests(unittest.TestCase):
+    @staticmethod
+    def box(kind, payload=b'', declared_size=None):
+        size = 8 + len(payload) if declared_size is None else declared_size
+        return struct.pack('>I4s', size, kind) + payload
+
+    @staticmethod
+    def inspect(data):
+        return inspect_mp4_extents(
+            len(data), lambda start, end: data[start:end + 1])
+
+    def test_valid_top_level_boxes_cover_exact_object(self):
+        data = self.box(b'ftyp', b'isom') + self.box(b'moov') + self.box(b'mdat', b'frames')
+        report = self.inspect(data)
+        self.assertTrue(report['applicable'] and report['complete'])
+        self.assertEqual([box['type'] for box in report['boxes']], ['ftyp', 'moov', 'mdat'])
+        self.assertEqual(report['boxes'][-1]['declared_end'], len(data))
+
+    def test_declared_mdat_past_immutable_object_is_typed_source_corruption(self):
+        data = self.box(b'ftyp') + self.box(b'moov') + self.box(b'mdat', declared_size=1000)
+        with self.assertRaisesRegex(SourceIntegrityError, 'truncated') as raised:
+            self.inspect(data)
+        evidence = raised.exception.evidence
+        self.assertEqual(evidence['error'], 'declared_box_past_object_end')
+        self.assertEqual(evidence['boxes'][-1]['type'], 'mdat')
+        self.assertEqual(evidence['boxes'][-1]['missing_bytes'], 992)
+
+    def test_non_isobmff_payload_is_not_misclassified_from_mp4_suffix(self):
+        data = b'not an ISO base media file despite its external name'
+        report = self.inspect(data)
+        self.assertFalse(report['applicable'])
+        self.assertIsNone(report['complete'])
+        self.assertEqual(report['not_applicable_reason'], 'no_isobmff_ftyp_header')
+
+    def test_size_zero_and_64_bit_extended_boxes_are_supported(self):
+        ftyp = self.box(b'ftyp')
+        extended = struct.pack('>I4sQ', 1, b'moov', 16)
+        to_eof = struct.pack('>I4s', 0, b'mdat') + b'frames'
+        report = self.inspect(ftyp + extended + to_eof)
+        self.assertTrue(report['complete'])
+        self.assertEqual(report['boxes'][1]['header_size'], 16)
+        self.assertEqual(report['boxes'][-1]['declared_end'], report['object_size'])
+
+    def test_many_legal_top_level_boxes_are_inconclusive_not_corrupt(self):
+        data = self.box(b'ftyp') + self.box(b'free') * 4096 + self.box(b'mdat')
+        report = self.inspect(data)
+        self.assertTrue(report['applicable'])
+        self.assertIsNone(report['complete'])
+        self.assertIsNone(report['error'])
+        self.assertEqual(report['inspection_inconclusive_reason'], 'top_level_box_limit')
+        self.assertEqual(report['next_offset'], 8 * 4096)
+
+    @unittest.skipUnless(shutil.which('ffmpeg'), 'FFmpeg required')
+    def test_truncated_faststart_mp4_fails_extent_preflight(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / 'source.mp4'
+            subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+                            'testsrc2=size=64x64:rate=5', '-t', '1', '-c:v',
+                            'libx264', '-movflags', '+faststart', str(source)],
+                           check=True, capture_output=True)
+            data = source.read_bytes()
+            self.assertTrue(self.inspect(data)['complete'])
+            with self.assertRaisesRegex(SourceIntegrityError, 'truncated'):
+                self.inspect(data[:-64])
 
 
 class ProxyTests(unittest.TestCase):

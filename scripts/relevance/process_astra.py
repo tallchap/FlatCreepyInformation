@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 from urllib.parse import quote
+from urllib.request import Request, urlopen
 
 import audit
 import encoding
@@ -26,6 +27,104 @@ from captions import parse_captions
 def require(value, message):
     if not value:
         raise ValueError(message)
+
+
+class SourceIntegrityError(ValueError):
+    """A generation-pinned source object is structurally incomplete."""
+    def __init__(self, message, evidence=None):
+        super().__init__(message)
+        self.evidence = evidence
+
+
+def inspect_mp4_extents(object_size, read_range):
+    """Prove that every declared top-level MP4 box fits in the object.
+
+    Only box headers are read. This catches fast-start files whose `moov`
+    sample tables describe media in a physically truncated `mdat` before an
+    encoder can mistake chapter metadata for a successful A/V render.
+    """
+    if type(object_size) is not int or object_size < 0:
+        raise ValueError('Source object size must be a nonnegative integer')
+    if object_size < 8:
+        return {'schema_version': 'snippy-mp4-extents-v1',
+                'object_size': object_size, 'boxes': [], 'applicable': False,
+                'complete': None, 'error': None,
+                'not_applicable_reason': 'no_isobmff_ftyp_header'}
+    offset, boxes = 0, []
+    while offset < object_size:
+        if len(boxes) >= 4096:
+            return {'schema_version': 'snippy-mp4-extents-v1',
+                    'object_size': object_size, 'boxes': boxes,
+                    'applicable': True, 'complete': None, 'error': None,
+                    'inspection_inconclusive_reason': 'top_level_box_limit',
+                    'next_offset': offset}
+        remaining = object_size - offset
+        if remaining < 8:
+            evidence = {'schema_version': 'snippy-mp4-extents-v1',
+                        'object_size': object_size, 'boxes': boxes,
+                        'complete': False, 'error': 'trailing_partial_box_header',
+                        'offset': offset, 'remaining_bytes': remaining}
+            raise SourceIntegrityError('Source MP4 ends inside a box header', evidence)
+        header = read_range(offset, min(offset + 15, object_size - 1))
+        if len(header) < 8:
+            evidence = {'schema_version': 'snippy-mp4-extents-v1',
+                        'object_size': object_size, 'boxes': boxes,
+                        'complete': False, 'error': 'short_box_header',
+                        'offset': offset, 'received_bytes': len(header)}
+            raise SourceIntegrityError('Source MP4 box header range was short', evidence)
+        declared_size = int.from_bytes(header[:4], 'big')
+        box_type_bytes = header[4:8]
+        box_type = box_type_bytes.decode('latin-1')
+        if offset == 0 and box_type_bytes != b'ftyp':
+            return {'schema_version': 'snippy-mp4-extents-v1',
+                    'object_size': object_size, 'boxes': [], 'applicable': False,
+                    'complete': None, 'error': None,
+                    'not_applicable_reason': 'no_isobmff_ftyp_header',
+                    'first_box_type_latin1': box_type}
+        header_size = 8
+        if declared_size == 1:
+            if len(header) < 16:
+                evidence = {'schema_version': 'snippy-mp4-extents-v1',
+                            'object_size': object_size, 'boxes': boxes,
+                            'complete': False, 'error': 'short_extended_box_header',
+                            'offset': offset, 'type': box_type}
+                raise SourceIntegrityError('Source MP4 extended box header was short', evidence)
+            declared_size, header_size = int.from_bytes(header[8:16], 'big'), 16
+        elif declared_size == 0:
+            declared_size = remaining
+        end = offset + declared_size
+        entry = {'offset': offset, 'type': box_type, 'header_size': header_size,
+                 'declared_size': declared_size, 'declared_end': end}
+        boxes.append(entry)
+        if declared_size < header_size:
+            evidence = {'schema_version': 'snippy-mp4-extents-v1',
+                        'object_size': object_size, 'boxes': boxes,
+                        'complete': False, 'error': 'invalid_box_size'}
+            raise SourceIntegrityError('Source MP4 has an invalid top-level box size', evidence)
+        if end > object_size:
+            entry['missing_bytes'] = end - object_size
+            evidence = {'schema_version': 'snippy-mp4-extents-v1',
+                        'object_size': object_size, 'boxes': boxes,
+                        'complete': False, 'error': 'declared_box_past_object_end'}
+            raise SourceIntegrityError(
+                f'Source MP4 is truncated: {box_type!r} declares {end} bytes '
+                f'but immutable object size is {object_size}', evidence)
+        offset = end
+    return {'schema_version': 'snippy-mp4-extents-v1',
+            'object_size': object_size, 'boxes': boxes, 'applicable': True,
+            'complete': True, 'error': None, 'not_applicable_reason': None}
+
+
+def inspect_proxy_mp4_extents(url, object_size):
+    def read_range(start, end):
+        with urlopen(Request(url, headers={'Range': f'bytes={start}-{end}'}), timeout=45) as response:
+            if response.status != 206:
+                raise RuntimeError('Source proxy did not honor MP4 header range')
+            body = response.read()
+            if len(body) != end - start + 1:
+                raise RuntimeError('Source proxy returned a short MP4 header range')
+            return body
+    return inspect_mp4_extents(object_size, read_range)
 
 
 def sha(path):
@@ -331,11 +430,20 @@ def render(args, recipe, packet, validation):
     ffmpeg_version = run([codec['binary_path'], '-version'], out / 'ffmpeg-version.log').splitlines()[0]
     try:
         with proxy:
+            try:
+                container = inspect_proxy_mp4_extents(proxy.url, int(obj['size']))
+            except SourceIntegrityError as exc:
+                if exc.evidence:
+                    exc.evidence['source_object'] = {key: str(obj[key]) for key in ('bucket', 'name', 'generation', 'size')}
+                    audit.atomic(out / 'source-container.json', exc.evidence)
+                raise
+            container['source_object'] = {key: str(obj[key]) for key in ('bucket', 'name', 'generation', 'size')}
+            audit.atomic(out / 'source-container.json', container)
             source_probe = probe(proxy.url, out / 'source-probe.log')
             audit.atomic(out / 'source-ffprobe.json', source_probe)
             for index, edit in enumerate(recipe['edits']):
                 part = out / f'part-{index:03}.mp4'
-                cmd = [codec['binary_path'], '-nostdin', '-hide_banner', '-v', 'error', '-y', '-ss', str(edit['start_seconds']), '-i', proxy.url, '-t', str(edit['end_seconds'] - edit['start_seconds']), '-map', '0:v:0', '-map', '0:a:0', '-sn', '-dn', *encoding.output_args(codec), str(part)]
+                cmd = [codec['binary_path'], '-nostdin', '-hide_banner', '-v', 'error', '-y', '-ss', str(edit['start_seconds']), '-i', proxy.url, '-t', str(edit['end_seconds'] - edit['start_seconds']), '-map', '0:v:0', '-map', '0:a:0', '-map_chapters', '-1', '-sn', '-dn', *encoding.output_args(codec), str(part)]
                 run(cmd, out / f'part-{index:03}.log')
                 parts.append(part)
         require(not proxy.errors, 'Range transfer errors; inspect transfer.json')

@@ -206,6 +206,8 @@ class Reporter:
             return None
         if row.get('status') == 'source_failed' or row.get('failure_kind') == 'source_failed':
             return 'source_failed'
+        if row.get('isolated_source_failure'):
+            return 'source_failed'
         details = [str(row.get('error', '')), str(row.get('failure_category', ''))]
         directories = [self.resolve(row['directory'])] if row.get('directory') else list((self.root / 'rendered').glob(str(row.get('candidate_id', '')) + '-*'))
         for directory in directories:
