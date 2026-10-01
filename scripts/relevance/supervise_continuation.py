@@ -141,6 +141,15 @@ def load_config(path):
     for key in ('private_env_file', 'relay_session_file'):
         if Path(config[key]).is_relative_to(continuation) or not Path(config[key]).is_file():
             raise ValueError('Required private file missing or inside deliverable directory: ' + key)
+    workers = config.setdefault('batch_workers', 2)
+    if type(workers) is not int or not 1 <= workers <= 6:
+        raise ValueError('batch_workers must be an integer from 1 to 6')
+    if config.get('tuning_authorization'):
+        config['tuning_authorization'] = str(Path(config['tuning_authorization']).resolve())
+        if not Path(config['tuning_authorization']).is_file():
+            raise ValueError('Configured batch tuning authorization is missing')
+    elif workers > 2:
+        raise ValueError('More than two batch workers requires an explicit tuning authorization')
     config['_config_path'] = str(path)
     return config
 
@@ -160,10 +169,54 @@ def submit_control(config, action, source='local', details=None, identifier=None
     if created:
         atomic(path, request)
     # Local pause must work immediately, even when a supervisor is offline.
-    if created and action == 'PAUSE' and source == 'local':
+    if created and action == 'PAUSE' and source in ('local', 'maintenance'):
         atomic(Path(config['root']) / 'STOP.json', {'job_id': config['job_id'], 'time': now(),
             'reason': 'Explicit operator pause', 'control_request_id': identifier, 'source': source})
     return request
+
+
+def maintenance_resume_blocker(config):
+    """Why a maintenance RESUME must not be issued, or None when it is safe.
+
+    Maintenance may resume only its own drain: the newest control request of
+    any source must be an applied maintenance PAUSE, and a fresh remote-control
+    read must postdate it, so a newer user/Relay pause is never overridden.
+    """
+    continuation = Path(config['continuation_dir'])
+    requests = sorted((read(path) for path in (continuation / 'control-requests').glob('*.json')), key=control_order)
+    state = read(continuation / 'status.json')
+    control = read(continuation / 'control-state.json')
+    if not requests:
+        return 'No control request exists'
+    latest = requests[-1]
+    if latest.get('action') != 'PAUSE' or latest.get('source') != 'maintenance':
+        return f"Newest control is {latest.get('source')} {latest.get('action')}, not this maintenance pause"
+    if latest['id'] not in control.get('processed_ids', []) or control.get('desired') != 'paused':
+        return 'Maintenance pause has not been applied by a supervisor yet'
+    if state.get('phase') != 'paused' or state.get('own_children_alive') is not False:
+        return 'Supervisor has not reported a drained pause'
+    if state.get('remote_poll_error') or not state.get('last_remote_poll_at') \
+            or state['last_remote_poll_at'] <= latest['received_at']:
+        return 'No successful remote-control read after the maintenance pause'
+    return None
+
+
+def write_batch_workers(config, value, reason):
+    """Set the live whole-batch overlap target inside the authorized cap."""
+    authorization = config.get('tuning_authorization')
+    if not authorization:
+        raise ValueError('No batch tuning authorization configured')
+    tuning = read(authorization)
+    if type(value) is not int or not 1 <= value <= tuning['maximum_batch_workers']:
+        raise ValueError('Batch workers outside the authorized cap')
+    path = Path(tuning['control_path'])
+    previous = read(path)
+    entry = {'continuation_id': config['job_id'], 'batch_workers': value, 'set_at': now(), 'reason': reason,
+             'tuning_job_id': tuning['tuning_job_id'], 'previous': previous.get('batch_workers')}
+    atomic(path, entry)
+    with (path.parent / 'batch-workers-requests.jsonl').open('a', encoding='utf-8') as stream:
+        stream.write(json.dumps(entry) + '\n')
+    return entry
 
 
 def control_order(item):
@@ -316,9 +369,10 @@ class Supervisor:
         names = ('authorization.json', 'preflight-reconciliation.json', 'continuation-plan.json',
             'continuation-status.json', 'status.json', 'control-state.json', 'remote-control-history.json',
             'admission-approved.json', 'final-verification.json', 'code-verification.json',
-            'pause-self-test.json', 'preflight-reconciliation.md', 'CONTROL.md', 'control.ps1')
+            'pause-self-test.json', 'preflight-reconciliation.md', 'CONTROL.md', 'control.ps1',
+            'batch-tuning-authorization.json', 'batch-workers.json')
         paths = [self.cont / name for name in names]
-        for name in ('drains', 'control-requests', 'stop-history', 'recovery-prior-records'):
+        for name in ('drains', 'control-requests', 'stop-history', 'recovery-prior-records', 'admission-history'):
             paths.extend((self.cont / name).glob('*.json'))
         for path in paths:
             if not path.is_file():
@@ -474,14 +528,19 @@ class Supervisor:
         command = [sys.executable, '-X', 'utf8', str(self.scripts / 'production.py'), '--root', str(self.root),
             '--private-env-file', self.config['private_env_file'], '--machine', 'Shadow',
             '--whisper-cli', str(self.scripts / 'whisper_cuda_client.py'), '--continuation-id', self.config['job_id'],
-            '--continuation-authorization', str(self.cont / 'authorization.json'), '--batch-workers', '2']
+            '--continuation-authorization', str(self.cont / 'authorization.json'),
+            '--batch-workers', str(self.config.get('batch_workers', 2))]
+        if self.config.get('tuning_authorization'):
+            command += ['--tuning-authorization', self.config['tuning_authorization']]
         self.runner = subprocess.Popen(command, cwd=self.scripts.parent.parent, env=self.env,
             stdout=self.log_file(f'runner-{self.state["cycle"]}.log'), stderr=subprocess.STDOUT, **hidden())
         self.save(phase='running', runner_pid=self.runner.pid, runner_started_at=now(), admission_approved=True,
                   own_children_alive=True)
         self.enqueue('log', f"Continuation launched: supervisor PID={os.getpid()}, runner PID={self.runner.pid}, "
             f"CUDA PID={self.state['asr_pid']}, code={self.config['runtime_commit']}; status={self.state_path}; "
-            "2 Luna groups, render cap2, ASR cap1; existing publications/Astra holds protected.")
+            f"{self.config.get('batch_workers', 2)} Luna groups at start"
+            + (" (live tuning control, authorized cap in batch-tuning-authorization.json)" if self.config.get('tuning_authorization') else '')
+            + ", render cap2, ASR cap1; existing publications/Astra holds protected.")
 
     def drained(self):
         endpoint_pid = read(self.endpoint).get('pid') if self.endpoint and self.endpoint.exists() else None
@@ -659,9 +718,25 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--self-test', action='store_true')
-    parser.add_argument('action', choices=('run', 'pause', 'resume', 'status'), nargs='?', default='run')
+    parser.add_argument('action', choices=('run', 'pause', 'resume', 'status', 'maintenance-pause',
+                                           'maintenance-resume', 'set-batch-workers'), nargs='?', default='run')
+    parser.add_argument('--reason', default='Operational maintenance drain')
+    parser.add_argument('--batch-workers', type=int)
     args = parser.parse_args(argv)
     config = load_config(args.config)
+    if args.action == 'maintenance-pause':
+        print(json.dumps(submit_control(config, 'PAUSE', 'maintenance', {'reason': args.reason}), indent=2))
+        return 0
+    if args.action == 'maintenance-resume':
+        blocker = maintenance_resume_blocker(config)
+        if blocker:
+            print(json.dumps({'resumed': False, 'blocker': blocker}, indent=2))
+            return 2
+        print(json.dumps(submit_control(config, 'RESUME', 'maintenance', {'reason': args.reason}), indent=2))
+        return 0
+    if args.action == 'set-batch-workers':
+        print(json.dumps(write_batch_workers(config, args.batch_workers, args.reason), indent=2))
+        return 0
     if args.action == 'status':
         print(json.dumps(read(Path(config['continuation_dir']) / 'status.json'), indent=2))
         return 0

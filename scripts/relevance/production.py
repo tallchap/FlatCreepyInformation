@@ -24,6 +24,8 @@ import process_astra as media
 import publish_astra
 
 TERMINAL = {'published', 'already_published', 'awaiting_astra', 'failed'}
+# Scoped throughput tuning may overlap more whole batches; local caps never change.
+TUNING_MAX_BATCH_WORKERS = 6
 
 
 class ContinuationIntegrityError(ValueError):
@@ -94,6 +96,32 @@ def batch_namespace(root, requested):
     if not saved:
         audit.atomic(path, {'batch_namespace': namespace})
     return namespace
+
+
+def load_batch_tuning(path, continuation_id):
+    """Validate an explicit, hash-bound batch-overlap authorization.
+
+    It may raise only the number of whole batches in flight. Batch membership,
+    render slots (2), ASR slots (1) and the serialized publication writer stay
+    frozen; the continuation plan hash is checked once that plan is loaded.
+    """
+    path = Path(path).resolve()
+    tuning = luna.read(path)
+    unsigned = {key: value for key, value in tuning.items() if key != 'authorization_sha256'}
+    maximum = tuning.get('maximum_batch_workers')
+    if (tuning.get('schema_version') != 'snippy-batch-tuning-v1' or tuning.get('continuation_id') != continuation_id
+            or type(maximum) is not int or not 2 <= maximum <= TUNING_MAX_BATCH_WORKERS
+            or tuning.get('maximum_batch_members') != 5 or tuning.get('render_slots') != 2 or tuning.get('asr_slots') != 1
+            or not re.fullmatch(r'[A-Z0-9][A-Z0-9_-]{0,79}', str(tuning.get('tuning_job_id', '')))
+            or not re.fullmatch(r'[0-9a-f]{64}', str(tuning.get('continuation_plan_sha256', '')))
+            or tuning.get('authorization_sha256') != audit.digest(unsigned)):
+        raise ValueError('Batch tuning authorization is invalid, unsigned, or exceeds frozen local caps')
+    if getattr(luna.RENDER_LOCK, '_initial_value', None) != 2 or not isinstance(luna.ASR_LOCK, type(threading.Lock())):
+        raise ValueError('Local render/ASR caps differ from the tuning authorization')
+    control = Path(tuning.get('control_path', ''))
+    if not control.is_absolute() or control.resolve().parent != path.parent:
+        raise ValueError('Batch worker control must live beside its authorization')
+    return {**tuning, '_path': str(path), '_sha256': luna.sha(path)}
 
 
 def bound_batch_plan(batch, slot_ids, directories, packets):
@@ -250,10 +278,15 @@ def verify(root):
 
 class Runner:
     def __init__(self, root, whisper, limit=None, machine=None, namespace=None, batch_workers=1, experiment_id=None,
-                 stream_id=None, max_candidates=None, continuation_id=None, continuation_authorization=None):
+                 stream_id=None, max_candidates=None, continuation_id=None, continuation_authorization=None,
+                 tuning_authorization=None):
         if batch_workers not in range(1, 11):
             raise ValueError('Batch workers must be between 1 and 10')
-        if batch_workers > 2 and not experiment_id:
+        if tuning_authorization and not continuation_id:
+            raise ValueError('Batch tuning authorization applies only to an authorized continuation')
+        self.tuning = load_batch_tuning(tuning_authorization, continuation_id) if tuning_authorization else None
+        continuation_cap = self.tuning['maximum_batch_workers'] if self.tuning else 2
+        if batch_workers > 2 and not experiment_id and not self.tuning:
             raise ValueError('More than two workers requires a frozen bounded experiment')
         if experiment_id and (batch_workers != 10 or limit != 10):
             raise ValueError('The bounded experiment requires exactly 10 workers and max-batches 10')
@@ -263,8 +296,9 @@ class Runner:
             raise ValueError('max-candidates requires a frozen stream-id')
         if bool(continuation_id) != bool(continuation_authorization):
             raise ValueError('Continuation requires both its job ID and explicit authorization file')
-        if continuation_id and (experiment_id or stream_id or limit is not None or batch_workers > 2):
-            raise ValueError('Continuation requires unlimited frozen scope and at most two batch workers')
+        if continuation_id and (experiment_id or stream_id or limit is not None or batch_workers > continuation_cap):
+            raise ValueError('Continuation requires unlimited frozen scope and at most two batch workers '
+                             'unless an explicit tuning authorization raises that cap')
         self.root, self.whisper, self.limit = root.resolve(), whisper, limit
         self.continuation_id = continuation_id
         self.continuation_authorization = Path(continuation_authorization).resolve() if continuation_authorization else None
@@ -285,6 +319,8 @@ class Runner:
                     or previous.get('experiment_id') != luna.read(frozen_path).get('experiment_id')):
                 raise ValueError('Existing bounded experiment requires its matching experiment-id; queue continuation is paused')
         self.batch_workers = batch_workers
+        self.current_batch_workers = batch_workers
+        self.batch_workers_error = None
         self.experiment_id = experiment_id
         self.stream_id, self.max_candidates = stream_id, max_candidates
         self.review_barrier = None
@@ -455,6 +491,8 @@ class Runner:
             source = (self.root / relative).resolve()
             if not source.is_relative_to(self.root) or not source.exists() or luna.sha(source) != digest:
                 raise ValueError('Prior checkpoint or paid batch plan changed: ' + relative)
+        if getattr(self, 'tuning', None) and self.tuning['continuation_plan_sha256'] != plan['plan_sha256']:
+            raise ValueError('Batch tuning authorization is bound to a different continuation plan')
         self.continuation = plan
         return plan
 
@@ -502,7 +540,11 @@ class Runner:
             transferred = sum(row.get('transfer', {}).get('upstream_body_bytes_read', 0) for row in shadow_rows)
             requested_bytes = sum(row.get('transfer', {}).get('upstream_requested_bytes', 0) for row in shadow_rows)
             audit.atomic(self.root / 'status.json', {'time': audit.now(), 'pid': os.getpid(), 'machine': self.machine,
-                'batch_namespace': self.namespace, 'batch_workers': self.batch_workers,
+                'batch_namespace': self.namespace, 'batch_workers': getattr(self, 'current_batch_workers', self.batch_workers),
+                'batch_workers_startup': self.batch_workers,
+                'batch_workers_authorized_max': (getattr(self, 'tuning', None) or {}).get('maximum_batch_workers', self.batch_workers),
+                'batch_tuning_authorization_sha256': (getattr(self, 'tuning', None) or {}).get('_sha256'),
+                'batch_workers_error': getattr(self, 'batch_workers_error', None),
                 'continuation_id': getattr(self, 'continuation_id', None),
                 'continuation_plan_sha256': (getattr(self, 'continuation', None) or {}).get('plan_sha256'),
                 'active_batches': [dict(self.active_batches[name]) for name in sorted(self.active_batches)],
@@ -757,8 +799,40 @@ class Runner:
                 self.active_batches.pop(batch.name, None)
             self.heartbeat()
 
+    def target_batch_workers(self):
+        """Live whole-batch overlap target; never above the authorized cap.
+
+        Lowering it only stops new admissions; accepted batches drain normally.
+        A missing control keeps the startup value; an invalid one falls back
+        to the frozen continuation default of two and is reported in status.
+        """
+        tuning = getattr(self, 'tuning', None)
+        if not tuning:
+            return self.batch_workers
+        path = Path(tuning['control_path'])
+        target, error = self.batch_workers, None
+        if path.exists():
+            try:
+                control = luna.read(path)
+                value = control.get('batch_workers')
+                if (control.get('continuation_id') != self.continuation_id or type(value) is not int
+                        or not 1 <= value <= tuning['maximum_batch_workers']):
+                    raise ValueError('out of range or wrong continuation')
+                target = value
+            except (OSError, ValueError) as exc:
+                target, error = min(2, self.batch_workers), f'Invalid batch worker control ignored: {exc}'
+        if target != self.current_batch_workers or error != self.batch_workers_error:
+            with self.lock:
+                entry = {'time': audit.now(), 'from': self.current_batch_workers, 'to': target, 'error': error,
+                         'active_batches': sorted(self.active_batches), 'pid': os.getpid()}
+                with (path.parent / 'batch-workers-applied.jsonl').open('a', encoding='utf-8') as stream:
+                    stream.write(json.dumps(entry) + '\n')
+                self.current_batch_workers, self.batch_workers_error = target, error
+            print(audit.now(), 'batch_workers', entry['from'], '->', target, error or '', flush=True)
+        return target
+
     def run_batches(self):
-        """Keep at most two whole batches in flight; drain on a failure stop."""
+        """Keep the authorized number of whole batches in flight; drain on a failure stop."""
         slots = iter(self.batch_slots())
         completed = queue.Queue()
         active = set()
@@ -766,9 +840,11 @@ class Runner:
         exhausted = False
         stop_error = None
         paused = False
-        with ThreadPoolExecutor(max_workers=self.batch_workers) as pool:
+        tuning = getattr(self, 'tuning', None)
+        capacity = tuning['maximum_batch_workers'] if tuning else self.batch_workers
+        with ThreadPoolExecutor(max_workers=capacity) as pool:
             while True:
-                while not stop_error and not exhausted and len(active) < self.batch_workers:
+                while not stop_error and not exhausted and len(active) < self.target_batch_workers():
                     if self.stop_requested():
                         paused = True
                         break
@@ -797,7 +873,11 @@ class Runner:
                     submitted += 1
                 if not active:
                     break
-                future = completed.get()
+                try:
+                    # Tuned runs re-read the live overlap target while waiting.
+                    future = completed.get(timeout=5 if tuning else None)
+                except queue.Empty:
+                    continue
                 active.remove(future)
                 try:
                     succeeded = future.result()
@@ -1122,6 +1202,7 @@ def main():
     parser.add_argument('--continuation-id')
     parser.add_argument('--continuation-authorization', type=Path)
     parser.add_argument('--continuation-plan-only', action='store_true', help='Freeze/verify admission without network or execution')
+    parser.add_argument('--tuning-authorization', type=Path, help='Hash-bound batch-overlap authorization (continuation only)')
     args = parser.parse_args()
     if args.private_env_file:
         private_environment(args.private_env_file)
@@ -1132,12 +1213,14 @@ def main():
     args.root.mkdir(parents=True, exist_ok=True)
     with runner_lock(args.root / 'runner.lock'):
         runner = Runner(args.root, args.whisper_cli, args.max_batches, args.machine, args.batch_namespace, args.batch_workers,
-                        args.experiment_id, args.stream_id, args.max_candidates, args.continuation_id, args.continuation_authorization)
+                        args.experiment_id, args.stream_id, args.max_candidates, args.continuation_id, args.continuation_authorization,
+                        args.tuning_authorization)
         if args.continuation_plan_only:
             if not args.continuation_id:
                 parser.error('--continuation-plan-only requires --continuation-id and --continuation-authorization')
             plan = runner.continuation_plan()
             print(json.dumps({'plan_sha256': plan['plan_sha256'], 'target_candidate_count': plan['target_candidate_count'],
+                              'batch_tuning_max': (runner.tuning or {}).get('maximum_batch_workers'),
                               'slot_count': len(plan['slots']), 'protected_prior_records': len(plan['protected_record_sha256'])}))
         else:
             runner.run()
