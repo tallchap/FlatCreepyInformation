@@ -1,5 +1,6 @@
 import base64
 import io
+import http.client
 import json
 import shutil
 import subprocess
@@ -178,6 +179,41 @@ class AudioEvidenceTests(unittest.TestCase):
         failure = json.loads((self.out / 'failure.json').read_text())
         self.assertEqual(failure['status'], 'preparation_failed')
         self.assertFalse(failure['request_sent'])
+
+
+    def test_truncated_success_body_keeps_transport_receipt(self):
+        response = Mock(status=200)
+        response.read.side_effect = http.client.IncompleteRead(b'partial-success', 500)
+        response.headers = {'x-request-id': 'req-truncated'}
+        response.__enter__ = Mock(return_value=response)
+        response.__exit__ = Mock(return_value=False)
+        with patch.object(audio.audit, 'api_key', return_value='test-key'), \
+                patch.object(audio.urllib.request, 'urlopen', return_value=response):
+            with self.assertRaises(audio.ResponseReadError):
+                audio.run(self.media, self.out, extractor=self.extract)
+        saved = json.loads((self.out / 'failure.json').read_text())
+        self.assertEqual(saved['status'], 'response_read_failed')
+        self.assertEqual((saved['http_status'], saved['request_id']), (200, 'req-truncated'))
+        self.assertEqual(base64.b64decode(saved['response_body_base64']), b'partial-success')
+        self.assertFalse(saved['charge_reconciled'])
+        self.assertFalse((self.out / 'evidence.json').exists())
+
+    def test_truncated_error_body_keeps_transport_receipt(self):
+        body = Mock()
+        body.read.side_effect = http.client.IncompleteRead(b'partial-error', 500)
+        error = urllib.error.HTTPError('https://api.openai.com', 502,
+            'bad gateway', {'x-request-id': 'req-502'}, body)
+        sender = Mock(side_effect=error)
+        with self.assertRaises(urllib.error.HTTPError):
+            audio.run(self.media, self.out, sender, self.extract)
+        saved = json.loads((self.out / 'failure.json').read_text())
+        self.assertEqual((saved['status'], saved['http_status'], saved['request_id']),
+                         ('http_error', 502, 'req-502'))
+        self.assertEqual(base64.b64decode(saved['response_body_base64']), b'partial-error')
+        self.assertIn('IncompleteRead', saved['body_read_error'])
+        self.assertFalse(saved['charge_reconciled'])
+        body.close.assert_called_once()
+        sender.assert_called_once()
 
 
 if __name__ == '__main__':

@@ -47,12 +47,28 @@ def extract(media, target):
                    capture_output=True, timeout=300)
 
 
+class ResponseReadError(RuntimeError):
+    def __init__(self, response, cause):
+        super().__init__(str(cause))
+        self.receipt = {'http_status': response.status,
+            'request_id': response.headers.get('x-request-id'),
+            'response_body_base64': base64.b64encode(getattr(cause, 'partial', b'')).decode(),
+            'body_read_error': str(cause), 'charge_reconciled': False}
+
+
+def read_response(response):
+    try:
+        return response.read()
+    except Exception as exc:
+        raise ResponseReadError(response, exc) from exc
+
+
 def send(body):
     request = urllib.request.Request('https://api.openai.com/v1/chat/completions',
         data=body, headers={'Authorization': 'Bearer ' + audit.api_key(),
                             'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=180) as response:
-        return response.read(), response.headers.get('x-request-id')
+        return read_response(response), response.headers.get('x-request-id')
 
 
 def parse(response):
@@ -112,14 +128,21 @@ def run(media, out, sender=send, extractor=extract):
         receipt.update(status='evidence_ready', evidence=evidence)
         write(out / 'evidence.json', receipt)
         return receipt
+    except ResponseReadError as exc:
+        receipt.update(exc.receipt, status='response_read_failed', completed_at=now())
+        write(out / 'failure.json', receipt)
+        raise
     except urllib.error.HTTPError as exc:
+        receipt.update(status='http_error', http_status=exc.code, completed_at=now(),
+                       request_id=exc.headers.get('x-request-id'), charge_reconciled=False)
         try:
-            error_body = exc.read().decode(errors='replace')
+            raw_error = read_response(exc)
+            receipt.update(error_body=raw_error.decode(errors='replace'),
+                           response_body_base64=base64.b64encode(raw_error).decode())
+        except ResponseReadError as read_error:
+            receipt.update(read_error.receipt)
         finally:
             exc.close()
-        receipt.update(status='http_error', http_status=exc.code,
-                       error_body=error_body, completed_at=now(),
-                       request_id=exc.headers.get('x-request-id'), charge_reconciled=False)
         write(out / 'failure.json', receipt)
         raise
     except Exception as exc:
