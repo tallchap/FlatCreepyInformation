@@ -42,7 +42,7 @@ def extract(media, target):
         check=True, capture_output=True, timeout=30)
     if len(json.loads(probe.stdout).get('streams', [])) != 1:
         raise ValueError('Exactly one audio stream is required; explicitly mix speaker tracks first')
-    subprocess.run(['ffmpeg', '-v', 'error', '-i', str(media), '-map', '0:a:0', '-vn',
+    subprocess.run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(media), '-map', '0:a:0', '-vn',
                     '-c:a', 'pcm_s16le', '-n', str(target)], check=True,
                    capture_output=True, timeout=300)
 

@@ -6,7 +6,7 @@ Luna does not support audio input. This separate helper uses `gpt-audio-1.5` thr
 python3 scripts/relevance/technical_audio_evidence.py --media /path/clip.mp4 --out /path/new-immutable-attempt
 ```
 
-Requires Python 3.11+ and FFmpeg/FFprobe on PATH. Inputs must have exactly one audio stream; explicitly mix separate speaker tracks before using the helper.
+Requires Python 3.11+ and FFmpeg/FFprobe on PATH. Inputs must have exactly one audio stream; explicitly mix separate speaker tracks before using the helper. Decoder errors abort extraction before any paid request, rather than analyzing a partial decode.
 
 The helper extracts PCM audio directly from the exact MP4, binds media/audio/request hashes, reserves a fresh attempt directory, and saves a receipt before the request. A used directory always fails rather than replaying a request. Raw provider response bytes, HTTP status and request ID are saved before JSON decoding; network ambiguity, malformed/truncated output and media mutation never yield ready evidence. Inspect failures before any deliberate new attempt; there is no automatic retry.
 

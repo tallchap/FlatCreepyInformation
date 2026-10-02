@@ -153,5 +153,32 @@ class AudioEvidenceTests(unittest.TestCase):
         self.assertGreater((self.root / 'accepted.wav').stat().st_size, 44)
 
 
+    @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'FFmpeg required')
+    def test_corrupt_audio_fails_before_paid_request(self):
+        source = self.root / 'corrupt.m4a'
+        subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i',
+            'sine=frequency=440:duration=2', '-c:a', 'aac', str(source)],
+            check=True, capture_output=True)
+        packets = json.loads(subprocess.check_output(['ffprobe', '-v', 'error',
+            '-select_streams', 'a', '-show_packets', '-of', 'json', str(source)]))['packets']
+        contents = bytearray(source.read_bytes())
+        corrupted = 0
+        for packet in packets:
+            if float(packet['pts_time']) > 1:
+                start, size = int(packet['pos']), int(packet['size'])
+                contents[start:start + size] = bytes(size)
+                corrupted += 1
+        self.assertGreater(corrupted, 0)
+        source.write_bytes(contents)
+        sender = Mock()
+        with self.assertRaises(subprocess.CalledProcessError):
+            audio.run(source, self.out, sender)
+        sender.assert_not_called()
+        self.assertFalse((self.out / 'evidence.json').exists())
+        failure = json.loads((self.out / 'failure.json').read_text())
+        self.assertEqual(failure['status'], 'preparation_failed')
+        self.assertFalse(failure['request_sent'])
+
+
 if __name__ == '__main__':
     unittest.main()
