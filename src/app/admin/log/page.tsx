@@ -60,6 +60,8 @@ function rowBadge(events: Ev[]): { label: string; color: string } | null {
   if (latest.status === "error") return { label: "error", color: "#dc2626" };
   if (latest.status === "success" && latest.step === "bunny-ready") return { label: "complete", color: "#16a34a" };
   if (latest.status === "success" && latest.step === "bunny-fetch-queued") return { label: "in-flight", color: "#ca8a04" };
+  // The downloader exits once Bunny has the file; the encode finishes on Bunny's side.
+  if (latest.status === "success" && latest.step === "bunny-received") return { label: "encoding", color: "#ca8a04" };
   if (latest.status === "success") return { label: "success", color: "#16a34a" };
   if (hasError) return { label: "retried", color: "#ca8a04" };
   return { label: "in-flight", color: "#ca8a04" };
