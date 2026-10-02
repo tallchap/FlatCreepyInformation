@@ -72,11 +72,18 @@ const bigquery = new BigQuery({ projectId: credentials.project_id, credentials }
 // Poll Bunny for the given videoId's encoding status. Logs events at status
 // transitions, progress milestones (every 20%), and when early-play / final
 // HLS become ready. Caps at ~30 min.
+//
+// untilReceived: return as soon as Bunny holds the whole file (status 1-3),
+// instead of idling through the encode. The early failure modes this poll
+// exists to catch (empty-source, stuck-fetch) all happen before that point.
+// Waiting for the encode was ~60% of the job's billed time (2026-10-01 batch:
+// 88 of 148 task-hours). Encode failures after handoff are caught by
+// ingest-batch verify and the yt-dlp fallback.
 const BUNNY_STATUS_LABEL = {
   0: "created", 1: "queued", 2: "processing", 3: "encoding",
   4: "ready", 5: "error", 6: "upload-failed",
 };
-async function pollBunnyUntilReady(videoId, pipelineName, durationSec = null) {
+async function pollBunnyUntilReady(videoId, pipelineName, durationSec = null, { untilReceived = false } = {}) {
   if (!BUNNY_STREAM_API_KEY) return;
   const startPoll = Date.now();
   // Dynamic timeout: target 3x video duration, floor 30min (or 90min when
@@ -208,6 +215,16 @@ async function pollBunnyUntilReady(videoId, pipelineName, durationSec = null) {
         detail: { bunnyStatus: status, storageSize, elapsedSec, guid },
       });
       return { outcome: empty ? "empty-source" : "failed", elapsedSec, guid };
+    }
+    // File fully received; Bunny encodes on its own from here.
+    if (untilReceived && status >= 1 && status <= 3) {
+      await logEvent({
+        videoId, pipeline: pipelineName,
+        step: "bunny-received",
+        status: "success",
+        detail: { bunnyStatus: status, storageSize: match.storageSize ?? null, elapsedSec, guid },
+      });
+      return { outcome: "received", elapsedSec, guid };
     }
   }
   // Timeout
@@ -400,10 +417,10 @@ async function bunnyFromGcsCopy(video, gcsPath) {
     console.log(`  [${video.id}] Bunny refused the GCS copy; falling through to RapidAPI`);
     return false;
   }
-  const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration);
-  if (result?.outcome === "ready" && result.height > 0) {
+  const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration, { untilReceived: true });
+  if ((result?.outcome === "ready" && result.height > 0) || result?.outcome === "received") {
     video.status = "complete";
-    video.resolution = `${result.height}p (gcs)`;
+    video.resolution = `${result.height || height}p (gcs${result.outcome === "received" ? ", encoding" : ""})`;
     video.elapsed = `${((Date.now() - start) / 1000).toFixed(1)}s`;
     markDirty();
     console.log(`  [${video.id}] DONE (bunny-only from GCS): ${video.resolution}`);
@@ -731,13 +748,13 @@ async function processVideo(video) {
             console.log(`  [${video.id}] DONE (bunny-only): ${video.elapsed}, ${quality}p, bunny=${video.bunnyStatus}`);
             await logEvent({ videoId: video.id, pipeline: "transcribe", step: "bunny-fetch-queued", status: video.bunnyStatus === "queued" ? "success" : "error", detail: { quality: `${quality}p`, bunnyStatus: video.bunnyStatus, elapsedSec: Math.round((Date.now() - start) / 1000) } });
 
-            // Stay alive and follow Bunny's encode progress. If Bunny reports
+            // Stay alive until Bunny has the whole file (not through the encode). If Bunny reports
             // empty-source (status=5, storageSize=0 inside 30s) OR stuck-fetch
             // (status=0, 0 bytes for >180s — Bunny accepted the fetch but
             // hung before first byte), the URL is dead — fall through to the
             // next format for a fresh RapidAPI URL.
             if (video.bunnyStatus === "queued") {
-              const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration);
+              const result = await pollBunnyUntilReady(video.id, "transcribe", video.duration, { untilReceived: true });
               if (result?.outcome === "empty-source" || result?.outcome === "stuck-fetch") {
                 console.log(`  [${video.id}] bunny ${result.outcome}; falling through to next format for a fresh URL`);
                 continue qualityLoop;
