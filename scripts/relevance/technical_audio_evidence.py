@@ -37,9 +37,14 @@ def write(path, obj):
 
 
 def extract(media, target):
-    subprocess.run(['ffmpeg', '-v', 'error', '-i', str(media), '-vn',
+    probe = subprocess.run(['ffprobe', '-v', 'error', '-select_streams', 'a',
+        '-show_entries', 'stream=index', '-of', 'json', str(media)],
+        check=True, capture_output=True, timeout=30)
+    if len(json.loads(probe.stdout).get('streams', [])) != 1:
+        raise ValueError('Exactly one audio stream is required; explicitly mix speaker tracks first')
+    subprocess.run(['ffmpeg', '-v', 'error', '-i', str(media), '-map', '0:a:0', '-vn',
                     '-c:a', 'pcm_s16le', '-n', str(target)], check=True,
-                   capture_output=True)
+                   capture_output=True, timeout=300)
 
 
 def send(body):
@@ -47,7 +52,7 @@ def send(body):
         data=body, headers={'Authorization': 'Bearer ' + audit.api_key(),
                             'Content-Type': 'application/json'})
     with urllib.request.urlopen(request, timeout=180) as response:
-        return json.load(response), response.headers.get('x-request-id')
+        return response.read(), response.headers.get('x-request-id')
 
 
 def parse(response):
@@ -70,7 +75,15 @@ def run(media, out, sender=send, extractor=extract):
     # mkdir is also an exclusive reservation against concurrent duplicate requests.
     out.mkdir(parents=True, exist_ok=False)
     audio = out / 'audio.wav'
-    extractor(media, audio)
+    try:
+        extractor(media, audio)
+        if sha(media) != digest:
+            raise ValueError('Media changed during audio extraction')
+    except Exception as exc:
+        write(out / 'failure.json', {'status': 'preparation_failed', 'error': str(exc),
+            'media_sha256': digest, 'request_sent': False, 'completed_at': now(),
+            'approved_for_publication': False})
+        raise
     body = json.dumps({'model': MODEL, 'modalities': ['text'], 'store': False,
         'temperature': 0, 'max_completion_tokens': 6000,
         'messages': [{'role': 'user', 'content': [
@@ -85,11 +98,14 @@ def run(media, out, sender=send, extractor=extract):
         'status': 'in_flight'}
     write(out / 'request-receipt.json', receipt)
     try:
-        response, request_id = sender(body)
+        raw_response, request_id = sender(body)
         receipt.update(status='response_received', http_status=200,
-                       response=response, request_id=request_id, completed_at=now())
+                       response_body_base64=base64.b64encode(raw_response).decode(),
+                       request_id=request_id, completed_at=now())
         # Preserve provider response before parsing so a malformed response cannot replay.
         write(out / 'response.json', receipt)
+        response = json.loads(raw_response)
+        receipt['response'] = response
         evidence = parse(response)
         if sha(media) != digest:
             raise ValueError('Media changed during audio analysis')
@@ -97,13 +113,17 @@ def run(media, out, sender=send, extractor=extract):
         write(out / 'evidence.json', receipt)
         return receipt
     except urllib.error.HTTPError as exc:
+        try:
+            error_body = exc.read().decode(errors='replace')
+        finally:
+            exc.close()
         receipt.update(status='http_error', http_status=exc.code,
-                       error_body=exc.read().decode(errors='replace'), completed_at=now(),
+                       error_body=error_body, completed_at=now(),
                        request_id=exc.headers.get('x-request-id'), charge_reconciled=False)
         write(out / 'failure.json', receipt)
         raise
     except Exception as exc:
-        receipt.update(status='evidence_failed' if 'response' in receipt else 'charge_unknown',
+        receipt.update(status='evidence_failed' if 'response_body_base64' in receipt else 'charge_unknown',
                        error=str(exc), completed_at=now())
         write(out / 'failure.json', receipt)
         raise
