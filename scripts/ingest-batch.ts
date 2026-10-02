@@ -30,6 +30,7 @@
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only videos
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only transcripts --concurrency 4
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --dry-run
+ *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only transcripts --transcripts-dir dir/
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only verify [--repair]
  *
  * ids.txt: one YouTube video ID or URL per line (# comments allowed).
@@ -56,6 +57,9 @@ const TRIGGER_GAP_MS = Number(arg("trigger-gap-ms") || 10000);
 const DRY_RUN = process.argv.includes("--dry-run");
 const CONFIRMED_SPEAKER = process.argv.includes("--confirmed-speaker");
 const REPAIR = process.argv.includes("--repair");
+// Directory of <videoId>.json transcripts to use instead of fetching (e.g. ElevenLabs
+// Scribe output for videos with no English captions). Same shape as fetchYoutubeTranscript.
+const TRANSCRIPTS_DIR = arg("transcripts-dir");
 const SHARED_VECTOR_STORE_ID = "vs_69b1015315d88191b6f26c169575bc4c";
 
 const PROJECT = "youtubetranscripts-429803";
@@ -285,7 +289,10 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
         ])
         .catch((err: unknown) => console.error(`  [${videoId}] transcribe_log insert failed:`, err));
 
-      const transcript: any = await fetchYoutubeTranscript(url);
+      const local = TRANSCRIPTS_DIR && path.join(TRANSCRIPTS_DIR, `${videoId}.json`);
+      const transcript: any =
+        local && fs.existsSync(local) ? JSON.parse(fs.readFileSync(local, "utf8")) : await fetchYoutubeTranscript(url);
+      if (local && fs.existsSync(local)) console.log(`  [${videoId}] using local transcript ${local} (${transcript._source})`);
       if (transcript.error) throw new Error(transcript.error);
 
       try {
