@@ -14,7 +14,12 @@ function getOpenAI() {
   if (!_openai) _openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
   return _openai;
 }
-const MODEL = process.env.CHAT_MODEL || "gpt-5.4";
+// gpt-5.5 at low effort: on a 10-question eval it started text as fast as
+// gpt-5.4 (~4.5s) with better coverage and quote accuracy, at ~2x the cost.
+// Default effort made gpt-5.5 ~4x slower to first token.
+const MODEL = process.env.CHAT_MODEL || "gpt-5.5";
+// "none" | "low" | "medium" | "high"
+const REASONING_EFFORT = process.env.CHAT_REASONING_EFFORT || "low";
 
 // ── Citation helpers ────────────────────────────────────────────────────
 
@@ -355,6 +360,7 @@ export async function POST(req: NextRequest) {
 
     const debugMainCall = {
       model: MODEL,
+      reasoningEffort: REASONING_EFFORT,
       input,
       tools: toolsPayload,
     };
@@ -366,6 +372,8 @@ export async function POST(req: NextRequest) {
       tools: toolsPayload,
       stream: true,
       include: ["file_search_call.results"],
+      // The pinned SDK's ReasoningEffort type predates "none"
+      reasoning: { effort: REASONING_EFFORT as any },
     });
 
     // Stream SSE to client
@@ -456,7 +464,7 @@ export async function POST(req: NextRequest) {
               }
               controller.enqueue(
                 encoder.encode(
-                  `data: ${JSON.stringify({ type: "debug_file_search", fileSearchResults })}\n\n`,
+                  `data: ${JSON.stringify({ type: "debug_file_search", fileSearchResults, model: event.response?.model, usage: event.response?.usage })}\n\n`,
                 ),
               );
 
