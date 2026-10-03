@@ -64,6 +64,21 @@ function deduplicateAndFormatNames(namesString: string): string {
   return Array.from(uniqueNames).sort().join(", ");
 }
 
+// Model for the name/speaker passes below. SPEAKER_MODEL and
+// SPEAKER_REASONING_EFFORT override it; both are read per call so an eval can
+// switch configs inside one process.
+// Default gpt-6-luna at high effort: on 60 judged videos it beat gpt-4o on
+// precision (98% vs 97%) and recall (82% vs 74%) at ~7% of the cost
+// ($1.29 vs $18 per 1,000 videos). Low effort finds as many speakers for $0.99
+// at half the latency but adds slightly more wrong ones. See
+// scripts/speaker-eval/eval.ts.
+function speakerModel() {
+  const model = process.env.SPEAKER_MODEL || "gpt-6-luna";
+  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : "high");
+  // The pinned SDK's ReasoningEffort type predates "none"
+  return { model, ...(effort ? { reasoning_effort: effort as any } : {}) };
+}
+
 export async function extractHumanNames(
   speakerName: string,
   videoTitle: string,
@@ -72,7 +87,7 @@ export async function extractHumanNames(
   try {
     const client = new OpenAI();
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",
@@ -118,7 +133,7 @@ export async function identifySpeakers(
     const transcriptSample = transcriptText.slice(0, 20000);
 
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",
@@ -149,7 +164,12 @@ Return ONLY the comma-separated list of confirmed speakers (90%+ confidence):`,
       ],
     });
 
-    let names = response.choices[0].message.content?.trim();
+    // Luna sometimes answers "None" when nobody it can name is speaking.
+    const names = (response.choices[0].message.content || "")
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n && !/^(none|n\/a)\.?$/i.test(n))
+      .join(", ");
     if (!names) return userSpeaker;
     return deduplicateAndFormatNames(names);
   } catch (error) {
@@ -257,7 +277,7 @@ export async function verifyAndCleanSpeakers(
     const client = new OpenAI();
 
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",

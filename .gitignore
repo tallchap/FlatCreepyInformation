@@ -44,3 +44,4 @@ next-env.d.ts
 
 # local QA recordings (Playwright webm/gif proofs)
 /qa-recordings/
+scripts/speaker-eval/fixture.json
