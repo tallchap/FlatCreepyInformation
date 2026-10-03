@@ -109,3 +109,7 @@ allow recovery. It never downloads footage. `verify_cull_media.py` compares fres
 inventories for every accessible bucket/project, including old generations and
 soft-deleted objects, matching IDs and exact-byte renamed copies. It also proves
 non-target generations are unchanged. Inventories are metadata only.
+
+## Production lessons
+
+Read [`PRODUCTION-LESSONS.md`](PRODUCTION-LESSONS.md) before the next production run: Windows PID reuse, Relay recovery, Shadow test-gate and shell limits, failure causes, and the levers on the 44% hold rate, from the frozen-340 run (2026-10-02).
