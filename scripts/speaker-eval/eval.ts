@@ -36,6 +36,8 @@ const CONFIGS: Record<string, { model: string; effort?: string }> = {
   "gpt-4o (B)": { model: "gpt-4o" },
   "gpt-6-luna none": { model: "gpt-6-luna", effort: "none" },
   "gpt-6-luna low": { model: "gpt-6-luna", effort: "low" },
+  "gpt-6-luna medium": { model: "gpt-6-luna", effort: "medium" },
+  "gpt-6-luna high": { model: "gpt-6-luna", effort: "high" },
   "gpt-4o-mini": { model: "gpt-4o-mini" },
   "gpt-5.4-mini none": { model: "gpt-5.4-mini", effort: "none" },
   "gpt-5-nano minimal": { model: "gpt-5-nano", effort: "minimal" },
