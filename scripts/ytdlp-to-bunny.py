@@ -28,6 +28,8 @@ For each ID it:
 Usage:
   BUNNY_STREAM_API_KEY=... python3 scripts/ytdlp-to-bunny.py --ids ids.txt [--dry-run]
   python -X utf8 scripts\\ytdlp-to-bunny.py --ids ids.txt --workdir C:\\ytdlp-bunny
+  # datacenter IP: cookies exported from a signed-in browser, plus yt-dlp's JS runtime
+  python ytdlp-to-bunny.py --ids ids.txt --yt-dlp-arg=--cookies --yt-dlp-arg=cookies.txt --yt-dlp-arg=--js-runtimes --yt-dlp-arg=node
 
 ids.txt: one YouTube ID or URL per line (# comments allowed).
 Writes <workdir>/ytdlp-to-bunny-report.json with one entry per ID.
@@ -150,6 +152,7 @@ def process(video_id, args, key, workdir):
 
     url = f"https://www.youtube.com/watch?v={video_id}"
     cookies = ["--cookies-from-browser", args.cookies_from_browser] if args.cookies_from_browser else []
+    cookies += args.yt_dlp_arg or []
     info = json.loads(run(["yt-dlp", "--ignore-config", *cookies, "-J", "--no-warnings", url], capture=True))
     source_max = max([f.get("height") or 0 for f in info.get("formats", [])
                       if f.get("vcodec") not in (None, "none")], default=0)
@@ -215,6 +218,9 @@ def main():
     ap.add_argument("--stale-min", type=float, default=120,
                     help="treat a still-processing Bunny asset older than this as dead")
     ap.add_argument("--cookies-from-browser", default=None)
+    ap.add_argument("--yt-dlp-arg", action="append", metavar="ARG",
+                    help="extra argument passed to every yt-dlp call, repeatable (e.g. --yt-dlp-arg=--cookies "
+                         "--yt-dlp-arg=C:\\rs\\cookies.txt on an AWS box, where YouTube bot-walls cookieless clients)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--no-prune", action="store_true",
                     help="don't delete extra copies of IDs that are otherwise skipped")
