@@ -113,6 +113,7 @@ Rules:
 - "non" before a person's name is negation (exclusion), NOT a match for the channel "Nonzero"
 - yearBefore means "published before this year" (exclusive)
 - yearAfter means "published after this year" (exclusive)
+- "since YEAR" / "from YEAR on" includes that year, so yearAfter = YEAR - 1; "until YEAR" includes it, so yearBefore = YEAR + 1
 - If nothing is mentioned, set the field to null
 
 I will start the JSON and you will complete it:
@@ -121,17 +122,19 @@ I will start the JSON and you will complete it:
   "channel":`;
 
     const response = await getOpenAI().chat.completions.create({
-      model: "gpt-4o-mini",
+      model: "gpt-6-luna",
       messages: [
         { role: "system", content: systemPrompt },
         { role: "user", content: "Complete the JSON above." },
       ],
       response_format: { type: "json_object" },
-      temperature: 0,
+      // Luna rejects temperature 0. "none" skips reasoning (fastest; same accuracy
+      // as low/default on the filter eval). The pinned SDK's type predates "none".
+      reasoning_effort: "none" as any,
     });
 
     const raw = response.choices[0].message.content || "{}";
-    // 4o-mini may return just the completion or a full JSON — handle both
+    // The model may return just the completion or a full JSON — handle both
     const jsonStr = raw.trimStart().startsWith("{") ? raw : `{"userMessage":"","channel":${raw}`;
     const parsed = JSON.parse(jsonStr);
     return {
