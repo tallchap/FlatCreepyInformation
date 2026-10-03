@@ -1,5 +1,5 @@
 // Speaker-pass model eval for src/components/transcribe/utils/utils.ts.
-// Runs the real extractHumanNames → identifySpeakers → verifyAndCleanSpeakers
+// Runs the real extractHumanNames → identifySpeakers → cleanSpeakerNames
 // chain on already-ingested videos under several SPEAKER_MODEL configs, then has
 // Claude Opus judge, per candidate name, whether that person actually speaks in
 // the video. Reports per-config precision/recall against the judge, agreement
@@ -161,7 +161,7 @@ async function main() {
   else { videos = await buildFixture(); fs.writeFileSync(FIXTURE, JSON.stringify(videos)); }
   console.log(`${videos.length} videos, ${new Set(videos.map((v) => v.speaker)).size} requested speakers`);
 
-  const { extractHumanNames, identifySpeakers, verifyAndCleanSpeakers } = await import("../../src/components/transcribe/utils/utils");
+  const { extractHumanNames, identifySpeakers, cleanSpeakerNames } = await import("../../src/components/transcribe/utils/utils");
   const only = process.env.CONFIGS ? new Set(process.env.CONFIGS.split(",")) : null;
   // RUNS=path reuses model outputs + token counts from an earlier run (judge-only rerun).
   const RUNS = process.env.RUNS;
@@ -178,7 +178,7 @@ async function main() {
     const res = await pool(videos, 8, async (v) => {
       const names = await extractHumanNames(v.speaker, v.title, v.description);
       const first = await identifySpeakers(v.text, v.title, v.description, v.speaker, v.channel);
-      const final = await verifyAndCleanSpeakers(v.text, v.title, v.description, v.speaker, first || "", v.channel);
+      const final = cleanSpeakerNames(first || "");
       return [v.id, { names, first, final: final || first || "" }] as const;
     });
     outputs[name] = Object.fromEntries(res);

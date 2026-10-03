@@ -11,7 +11,7 @@ import {
 import {
   identifySpeakers,
   formatTranscriptAsText,
-  verifyAndCleanSpeakers,
+  cleanSpeakerNames,
 } from "./utils";
 import { bigQuery } from "@/lib/bigquery";
 const singleExtractSchema = z.object({
@@ -114,17 +114,10 @@ async function _singleExtract(
       metadata.channelName
     );
 
-    (metadata as any).speakersGptThird = await verifyAndCleanSpeakers(
-      transcriptText,
-      metadata.title,
-      metadata.description,
-      speaker,
-      (metadata as any).speakersClaude || "",
-      metadata.channelName
-    );
+    (metadata as any).speakersGptThird = cleanSpeakerNames((metadata as any).speakersClaude || "");
 
     console.log(`AI-identified speakers (pass 2): ${(metadata as any).speakersClaude}`);
-    console.log(`AI-identified speakers (pass 3): ${(metadata as any).speakersGptThird}`);
+    console.log(`AI-identified speakers (cleaned): ${(metadata as any).speakersGptThird}`);
   } catch (error) {
     console.error("Error in AI speaker identification:", error);
     (metadata as any).speakersClaude = null;

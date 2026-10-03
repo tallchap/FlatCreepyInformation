@@ -71,10 +71,11 @@ function deduplicateAndFormatNames(namesString: string): string {
 // precision (98% vs 97%) and recall (82% vs 74%) at ~7% of the cost
 // ($1.29 vs $18 per 1,000 videos). Low effort finds as many speakers for $0.99
 // at half the latency but adds slightly more wrong ones. See
-// scripts/speaker-eval/eval.ts.
-function speakerModel() {
+// scripts/speaker-eval/eval.ts. extractHumanNames only lists names from the
+// title/description (logged, never used as speakers), so it skips reasoning.
+function speakerModel(defaultEffort = "high") {
   const model = process.env.SPEAKER_MODEL || "gpt-6-luna";
-  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : "high");
+  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : defaultEffort);
   // The pinned SDK's ReasoningEffort type predates "none"
   return { model, ...(effort ? { reasoning_effort: effort as any } : {}) };
 }
@@ -87,7 +88,7 @@ export async function extractHumanNames(
   try {
     const client = new OpenAI();
     const response = await client.chat.completions.create({
-      ...speakerModel(),
+      ...speakerModel("none"),
       messages: [
         {
           role: "system",
@@ -222,112 +223,24 @@ function isAllowedSingleTokenName(name: string): boolean {
   return ["will i am", "william adams", "destiny", "unknown"].includes(n);
 }
 
-function hasSpeakerContextForName(
-  name: string,
-  title: string,
-  description: string,
-): boolean {
-  const n = name.trim().toLowerCase();
-  if (!n) return false;
-
-  const titleDesc = `${title || ""} ${description || ""}`.toLowerCase();
-
-  // Explicit stage-name exception: if known stage name is in metadata, keep it.
-  if (isAllowedSingleTokenName(n)) {
-    const normMeta = normalizeLooseName(titleDesc);
-    const normName = normalizeLooseName(n);
-    if (normMeta.includes(normName)) return true;
-  }
-
-  const cueRegex = new RegExp(
-    [
-      `(?:interview|conversation|talk|fireside|podcast|debate|panel|q\\&a|q&a|hosted by|host|guest|featuring|with)\\s+${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`,
-      `${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(?:interview|conversation|talk|fireside|podcast|debate|panel|guest|speaker)`
-    ].join("|"),
-    "i",
-  );
-
-  // Metadata is strong signal when phrased as speaker/guest/host context.
-  if (cueRegex.test(titleDesc)) return true;
-
-  return false;
-}
-
-export async function verifyAndCleanSpeakers(
-  transcriptText: string,
-  videoTitle: string,
-  videoDescription: string,
-  userSpeaker: string,
-  identifiedSpeakers: string,
-  channelName?: string
-): Promise<string> {
-  const candidateList = deduplicateAndFormatNames(
-    stripPromptArtifacts(identifiedSpeakers || ""),
-  )
-    .split(",")
-    .map((n) => n.trim())
-    .filter((n) => n.length > 0);
-
-  // If pass 2 gave nothing, pass 3 cannot invent speakers.
-  if (candidateList.length === 0) return "";
-
-  const candidateSet = new Set(candidateList.map((n) => n.toLowerCase()));
-
-  try {
-    const client = new OpenAI();
-
-    const response = await client.chat.completions.create({
-      ...speakerModel(),
-      messages: [
-        {
-          role: "system",
-          content: `You are a strict final QA pass for speaker names.\n\nCRITICAL CONSTRAINT: You may ONLY keep or remove names from the provided candidate list.\nDo NOT add new names under any circumstance.\n\nYour job:\n1) Keep ONLY people from candidate list who are actually speaking in this video.\n2) Remove obvious prompt artifacts/fragments (examples: "the name is", "speaker:", cut-off prompt junk).\n3) Remove obvious deceased historical figures clearly discussed but not present in this recording.\n4) Output ONLY names from candidate list in CSV format.\n5) Preferred format is First Last (middle allowed).\n6) Single-token/stage names are normally excluded EXCEPT known valid stage names from candidates (e.g., "will.i.am").\n7) No titles or organizations. Deduplicate.\n8) If uncertain, exclude.\n\nReturn ONLY a comma-separated list of kept names (subset of candidates).`,
-        },
-        {
-          role: "user",
-          content: `Candidate list (pass 2): ${candidateList.join(", ")}\nUser speaker input: ${userSpeaker}\nVideo title: ${videoTitle}\nChannel name: ${channelName || "Unknown"}\nDescription (first 500 chars): ${videoDescription.slice(0, 500)}\n\nReturn ONLY the kept names as CSV (must be a subset of candidate list).`,
-        },
-      ],
-    });
-
-    const raw = response.choices[0].message.content?.trim() || "";
-    const cleaned = deduplicateAndFormatNames(stripPromptArtifacts(raw));
-
-    // Enforce at least two tokens and enforce strict subset of candidate list.
-    const keptByModel = cleaned
+/**
+ * Final cleanup of the identifySpeakers list, with no model call: strips prompt
+ * artifacts, keeps First Last names (plus known stage names), canonicalizes
+ * spellings and dedupes. This replaced a third GPT pass that judged speakers
+ * from title/description alone; on the speaker eval it removed 25 real speakers
+ * for every wrong one it caught.
+ */
+export function cleanSpeakerNames(identifiedSpeakers: string): string {
+  return deduplicateAndFormatNames(
+    deduplicateAndFormatNames(stripPromptArtifacts(identifiedSpeakers || ""))
       .split(",")
       .map((n) => n.trim())
       .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
-      .filter((n) => candidateSet.has(n.toLowerCase()));
-
-    // Guardrail: keep pass-2 candidates when metadata discusses them as speakers.
-    // (Not just mentioned — must have speaker-role context near the name.)
-    const rescueFromMetadata = candidateList.filter((n) =>
-      hasSpeakerContextForName(n, videoTitle, videoDescription),
-    );
-
-    const finalNames = deduplicateAndFormatNames(
-      [...keptByModel, ...rescueFromMetadata].join(", "),
-    )
-      .split(",")
-      .map((n) => n.trim())
-      .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
-      .filter((n) => candidateSet.has(n.toLowerCase()))
       .map(canonicalizeSpeakerName)
-      .join(", ");
-
-    return finalNames;
-  } catch (error) {
-    console.error("Error in third-pass speaker verification:", error);
-    // Safe fallback: clean pass2 only, never add.
-    return deduplicateAndFormatNames(
-      candidateList
-        .filter((n) => n.split(/\s+/).length >= 2 || isAllowedSingleTokenName(n))
-        .map(canonicalizeSpeakerName)
-        .join(", "),
-    );
-  }
+      .join(", "),
+  );
 }
+
 
 export function formatTranscriptAsText(transcript: Transcript): string {
   if (
