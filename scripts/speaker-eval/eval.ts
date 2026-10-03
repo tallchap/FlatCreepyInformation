@@ -39,6 +39,8 @@ const CONFIGS: Record<string, { model: string; effort?: string }> = {
   "gpt-4o-mini": { model: "gpt-4o-mini" },
   "gpt-5.4-mini none": { model: "gpt-5.4-mini", effort: "none" },
   "gpt-5-nano minimal": { model: "gpt-5-nano", effort: "minimal" },
+  // No env overrides: whatever utils.ts ships (gpt-6-luna, low effort).
+  "shipped default": { model: "" },
 };
 
 type Video = { id: string; speaker: string; title: string; channel: string; description: string; text: string };
@@ -167,7 +169,7 @@ async function main() {
 
   for (const [name, cfg] of Object.entries(CONFIGS)) {
     if ((only && !only.has(name)) || outputs[name]) continue;
-    process.env.SPEAKER_MODEL = cfg.model;
+    if (cfg.model) process.env.SPEAKER_MODEL = cfg.model; else delete process.env.SPEAKER_MODEL;
     if (cfg.effort) process.env.SPEAKER_REASONING_EFFORT = cfg.effort; else delete process.env.SPEAKER_REASONING_EFFORT;
     currentConfig = name;
     const t = Date.now();
@@ -212,7 +214,7 @@ async function main() {
       if (b.size === mine.size && [...b].every((x) => mine.has(x))) agree++;
     }
     const u = usage.get(name) || { calls: 0, in: 0, out: 0, errors: 0 };
-    const price = PRICES[CONFIGS[name].model] || [NaN, NaN];
+    const price = PRICES[CONFIGS[name].model || "gpt-6-luna"] || [NaN, NaN];
     const cost = (u.in * price[0] + u.out * price[1]) / 1e6;
     rows.push({
       config: name,

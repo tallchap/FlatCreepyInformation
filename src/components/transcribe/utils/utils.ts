@@ -67,9 +67,12 @@ function deduplicateAndFormatNames(namesString: string): string {
 // Model for the name/speaker passes below. SPEAKER_MODEL and
 // SPEAKER_REASONING_EFFORT override it; both are read per call so an eval can
 // switch configs inside one process.
+// Default gpt-6-luna at low effort: on 60 judged videos it had gpt-4o's
+// precision (97%) with better recall (89% vs 79%) at ~5% of the cost
+// ($1 vs $18 per 1,000 videos). See scripts/speaker-eval/eval.ts.
 function speakerModel() {
-  const model = process.env.SPEAKER_MODEL || "gpt-4o";
-  const effort = process.env.SPEAKER_REASONING_EFFORT;
+  const model = process.env.SPEAKER_MODEL || "gpt-6-luna";
+  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : "low");
   // The pinned SDK's ReasoningEffort type predates "none"
   return { model, ...(effort ? { reasoning_effort: effort as any } : {}) };
 }
@@ -159,7 +162,12 @@ Return ONLY the comma-separated list of confirmed speakers (90%+ confidence):`,
       ],
     });
 
-    let names = response.choices[0].message.content?.trim();
+    // Luna sometimes answers "None" when nobody it can name is speaking.
+    const names = (response.choices[0].message.content || "")
+      .split(",")
+      .map((n) => n.trim())
+      .filter((n) => n && !/^(none|n\/a)\.?$/i.test(n))
+      .join(", ");
     if (!names) return userSpeaker;
     return deduplicateAndFormatNames(names);
   } catch (error) {
