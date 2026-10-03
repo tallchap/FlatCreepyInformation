@@ -64,6 +64,16 @@ function deduplicateAndFormatNames(namesString: string): string {
   return Array.from(uniqueNames).sort().join(", ");
 }
 
+// Model for the name/speaker passes below. SPEAKER_MODEL and
+// SPEAKER_REASONING_EFFORT override it; both are read per call so an eval can
+// switch configs inside one process.
+function speakerModel() {
+  const model = process.env.SPEAKER_MODEL || "gpt-4o";
+  const effort = process.env.SPEAKER_REASONING_EFFORT;
+  // The pinned SDK's ReasoningEffort type predates "none"
+  return { model, ...(effort ? { reasoning_effort: effort as any } : {}) };
+}
+
 export async function extractHumanNames(
   speakerName: string,
   videoTitle: string,
@@ -72,7 +82,7 @@ export async function extractHumanNames(
   try {
     const client = new OpenAI();
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",
@@ -118,7 +128,7 @@ export async function identifySpeakers(
     const transcriptSample = transcriptText.slice(0, 20000);
 
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",
@@ -257,7 +267,7 @@ export async function verifyAndCleanSpeakers(
     const client = new OpenAI();
 
     const response = await client.chat.completions.create({
-      model: "gpt-4o",
+      ...speakerModel(),
       messages: [
         {
           role: "system",
