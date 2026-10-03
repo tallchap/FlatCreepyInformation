@@ -30,7 +30,9 @@
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only videos
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only transcripts --concurrency 4
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --dry-run
+ *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only transcripts --transcripts-dir dir/
  *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only verify [--repair]
+ *   npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "..." --only respeaker [--dry-run]
  *
  * ids.txt: one YouTube video ID or URL per line (# comments allowed).
  * Requires .env.local with GOOGLE_APPLICATION_CREDENTIALS_JSON, YOUTUBE_API_KEY,
@@ -56,6 +58,9 @@ const TRIGGER_GAP_MS = Number(arg("trigger-gap-ms") || 10000);
 const DRY_RUN = process.argv.includes("--dry-run");
 const CONFIRMED_SPEAKER = process.argv.includes("--confirmed-speaker");
 const REPAIR = process.argv.includes("--repair");
+// Directory of <videoId>.json transcripts to use instead of fetching (e.g. ElevenLabs
+// Scribe output for videos with no English captions). Same shape as fetchYoutubeTranscript.
+const TRANSCRIPTS_DIR = arg("transcripts-dir");
 const SHARED_VECTOR_STORE_ID = "vs_69b1015315d88191b6f26c169575bc4c";
 
 const PROJECT = "youtubetranscripts-429803";
@@ -103,6 +108,7 @@ async function main() {
 
   if (!ONLY || ONLY === "videos") await videosPhase(ids, note);
   if (!ONLY || ONLY === "transcripts") await transcriptsPhase(ids, note, bigQuery);
+  if (ONLY === "respeaker") await respeakerPhase(ids, note, bigQuery);
   if (!DRY_RUN && (!ONLY || ONLY === "verify" || ONLY === "transcripts")) await verifyPhase(ids, note, bigQuery);
 
   console.log("\n=== SUMMARY ===");
@@ -285,7 +291,10 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
         ])
         .catch((err: unknown) => console.error(`  [${videoId}] transcribe_log insert failed:`, err));
 
-      const transcript: any = await fetchYoutubeTranscript(url);
+      const local = TRANSCRIPTS_DIR && path.join(TRANSCRIPTS_DIR, `${videoId}.json`);
+      const transcript: any =
+        local && fs.existsSync(local) ? JSON.parse(fs.readFileSync(local, "utf8")) : await fetchYoutubeTranscript(url);
+      if (local && fs.existsSync(local)) console.log(`  [${videoId}] using local transcript ${local} (${transcript._source})`);
       if (transcript.error) throw new Error(transcript.error);
 
       try {
@@ -351,6 +360,63 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
   console.log("\n  Rebuilding segment_search_windows once...");
   const { rebuildSearchWindows } = await import("../src/components/transcribe/utils/controller");
   await rebuildSearchWindows();
+}
+
+// ── Phase: respeaker ────────────────────────────────────────────────────
+// Re-runs the GPT speaker passes on stored transcripts, for videos ingested while
+// they were failing (OpenAI out of credits, 2026-10-01). Keeps --speaker, updates
+// speaker_source, and uploads chat files only for speakers that are new.
+
+async function respeakerPhase(ids: string[], note: (b: string, id: string) => void, bigQuery: any) {
+  console.log(`── Respeaker${DRY_RUN ? " (dry run)" : ""}: speaker passes on stored transcripts ──`);
+  const { fetchYoutubeMetadata } = await import("../src/components/transcribe/utils/controller");
+  const { identifySpeakers, verifyAndCleanSpeakers, formatTranscriptAsText } = await import(
+    "../src/components/transcribe/utils/utils"
+  );
+  const { uploadToVectorStore } = await import("../src/components/transcribe/utils/vector-upload");
+  const split = (x: string | null | undefined) => (x || "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  await runPool(ids, CONCURRENCY, async (id) => {
+    try {
+      const [[r]] = await bigQuery.query({
+        query: `SELECT ANY_VALUE(speaker_source) AS speaker_source, ANY_VALUE(video_title) AS title, ANY_VALUE(channel_name) AS channel,
+                  ANY_VALUE(CAST(published_date AS STRING)) AS published_date, ANY_VALUE(video_length) AS video_length
+                FROM \`${PROJECT}.reptranscripts.youtube_videos\` WHERE video_id = @id`,
+        params: { id },
+      });
+      if (!r || r.title == null) { note("respeaker-not-in-bigquery", id); return; }
+      const [segRows] = await bigQuery.query({
+        query: `SELECT ANY_VALUE(start_sec) AS start, ANY_VALUE(text) AS text FROM \`${PROJECT}.reptranscripts.youtube_transcript_segments\`
+                WHERE video_id = @id GROUP BY segment_index ORDER BY segment_index`,
+        params: { id },
+      });
+      const segments = segRows.map((x: any) => ({ start: Number(x.start) || 0, text: String(x.text || ""), duration: 0 }));
+      const metadata: any = await fetchYoutubeMetadata(`https://www.youtube.com/watch?v=${id}`, SPEAKER!);
+      const text = formatTranscriptAsText({ transcript_data: segments } as any);
+      const first = await identifySpeakers(text, metadata.title, metadata.description, SPEAKER!, metadata.channelName);
+      const third = await verifyAndCleanSpeakers(text, metadata.title, metadata.description, SPEAKER!, first || "", metadata.channelName);
+      let found = third || first || "";
+      if (!hasSpeaker(found, SPEAKER!)) found = found ? `${found}, ${SPEAKER}` : SPEAKER!;
+      // Never drop a speaker already recorded (e.g. added by verify --repair).
+      const merged = [...split(found), ...split(r.speaker_source).filter((s) => !hasSpeaker(found, s))].join(", ");
+      const added = split(merged).filter((s) => !hasSpeaker(r.speaker_source, s));
+      if (!added.length) { note("respeaker-unchanged", id); console.log(`  [${id}] unchanged: ${r.speaker_source}`); return; }
+      console.log(`  [${id}] ${r.speaker_source} → ${merged}${DRY_RUN ? " (dry run)" : ""}`);
+      if (DRY_RUN) { note("respeaker-would-update", id); return; }
+      await bigQuery.query({
+        query: `UPDATE \`${PROJECT}.reptranscripts.youtube_videos\` SET speaker_source = @s WHERE video_id = @id`,
+        params: { s: merged, id },
+      });
+      await uploadToVectorStore({
+        videoId: id, title: r.title, channel: r.channel || "", publishedDate: r.published_date || null,
+        duration: r.video_length || null, speakerSource: merged, languageCode: "en", segments, onlySpeakers: added,
+      });
+      note("respeaker-updated", id);
+    } catch (e: any) {
+      console.error(`  [${id}] respeaker FAILED: ${e.message}`);
+      note("respeaker-failed", id);
+    }
+  });
 }
 
 // ── Phase: verify (+ repair) ────────────────────────────────────────────

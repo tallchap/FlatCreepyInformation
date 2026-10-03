@@ -129,6 +129,12 @@ async function fetchTranscriptApify(videoId: string) {
   if (!items.length || !items[0].transcript) return null;
 
   const item = items[0];
+  // The actor has no language input and sometimes returns a YouTube auto-dub
+  // (Arabic for English Tegmark videos, 2026-10-01). Fall through to the proxy,
+  // which asks for English.
+  if (item.language && !/^english/i.test(item.language)) {
+    throw new Error(`returned a ${item.language} transcript`);
+  }
   const segments = item.transcript.map((s: any) => ({
     text: s.text,
     start: parseFloat(s.startMs) / 1000,
