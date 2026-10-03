@@ -245,7 +245,7 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
   const { fetchYoutubeMetadata, fetchYoutubeTranscript, createTranscriptDoc, addToBigQuery } = await import(
     "../src/components/transcribe/utils/controller"
   );
-  const { identifySpeakers, verifyAndCleanSpeakers, formatTranscriptAsText } = await import(
+  const { identifySpeakers, cleanSpeakerNames, formatTranscriptAsText } = await import(
     "../src/components/transcribe/utils/utils"
   );
   const { uploadToVectorStore } = await import("../src/components/transcribe/utils/vector-upload");
@@ -302,9 +302,7 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
         metadata.speakersClaude = await identifySpeakers(
           text, metadata.title, metadata.description, SPEAKER!, metadata.channelName,
         );
-        metadata.speakersGptThird = await verifyAndCleanSpeakers(
-          text, metadata.title, metadata.description, SPEAKER!, metadata.speakersClaude || "", metadata.channelName,
-        );
+        metadata.speakersGptThird = cleanSpeakerNames(metadata.speakersClaude || "");
       } catch (e: any) {
         console.error(`  [${videoId}] speaker ID failed (falling back to "${SPEAKER}"): ${e.message}`);
         metadata.speakersClaude = null;
@@ -370,7 +368,7 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
 async function respeakerPhase(ids: string[], note: (b: string, id: string) => void, bigQuery: any) {
   console.log(`── Respeaker${DRY_RUN ? " (dry run)" : ""}: speaker passes on stored transcripts ──`);
   const { fetchYoutubeMetadata } = await import("../src/components/transcribe/utils/controller");
-  const { identifySpeakers, verifyAndCleanSpeakers, formatTranscriptAsText } = await import(
+  const { identifySpeakers, cleanSpeakerNames, formatTranscriptAsText } = await import(
     "../src/components/transcribe/utils/utils"
   );
   const { uploadToVectorStore } = await import("../src/components/transcribe/utils/vector-upload");
@@ -394,7 +392,7 @@ async function respeakerPhase(ids: string[], note: (b: string, id: string) => vo
       const metadata: any = await fetchYoutubeMetadata(`https://www.youtube.com/watch?v=${id}`, SPEAKER!);
       const text = formatTranscriptAsText({ transcript_data: segments } as any);
       const first = await identifySpeakers(text, metadata.title, metadata.description, SPEAKER!, metadata.channelName);
-      const third = await verifyAndCleanSpeakers(text, metadata.title, metadata.description, SPEAKER!, first || "", metadata.channelName);
+      const third = cleanSpeakerNames(first || "");
       let found = third || first || "";
       if (!hasSpeaker(found, SPEAKER!)) found = found ? `${found}, ${SPEAKER}` : SPEAKER!;
       // Never drop a speaker already recorded (e.g. added by verify --repair).

@@ -10,7 +10,7 @@ import {
 import {
   identifySpeakers,
   formatTranscriptAsText,
-  verifyAndCleanSpeakers,
+  cleanSpeakerNames,
 } from "@/components/transcribe/utils/utils";
 import { uploadToVectorStore } from "@/components/transcribe/utils/vector-upload";
 import { bigQuery } from "@/lib/bigquery";
@@ -151,10 +151,8 @@ export async function runPipeline(
     metadata.speakersClaude = await identifySpeakers(transcriptText, metadata.title, metadata.description, speaker, metadata.channelName);
     idLog.push(`[${ts()}] Claude response: "${metadata.speakersClaude}" (${((Date.now() - t1) / 1000).toFixed(1)}s)`);
 
-    idLog.push(`[${ts()}] GPT verifyAndCleanSpeakers() called...`);
-    const t2 = Date.now();
-    metadata.speakersGptThird = await verifyAndCleanSpeakers(transcriptText, metadata.title, metadata.description, speaker, metadata.speakersClaude || "", metadata.channelName);
-    idLog.push(`[${ts()}] GPT response: "${metadata.speakersGptThird}" (${((Date.now() - t2) / 1000).toFixed(1)}s)`);
+    metadata.speakersGptThird = cleanSpeakerNames(metadata.speakersClaude || "");
+    idLog.push(`[${ts()}] cleanSpeakerNames(): "${metadata.speakersGptThird}"`);
 
     const finalSpeakers = metadata.speakersGptThird || metadata.speakersClaude || speaker;
     idLog.push(`[${ts()}] Final speakers: "${finalSpeakers}"`);
