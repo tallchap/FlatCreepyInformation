@@ -31,6 +31,8 @@ What the first full Luna-first production run over a fixed 340-clip subset taugh
 
 **Rule.** Any guard over a PID taken from a receipt must compare creation time with the receipt time. Better still, store the process's own creation time next to its PID and compare for equality.
 
+Relay's own transaction journal had the same bare-PID check and now records the writer's creation time (`pid_birth`, tallchap/relay). The general rule lives in [long jobs on Shadow](https://github.com/tallchap/relay/blob/main/docs/shadow-limits.md).
+
 ## 2. A blocked Relay job needs a supported way back in
 
 **What happened.** The supervisor refuses to run unless its Relay job is `CLAIMED`. Once a worker responds BLOCKED and root acknowledges it, the job is terminal, and Relay has no reopen. Resuming the *same* application run (same authorization, plan and root) had no path.
@@ -39,18 +41,17 @@ What the first full Luna-first production run over a fixed 340-clip subset taugh
 
 **Rule.** Separate *application identity* from *transport identity* in every long-running runner.
 
+Relay now closes the transport half of this gap: `relay.py post --continues JOB-ID` creates a follow-up job for a BLOCKED or CANCELLED run, inherits its routing and acceptance, and lists the predecessor's checkpoints and steering in the agent's prompt. The Snippy recovery receipt is still what keeps the *application* run byte-identical.
+
 ## 3. Shadow operations: things that cost hours
 
-| Problem | Measured | Do this instead |
-|---|---|---|
-| The full Windows test suite as a launch gate | It hung for 35+ minutes. With the CPU saturated by a concurrent ffmpeg benchmark and Defender at up to 82%, `open()` of fresh temp JSON stalled for 240s or more. The agent died with "milestone log failed". | Gate on the **relevant module set** (14 modules, 236 tests). That took 533s for 215 tests on an idle box and 2860s for 236 under load. The full suite is a Mac job (479 tests, ~55s). |
-| Mac test runs | 5 tests fail even on a clean baseline (`/var` vs `/private/var`) | `TMPDIR=/private/tmp/<dir>` |
-| The supervisor's hosting shell | Hard 2h lifetime | Do a planned drain cycle about every 1h45m: local PAUSE, clean drain, exit, local RESUME, relaunch. The agent did this on its own at 01:02Z and it cost 4 minutes. Build it in. |
-| Executor death | The board still said `CLAIMED`, which looked alive | Check `relay execution status`: `observed` / `process_count` / `recovery_required`. The board status alone is not liveness. |
-| Steering | 10–14 minutes from `execution steer` to applied. The default interrupts. | Don't steer an executor that just started. A steer sent to a dead executor fails with "prior process scope is empty", and needs `execution resume` first. |
-| Concurrent heavy jobs on Shadow | A 12-batch CPU encode benchmark ran alongside production for about 90 minutes | Lane-level CPU reservation, or at least a board-visible "heavy job running" signal that production checks before launch |
-| Relay ack and post from the Mac | `CLAUDE_CODE_SESSION_ID` silently overrides `RELAY_SESSION_FILE` | Set `RELAY_SESSION_PINNED=1` with the origin wallet |
-| Origin control lines on a worker-owned job | `relay log` refuses | Use `relay log --force` with the exact text `SNIPPY_CONTROL PAUSE` / `SNIPPY_CONTROL RESUME` |
+The Shadow and Relay limits from this run apply to any long job, so they now live in Relay: **[long jobs on Shadow](https://github.com/tallchap/relay/blob/main/docs/shadow-limits.md)**. It covers `CLAIMED` vs `execution status`, the Windows test-gate hang under a pinned CPU, the ~2-hour host shell and the drain cycle, 10–14 minute steering, concurrent heavy jobs, wallet pinning, `log --force`, and one writer per run.
+
+Snippy-specific parts:
+
+- **Windows launch gate.** Run the relevant module set, not the full suite: `test_checkpoint_shadow test_continuation test_continuation_verify test_fixed_subset test_fixed_subset_checkpoint test_fixed_subset_verify test_production test_publish_astra test_successor_authority test_supervise_continuation test_verify_operational_code test_whisper_cuda_server test_process_identity test_relay_recovery` (236 tests; 533 s idle, 2,860 s under load). The full suite (479 tests, ~55 s) runs on the Mac.
+- **Origin control lines.** `relay log --force` with the exact text `SNIPPY_CONTROL PAUSE` / `SNIPPY_CONTROL RESUME`.
+- **Drain cycle.** The supervisor should drain and relaunch itself about every 1h45m (local PAUSE, clean drain, exit, local RESUME, relaunch) instead of relying on the agent to do it.
 
 ## 4. Root mistakes worth not repeating
 
