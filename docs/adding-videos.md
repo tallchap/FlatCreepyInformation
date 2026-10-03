@@ -165,6 +165,10 @@ the local file is kept. It skips:
 - videos where YouTube has nothing better than what Bunny has,
 - videos with a Bunny asset still processing, younger than `--stale-min` (default 120 min).
 
+For IDs it skips because a finished copy is already good enough, it still deletes the extra
+copies (failed, stale or duplicate) and keeps the best finished one, because `/api/bunny-lookup`
+takes the first search hit. Copies still encoding are left alone. `--no-prune` turns this off.
+
 Its report is `<workdir>/ytdlp-to-bunny-report.json`. Run it through Relay
 (`--needs shadow,windows,ffmpeg,claude`) with the script and ID list attached. Shadow
 has a residential IP, so YouTube doesn't block it the way it blocks cloud IPs. Run it

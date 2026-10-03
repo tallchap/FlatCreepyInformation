@@ -19,6 +19,11 @@ For each ID it:
   6. Once Bunny says it's finished: deletes the local file and every older
      asset for that ID (failed, stuck or lower-res), so clip lookup only ever
      finds one.
+  7. When it skips an ID because a finished copy is already good enough, it
+     still prunes the extras (failed, stale, duplicate) and keeps the best
+     finished copy. /api/bunny-lookup takes the first search hit, so an extra
+     copy can be the one the clip editor opens. Copies still encoding are never
+     touched. --no-prune turns this off.
 
 Usage:
   BUNNY_STREAM_API_KEY=... python3 scripts/ytdlp-to-bunny.py --ids ids.txt [--dry-run]
@@ -106,6 +111,29 @@ def video_height(path):
     return int(out.strip() or 0)
 
 
+def prune(video_id, assets, args, key):
+    """Keep the best finished copy; delete every other copy that isn't still encoding."""
+    ready = [a for a in assets if a.get("status") == 4]
+    if not ready or len(assets) < 2 or args.no_prune:
+        return []
+    keep = max(ready, key=lambda a: (a.get("height") or 0, a.get("dateUploaded") or ""))
+    extras = [a for a in assets if a["guid"] != keep["guid"]
+              and not (0 <= (a.get("status") or 0) <= 3 and age_min(a) < args.stale_min)]
+    removed = []
+    for a in extras:
+        if args.dry_run:
+            removed.append(a["guid"])
+            continue
+        try:
+            bunny("DELETE", f"{API}/{a['guid']}", key)
+            removed.append(a["guid"])
+        except urllib.error.HTTPError as e:
+            log(f"[{video_id}] could not delete extra asset {a['guid']}: {e}")
+    if removed:
+        log(f"[{video_id}] {'would prune' if args.dry_run else 'pruned'} {len(removed)} extra asset(s), kept {keep['guid']} ({keep.get('height')}p)")
+    return removed
+
+
 def process(video_id, args, key, workdir):
     entry = {"video_id": video_id}
     assets = assets_for(video_id, key)
@@ -115,7 +143,8 @@ def process(video_id, args, key, workdir):
     entry["bunny_before"] = [{"guid": a["guid"], "status": a.get("status"), "height": a.get("height")} for a in assets]
 
     if best_ready >= 1080:
-        return {**entry, "result": "skip-already-1080", "height": best_ready}
+        return {**entry, "result": "skip-already-1080", "height": best_ready,
+                "pruned_guids": prune(video_id, assets, args, key)}
     if live:
         return {**entry, "result": "skip-still-processing"}
 
@@ -127,7 +156,8 @@ def process(video_id, args, key, workdir):
     target = min(1080, source_max)
     entry["youtube_max_height"] = source_max
     if best_ready and best_ready >= target:
-        return {**entry, "result": "skip-youtube-has-nothing-better", "height": best_ready}
+        return {**entry, "result": "skip-youtube-has-nothing-better", "height": best_ready,
+                "pruned_guids": prune(video_id, assets, args, key)}
     if args.dry_run:
         return {**entry, "result": "would-download", "target_height": target}
 
@@ -186,6 +216,8 @@ def main():
                     help="treat a still-processing Bunny asset older than this as dead")
     ap.add_argument("--cookies-from-browser", default=None)
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--no-prune", action="store_true",
+                    help="don't delete extra copies of IDs that are otherwise skipped")
     args = ap.parse_args()
 
     key = os.environ.get("BUNNY_STREAM_API_KEY", "").strip()
