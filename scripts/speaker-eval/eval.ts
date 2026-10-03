@@ -41,7 +41,7 @@ const CONFIGS: Record<string, { model: string; effort?: string }> = {
   "gpt-4o-mini": { model: "gpt-4o-mini" },
   "gpt-5.4-mini none": { model: "gpt-5.4-mini", effort: "none" },
   "gpt-5-nano minimal": { model: "gpt-5-nano", effort: "minimal" },
-  // No env overrides: whatever utils.ts ships (gpt-6-luna, low effort).
+  // No env overrides: whatever utils.ts ships (gpt-6-luna, high effort).
   "shipped default": { model: "" },
 };
 

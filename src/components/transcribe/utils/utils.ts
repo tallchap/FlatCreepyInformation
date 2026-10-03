@@ -67,12 +67,14 @@ function deduplicateAndFormatNames(namesString: string): string {
 // Model for the name/speaker passes below. SPEAKER_MODEL and
 // SPEAKER_REASONING_EFFORT override it; both are read per call so an eval can
 // switch configs inside one process.
-// Default gpt-6-luna at low effort: on 60 judged videos it had gpt-4o's
-// precision (97%) with better recall (89% vs 79%) at ~5% of the cost
-// ($1 vs $18 per 1,000 videos). See scripts/speaker-eval/eval.ts.
+// Default gpt-6-luna at high effort: on 60 judged videos it beat gpt-4o on
+// precision (98% vs 97%) and recall (82% vs 74%) at ~7% of the cost
+// ($1.29 vs $18 per 1,000 videos). Low effort finds as many speakers for $0.99
+// at half the latency but adds slightly more wrong ones. See
+// scripts/speaker-eval/eval.ts.
 function speakerModel() {
   const model = process.env.SPEAKER_MODEL || "gpt-6-luna";
-  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : "low");
+  const effort = process.env.SPEAKER_REASONING_EFFORT ?? (process.env.SPEAKER_MODEL ? undefined : "high");
   // The pinned SDK's ReasoningEffort type predates "none"
   return { model, ...(effort ? { reasoning_effort: effort as any } : {}) };
 }
