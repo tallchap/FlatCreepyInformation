@@ -721,7 +721,12 @@ export async function rebuildSearchWindows() {
             text, ' ',
             COALESCE(LEAD(text, 1) OVER (PARTITION BY video_id ORDER BY segment_index), '')
           ) AS window_text
-        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\`
+        -- One row per caption line, even if a transcript was ever stored twice;
+        -- duplicates would otherwise interleave and repeat every window.
+        FROM (
+          SELECT * FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\`
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY video_id, segment_index, line_index ORDER BY created_at) = 1
+        )
       `,
     });
     console.log("Search windows table rebuilt");
