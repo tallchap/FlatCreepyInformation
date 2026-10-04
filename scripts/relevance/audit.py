@@ -29,6 +29,9 @@ PROTECTED = {
     # Added to the keep list 2026-10-01.
     'Geoffrey Hinton': r'\b(?:geoff(?:rey)?\s+)?hinton\b',
     'Nate Soares': r'\bnate\s+soares\b',
+    # Added to the keep list 2026-10-03 (top 10 speakers).
+    'Elon Musk': r'\belon\s+musk\b',
+    'Connor Leahy': r'\bconnor\s+leahy\b',
 }
 SAFETY = ['direct', 'adjacent', 'indirect', 'none']
 TIMELINE = ['direct', 'mechanism', 'governance', 'indirect', 'adjacent', 'infrastructure', 'none']

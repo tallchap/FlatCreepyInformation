@@ -26,7 +26,9 @@ class AuditTests(unittest.TestCase):
             with self.subTest(name=name):self.assertIn(name,audit.protected({'speaker_source':'Host, '+name}))
         self.assertIn('Yann LeCun',audit.protected({'title':'YANN LE CUN interview'}))
         self.assertIn('Geoffrey Hinton',audit.protected({'title':'Geoff Hinton on AI risk'}))
+        self.assertIn('Elon Musk',audit.protected({'title':"ELON MUSK's warning on AI"}))
         self.assertFalse(audit.protected({'speaker_source':'Joao Soares'}))
+        self.assertFalse(audit.protected({'speaker_source':'Kimbal Musk, Connor Stone'}))
         self.assertFalse(audit.protected({'speaker_source':'Samy Bengio, Jack Altman, Daniela Amodei'}))
         self.assertFalse(audit.protected({'transcript':'Sam Altman is mentioned'}))
 
