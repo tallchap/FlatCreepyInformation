@@ -9,11 +9,13 @@ type Props = {
   videoId: string;
   startSec: number;
   title?: string;
+  /** Changes on every citation tap, so re-tapping a link re-cues the player. */
+  cueId?: number;
   previewRef?: Ref<HTMLDivElement>;
   onClose?: () => void;
 };
 
-export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose }: Props) {
+export function VideoPreviewPane({ videoId, startSec, title, cueId = 0, previewRef, onClose }: Props) {
   const params = new URLSearchParams({
     start: String(startSec),
     autoplay: "1",
@@ -22,7 +24,13 @@ export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose
     cc_lang_pref: "en",
     rel: "0",
     modestbranding: "1",
+    // Without this iPhones hand the video to the native fullscreen player.
+    playsinline: "1",
   });
+  // Set origin up front so the IFrame API never has to rewrite src (which
+  // reloads the player after the tap that opened it).
+  if (typeof window !== "undefined") params.set("origin", window.location.origin);
+  const playerKey = `${videoId}-${startSec}-${cueId}`;
 
   return (
     <Card ref={previewRef} tabIndex={-1} aria-label="Video preview" className="xl:sticky xl:top-4 scroll-mt-4 border-[#e6dfcc] shadow-none h-fit focus:outline-none">
@@ -41,7 +49,7 @@ export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose
         <div className="w-full aspect-video rounded-md overflow-hidden border">
           <iframe
             id={`player-${videoId}`}
-            key={`${videoId}-${startSec}`}
+            key={playerKey}
             className="w-full h-full"
             src={`https://www.youtube.com/embed/${videoId}?${params.toString()}`}
             title={title ?? `Video preview ${videoId}`}
@@ -57,7 +65,7 @@ export function VideoPreviewPane({ videoId, startSec, title, previewRef, onClose
             sentencesPerPara={3}
             initialTimestamp={startSec}
             autoScrollToActive
-            playerSyncKey={`${videoId}-${startSec}`}
+            playerSyncKey={playerKey}
           />
         </div>
 
