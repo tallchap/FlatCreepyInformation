@@ -49,6 +49,7 @@ each fix; destructive ones change what the others see.
 | `lengths` | writes the real length in the app's `formatDuration` shape and fixes chat `duration_sec` |
 | `speakers` | uploads missing speaker files, then detaches leftovers and surplus copies |
 | `windows` | rebuilds wrong search windows, drops windows of deleted videos |
+| `bunny-orphans --ids <file>` | deletes Bunny videos (and any `gs://…/videos/<id>.mp4`) from an explicit approved list of titles. Refuses the whole run if any listed video still has a transcript. Files can't be archived, so each one's full Bunny metadata goes to `integrity_<date>_bunny_deleted` first. |
 
 `app-ops.ts` runs the app's own code for anything that writes transcripts or chat
 files, so a fix produces exactly what an ingest would.
@@ -75,6 +76,9 @@ files, so a fix produces exactly what an ingest would.
   Scribe on the full audio stops where the captions do (7), or the audio is Dutch (1).
 - `lengths`: 655 rows from the March 2026 import; 1,098 chat `duration_sec` values.
 - `speakers`: 42 missing speaker files added, 283 leftovers detached.
+- `bunny-orphans`: 117 Bunny videos with no transcript deleted (376 GB): 42 left over from the
+  Sept 30 cull, 4 test uploads, 61 non-English talks and 10 untraced English uploads from the
+  Oct 2 batch. 7 English-audio videos without captions were kept for transcription.
 - The app's ElevenLabs fallback (`FFMPEG_TRANSCRIBE_URL`, whisper-transcriber) returned
   `401 payment_required` all run: its ElevenLabs subscription has a failed payment. The
   audio pass therefore uses `scripts/scribe-transcripts.py` with `ELEVENLABS_API_KEY_PRO`.
