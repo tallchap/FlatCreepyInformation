@@ -12,6 +12,7 @@ import {
 import { google, sheets_v4 } from "googleapis";
 import { bigQuery } from "@/lib/bigquery";
 import { enableTranscriptDualWrite, useNewTranscriptTables } from "@/lib/bigquery-schema";
+import { buildSegmentRows, replaceTranscript } from "@/lib/transcript-store";
 
 export async function fetchYoutubeMetadata(url: string, speaker: string) {
   const videoId = extractVideoId(url);
@@ -689,47 +690,11 @@ export async function addToBigQuery(transcript: any, metadata: any) {
       created_time: nowIso,
     };
 
-    // Delete existing rows (skip if rows are in streaming buffer — BigQuery
-    // doesn't allow DELETE on recently-streamed rows, but the insert below
-    // will still succeed; duplicates are harmless for this use case).
-    try {
-      await bigQuery.query({
-        query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_videos\` WHERE video_id = @videoId`,
-        params: { videoId: metadata.videoId },
-      });
-      await bigQuery.query({
-        query: `DELETE FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\` WHERE video_id = @videoId`,
-        params: { videoId: metadata.videoId },
-      });
-    } catch (e: any) {
-      console.warn(`[bigquery] DELETE skipped (streaming buffer): ${e.message}`);
-    }
-
-    await dataset.table("youtube_videos").insert(videoRow, { ignoreUnknownValues: true });
-
+    // One transaction replaces the video row and every segment, so a
+    // re-ingest can never stack a second copy of the transcript. Throws
+    // (and rolls back) instead of writing a partial or doubled transcript.
     const transcriptData = transcript.transcript_data || transcript.Transcript_Data || [];
-    const segmentRows = transcriptData.map((segment: any, idx: number) => {
-      const startSec = Number(segment.start ?? segment.Start ?? 0);
-      const text = String(segment.text ?? segment.Text ?? "");
-      const next = transcriptData[idx + 1];
-      const nextStart = next ? Number(next.start ?? next.Start) : null;
-      return {
-        video_id: metadata.videoId,
-        segment_id: `${metadata.videoId}:${String(idx).padStart(5, "0")}`,
-        segment_index: idx,
-        line_index: idx,
-        start_sec: Number.isFinite(startSec) ? startSec : null,
-        end_sec: Number.isFinite(nextStart) ? nextStart : null,
-        text,
-        created_at: nowIso,
-      };
-    });
-
-    if (segmentRows.length > 0) {
-      await dataset.table("youtube_transcript_segments").insert(segmentRows, {
-        ignoreUnknownValues: true,
-      });
-    }
+    await replaceTranscript(bigQuery, videoRow, buildSegmentRows(metadata.videoId, transcriptData));
 
     // Rebuild search windows table so new video is immediately searchable.
     // Batch callers (scripts/ingest-batch.ts) set SKIP_SEARCH_WINDOW_REBUILD
@@ -756,7 +721,12 @@ export async function rebuildSearchWindows() {
             text, ' ',
             COALESCE(LEAD(text, 1) OVER (PARTITION BY video_id ORDER BY segment_index), '')
           ) AS window_text
-        FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\`
+        -- One row per caption line, even if a transcript was ever stored twice;
+        -- duplicates would otherwise interleave and repeat every window.
+        FROM (
+          SELECT * FROM \`youtubetranscripts-429803.reptranscripts.youtube_transcript_segments\`
+          QUALIFY ROW_NUMBER() OVER (PARTITION BY video_id, segment_index, line_index ORDER BY created_at) = 1
+        )
       `,
     });
     console.log("Search windows table rebuilt");
