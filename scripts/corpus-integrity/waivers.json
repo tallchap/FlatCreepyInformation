@@ -1,0 +1,42 @@
+{
+ "y-SrsyckRbo": {
+  "coverage": 0.728,
+  "reason": "captions: covers 73%; audio: covers 73%",
+  "at": "2026-10-04"
+ },
+ "mxq4Ne_8ne4": {
+  "coverage": 0.241,
+  "reason": "captions: covers 24%; audio: not English (Scribe detected nld); skipped",
+  "at": "2026-10-04"
+ },
+ "EMI5O8mTZ1o": {
+  "coverage": 0.643,
+  "reason": "captions: covers 64%; audio: covers 64%",
+  "at": "2026-10-04"
+ },
+ "Y4JW5eWEFHk": {
+  "coverage": 0.719,
+  "reason": "captions: covers 72%; audio: covers 72%",
+  "at": "2026-10-04"
+ },
+ "15UZCAr3shU": {
+  "coverage": 0.648,
+  "reason": "captions: covers 65%; audio: covers 64%",
+  "at": "2026-10-04"
+ },
+ "pd5BFqGFXRs": {
+  "coverage": 0.199,
+  "reason": "captions: covers 20%; audio: covers 20%",
+  "at": "2026-10-04"
+ },
+ "Yw1NCLHlxL0": {
+  "coverage": 0.529,
+  "reason": "captions: covers 53%; audio: covers 53%",
+  "at": "2026-10-04"
+ },
+ "Y9veskS_iH4": {
+  "coverage": 0.748,
+  "reason": "captions: covers 75%; audio: covers 81%",
+  "at": "2026-10-04"
+ }
+}
