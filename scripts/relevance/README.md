@@ -12,8 +12,8 @@ The original `snippy-triage-v1.txt` is copied byte-for-byte from
 absence of a good passage from rejection based on derivative source status.
 
 Automatic preservation precedes every model call. Sam Altman, Dario Amodei,
-Demis Hassabis, Eliezer Yudkowsky, Max Tegmark, Yoshua Bengio, and Yann LeCun are
-matched in speaker metadata, title, and channel, including multi-speaker records
+Demis Hassabis, Eliezer Yudkowsky, Max Tegmark, Yoshua Bengio, Yann LeCun,
+Geoffrey Hinton, Nate Soares, Elon Musk, and Connor Leahy are matched in speaker metadata, title, and channel, including multi-speaker records
 and Le Cun spelling. Title-only mentions are conservatively preserved, even if
 they refer to someone being discussed. Jack Altman, Daniela Amodei, and Samy Bengio
 alone do not match. If Luna identifies a protected speaker absent from metadata,
