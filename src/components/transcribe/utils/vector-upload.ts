@@ -44,6 +44,33 @@ interface VectorUploadParams {
   onlySpeakers?: string[];
 }
 
+/**
+ * Every chat file already in the shared store for one video. All of a video's
+ * files hold the same transcript, so their chunks score identically and a
+ * filtered search returns every file (a video has at most ~10).
+ */
+export async function findVideoFiles(
+  openai: OpenAI,
+  videoId: string,
+): Promise<{ fileId: string; speaker: string }[]> {
+  const page = await openai.vectorStores.search(SHARED_VECTOR_STORE_ID, {
+    query: `VIDEO_ID: ${videoId}`,
+    filters: { type: "eq", key: "video_id", value: videoId },
+    max_num_results: 50,
+    rewrite_query: false,
+  });
+  const byId = new Map<string, string>();
+  for (const r of page.data) byId.set(r.file_id, String(r.attributes?.speaker ?? ""));
+  return [...byId].map(([fileId, speaker]) => ({ fileId, speaker }));
+}
+
+/**
+ * Upload one chat file per speaker, then detach the files they supersede: on a
+ * full upload every earlier file for the video (including speakers that were
+ * dropped from speaker_source), on an onlySpeakers upload just those speakers'
+ * earlier files. New files go in first so the video is never missing from chat.
+ * Detached File objects are kept, as with culls, so they stay restorable.
+ */
 export async function uploadToVectorStore(params: VectorUploadParams): Promise<void> {
   const { videoId, title, channel, publishedDate, duration, speakerSource, languageCode, segments, onlySpeakers } = params;
 
@@ -79,6 +106,12 @@ export async function uploadToVectorStore(params: VectorUploadParams): Promise<v
   const dateStr = publishedDate || "Unknown";
 
   const onlySlugs = onlySpeakers ? new Set(onlySpeakers.map(slugify)) : null;
+  // A failed lookup only skips the cleanup; the upload itself must still happen.
+  const previous = await findVideoFiles(openai, videoId).catch((e) => {
+    console.error(`Vector store: could not list earlier files for ${videoId}; none detached: ${e.message}`);
+    return [] as { fileId: string; speaker: string }[];
+  });
+  const uploaded = new Set<string>();
 
   for (const speaker of allSpeakers) {
     if (onlySlugs && !onlySlugs.has(slugify(speaker))) continue;
@@ -131,7 +164,16 @@ END OF TRANSCRIPT — Video ID: ${videoId} — Title: ${title}`;
     }
 
     await openai.vectorStores.files.update(SHARED_VECTOR_STORE_ID, file.id, { attributes });
+    uploaded.add(file.id);
 
     console.log(`Vector store: uploaded ${speaker} | ${videoId} | ${title.slice(0, 50)}`);
+  }
+
+  const superseded = previous.filter(
+    (f) => !uploaded.has(f.fileId) && (!onlySlugs || onlySlugs.has(slugify(f.speaker))),
+  );
+  for (const f of superseded) {
+    await openai.vectorStores.files.del(SHARED_VECTOR_STORE_ID, f.fileId);
+    console.log(`Vector store: detached superseded ${f.speaker || "?"} file ${f.fileId} | ${videoId}`);
   }
 }
