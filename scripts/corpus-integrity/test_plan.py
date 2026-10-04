@@ -97,6 +97,22 @@ class Duplicates(unittest.TestCase):
         self.assertEqual(plan.person_key('Álvaro  de la Peña'), ('alvaro', 'pena'))
 
 
+class BunnyDeletions(unittest.TestCase):
+    items = [{'title': 'aaaaaaaaaaa'}, {'title': 'Test Video bbbbbbbbbbb'}, {'title': 'Failed upload — HR'},
+             {'title': 'ccccccccccc'}]
+
+    def test_selects_exact_titles_and_reports_missing(self):
+        chosen, missing, blocking = plan.select_bunny_deletions(
+            ['aaaaaaaaaaa', 'Failed upload — HR', 'zzzzzzzzzzz'], self.items, set())
+        self.assertEqual([i['title'] for i in chosen], ['aaaaaaaaaaa', 'Failed upload — HR'])
+        self.assertEqual((missing, blocking), (['zzzzzzzzzzz'], []))
+
+    def test_a_transcribed_video_blocks_even_inside_a_prefixed_title(self):
+        self.assertEqual(plan.select_bunny_deletions(['Test Video bbbbbbbbbbb'], self.items, {'bbbbbbbbbbb'})[2],
+                         ['bbbbbbbbbbb'])
+        self.assertEqual(plan.select_bunny_deletions(['ccccccccccc'], self.items, {'ccccccccccc'})[2], ['ccccccccccc'])
+
+
 class Coverage(unittest.TestCase):
     def test_replacement_needs_a_real_gain(self):
         self.assertEqual(plan.coverage(400, 800), 0.5)

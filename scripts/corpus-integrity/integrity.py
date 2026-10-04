@@ -659,14 +659,61 @@ def fix_windows(c, b, apply):
     rebuild_windows(b, bad)
 
 
+def fix_bunny_orphans(c, b, apply, ids_file=None):
+    """Delete Bunny videos that have no transcript, from an explicit, approved list.
+
+    ids_file: one Bunny title per line (a YouTube ID, or the full title of a test upload).
+    Refuses the whole run if any listed video, or any ID inside a listed title, still has
+    a transcript. Bunny files can't be archived, so each one's metadata is recorded first.
+    """
+    import re
+    if not ids_file:
+        sys.exit('bunny-orphans needs --ids <file> (the approved list)')
+    wanted = [l.strip() for l in Path(ids_file).read_text().splitlines() if l.strip() and not l.startswith('#')]
+    chosen, missing, live = plan.select_bunny_deletions(wanted, load('bunny.json'), set(c['videos']))
+    if live:
+        sys.exit(f'refusing: these still have transcripts: {live}')
+    print(f'{len(chosen)} Bunny videos to delete ({len(missing)} listed titles not in Bunny: {missing[:5]})')
+    for i in chosen[:5]:
+        print(f"  {i['title']} ({i['length']} s)")
+    if not apply or not chosen:
+        return
+    rows = []
+    for i in chosen:
+        full = bunny('GET', f"/videos/{i['guid']}")
+        vid = i['title'] if re.fullmatch(r'[\w-]{11}', i['title'] or '') else None
+        rows.append({'guid': i['guid'], 'title': i['title'], 'video_id': vid, 'length_sec': str(full.get('length')),
+                     'storage_bytes': str(full.get('storageSize')), 'date_uploaded': full.get('dateUploaded'),
+                     'metadata_json': json.dumps(full, ensure_ascii=False)})
+    dest = f'{HISTORY}.integrity_{STAMP}_bunny_deleted'
+    b.load_table_from_json(rows, dest, job_config=bigquery.LoadJobConfig(
+        schema=[bigquery.SchemaField(k, 'STRING') for k in rows[0]], write_disposition='WRITE_APPEND')).result()
+    save(f'bunny-deleted-{int(time.time())}.json', rows, OUT / 'receipts')
+    print(f'  recorded {len(rows)} Bunny videos → {dest}')
+    s, gcs = gcs_session(), 0
+    for r in rows:
+        bunny('DELETE', f"/videos/{r['guid']}")
+        if r['video_id']:
+            resp = s.delete(f"https://storage.googleapis.com/storage/v1/b/{GCS_BUCKET}/o/"
+                            + urllib.parse.quote(f"videos/{r['video_id']}.mp4", safe=''))
+            if resp.status_code == 204:
+                gcs += 1
+            elif resp.status_code != 404:
+                resp.raise_for_status()
+    freed = sum(int(r['storage_bytes'] or 0) for r in rows) / 1e9
+    print(f'  deleted {len(rows)} Bunny videos ({freed:.1f} GB) and {gcs} GCS copies')
+
+
 FIXES = {'lengths': fix_lengths, 'segments': fix_segments, 'duplicates': fix_duplicates,
-         'speakers': fix_speakers, 'transcripts': fix_transcripts, 'windows': fix_windows}
+         'speakers': fix_speakers, 'transcripts': fix_transcripts, 'windows': fix_windows,
+         'bunny-orphans': fix_bunny_orphans}
 
 
 def cmd_fix(args):
     c, b = corpus(), bq()
     print(f"[{'APPLY' if args.apply else 'dry run'}] {args.name} — snapshot {load('meta.json')['taken_at'][:19]}Z")
-    FIXES[args.name](c, b, args.apply)
+    extra = {'ids_file': args.ids} if args.name == 'bunny-orphans' else {}
+    FIXES[args.name](c, b, args.apply, **extra)
 
 
 def main():
@@ -678,6 +725,7 @@ def main():
     f = sub.add_parser('fix')
     f.add_argument('name', choices=FIXES)
     f.add_argument('--apply', action='store_true')
+    f.add_argument('--ids', help='bunny-orphans: approved list of Bunny titles, one per line')
     f.set_defaults(fn=cmd_fix)
     args = p.parse_args()
     args.fn(args)

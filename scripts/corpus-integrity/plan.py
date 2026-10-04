@@ -177,3 +177,19 @@ def coverage(last_time, true_seconds):
 
 def should_replace_transcript(old_cov, new_cov):
     return new_cov is not None and (old_cov is None or new_cov >= old_cov + MIN_COVERAGE_GAIN)
+
+
+def select_bunny_deletions(wanted, items, transcribed):
+    """Approved Bunny titles → (items to delete, titles not in Bunny, titles blocking the run).
+
+    Blocking: a listed title that is itself a transcribed video, or any transcribed
+    YouTube ID inside a listed item's title ("Test Video <id>" still serves that video).
+    Any blocker means delete nothing.
+    """
+    chosen, missing = [], []
+    for key in wanted:
+        hits = [i for i in items if (i['title'] or '').strip() == key]
+        (chosen.extend(hits) if hits else missing.append(key))
+    blocking = sorted({t for i in chosen for t in re.findall(r'[\w-]{11}', i['title'] or '') if t in transcribed}
+                      | {k for k in wanted if k in transcribed})
+    return chosen, missing, blocking
