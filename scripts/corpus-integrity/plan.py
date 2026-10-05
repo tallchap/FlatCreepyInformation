@@ -193,3 +193,12 @@ def select_bunny_deletions(wanted, items, transcribed):
     blocking = sorted({t for i in chosen for t in re.findall(r'[\w-]{11}', i['title'] or '') if t in transcribed}
                       | {k for k in wanted if k in transcribed})
     return chosen, missing, blocking
+
+
+def purge_targets(wanted, transcribed, owned):
+    """Approved video IDs whose leftover rows may be deleted → (ids, blocking).
+    Blocking: an ID that still has a transcript, or owns clips/exports. Any blocker
+    means delete nothing."""
+    ids = sorted({w for w in wanted if re.fullmatch(r'[\w-]{11}', w)})
+    blocking = sorted(i for i in ids if i in transcribed or owned.get(i))
+    return ids, blocking
