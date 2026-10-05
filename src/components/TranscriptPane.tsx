@@ -44,6 +44,11 @@ export default function TranscriptPane({
   const seekedAtRef = useRef<number>(0);
   const playerReadyRef = useRef<boolean>(false);
   const activeRef = useRef<ActivePos>(null);
+  // Mobile embeds can ignore `start` (watch-history resume, iPhone's native
+  // player), so the first playback is checked against initialTimestamp.
+  const cuedRef = useRef<boolean>(false);
+  const initialTimestampRef = useRef(initialTimestamp);
+  initialTimestampRef.current = initialTimestamp;
 
   /* 1 ▸ FETCH & GROUP */
   useEffect(() => {
@@ -86,6 +91,7 @@ export default function TranscriptPane({
   /* 2 ▸ PLAYER SETUP */
   useEffect(() => {
     playerReadyRef.current = false;
+    cuedRef.current = false;
 
     if (playerRef.current?.destroy) {
       try {
@@ -108,6 +114,18 @@ export default function TranscriptPane({
           events: {
             onReady: () => {
               playerReadyRef.current = true;
+            },
+            onStateChange: (e: { data: number }) => {
+              // 1 = PLAYING
+              if (e.data !== 1 || cuedRef.current) return;
+              cuedRef.current = true;
+              const want = initialTimestampRef.current;
+              const t = playerRef.current?.getCurrentTime?.();
+              if (want == null || t == null) return;
+              if (Math.abs(t - want) > 3) {
+                seekedAtRef.current = Date.now();
+                playerRef.current?.seekTo(want, true);
+              }
             },
           },
         });
@@ -192,6 +210,7 @@ export default function TranscriptPane({
   /* 4 ▸ CLICK TO SEEK */
   const handleLineClick = (start: number, pIdx: number, lIdx: number) => {
     seekedAtRef.current = Date.now();
+    cuedRef.current = true;
     if (playerReadyRef.current) {
       playerRef.current?.seekTo(start, true);
     }

@@ -24,6 +24,7 @@ type SelectedVideo = {
   videoId: string;
   startSec: number;
   title?: string;
+  cueId: number;
   source: { messageIndex: number; citationIndex: number };
 } | null;
 
@@ -63,6 +64,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
   const videoPreviewRef = useRef<HTMLDivElement>(null);
   const returnToVideoRef = useRef<NonNullable<SelectedVideo>["source"] | null>(null);
   const sendingRef = useRef(false);
+  const cueIdRef = useRef(0);
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -399,6 +401,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
                 onVideoLinkClick={({ citationIndex, ...video }) =>
                   setSelectedVideo({
                     ...video,
+                    cueId: ++cueIdRef.current,
                     source: { messageIndex: i, citationIndex },
                   })
                 }
@@ -459,6 +462,7 @@ export function ChatWindow({ preview = false }: { preview?: boolean }) {
           videoId={selectedVideo.videoId}
           startSec={selectedVideo.startSec}
           title={selectedVideo.title}
+          cueId={selectedVideo.cueId}
         />
       )}
 
