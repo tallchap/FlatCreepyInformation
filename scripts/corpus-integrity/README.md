@@ -49,6 +49,7 @@ each fix; destructive ones change what the others see.
 | `lengths` | writes the real length in the app's `formatDuration` shape and fixes chat `duration_sec` |
 | `speakers` | uploads missing speaker files, then detaches leftovers and surplus copies |
 | `windows` | rebuilds wrong search windows, drops windows of deleted videos |
+| `purge-rows --ids <file>` | deletes every row keyed to an approved list of video IDs that have no transcript (research candidates, scores, logs) in one transaction, archived first. Refuses the run if any listed video has a transcript or owns clips/exports. |
 | `bunny-orphans --ids <file>` | deletes Bunny videos (and any `gs://…/videos/<id>.mp4`) from an explicit approved list of titles. Refuses the whole run if any listed video still has a transcript. Files can't be archived, so each one's full Bunny metadata goes to `integrity_<date>_bunny_deleted` first. |
 
 `app-ops.ts` runs the app's own code for anything that writes transcripts or chat
@@ -79,6 +80,8 @@ files, so a fix produces exactly what an ingest would.
 - `bunny-orphans`: 117 Bunny videos with no transcript deleted (376 GB): 42 left over from the
   Sept 30 cull, 4 test uploads, 61 non-English talks and 10 untraced English uploads from the
   Oct 2 batch. 7 English-audio videos without captions were kept for transcription.
+- `purge-rows`: the 71 deleted non-English and untraced videos' research rows (458 rows in 5
+  tables), so the research server has no pending candidates to download again.
 - The app's ElevenLabs fallback (`FFMPEG_TRANSCRIBE_URL`, whisper-transcriber) returned
   `401 payment_required` all run: its ElevenLabs subscription has a failed payment. The
   audio pass therefore uses `scripts/scribe-transcripts.py` with `ELEVENLABS_API_KEY_PRO`.

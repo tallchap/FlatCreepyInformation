@@ -113,6 +113,14 @@ class BunnyDeletions(unittest.TestCase):
         self.assertEqual(plan.select_bunny_deletions(['ccccccccccc'], self.items, {'ccccccccccc'})[2], ['ccccccccccc'])
 
 
+class PurgeRows(unittest.TestCase):
+    def test_keeps_only_video_ids_and_blocks_live_or_owned_videos(self):
+        self.assertEqual(plan.purge_targets(['bbbbbbbbbbb', 'aaaaaaaaaaa', 'not an id', 'aaaaaaaaaaa'], set(), {}),
+                         (['aaaaaaaaaaa', 'bbbbbbbbbbb'], []))
+        self.assertEqual(plan.purge_targets(['aaaaaaaaaaa', 'bbbbbbbbbbb'], {'aaaaaaaaaaa'}, {'bbbbbbbbbbb': 2})[1],
+                         ['aaaaaaaaaaa', 'bbbbbbbbbbb'])
+
+
 class Coverage(unittest.TestCase):
     def test_replacement_needs_a_real_gain(self):
         self.assertEqual(plan.coverage(400, 800), 0.5)

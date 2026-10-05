@@ -704,15 +704,41 @@ def fix_bunny_orphans(c, b, apply, ids_file=None):
     print(f'  deleted {len(rows)} Bunny videos ({freed:.1f} GB) and {gcs} GCS copies')
 
 
+def fix_purge_rows(c, b, apply, ids_file=None):
+    """Delete every row keyed to an explicit, approved list of videos that have no
+    transcript (research candidates, scores, logs). Archived first; refuses the whole
+    run if any listed video still has a transcript or owns clips/exports."""
+    if not ids_file:
+        sys.exit('purge-rows needs --ids <file> (the approved list)')
+    wanted = [l.strip() for l in Path(ids_file).read_text().splitlines() if l.strip() and not l.startswith('#')]
+    ids, blocking = plan.purge_targets(wanted, set(c['videos']), c['owned'])
+    if blocking:
+        sys.exit(f'refusing: these still have a transcript or clips: {blocking}')
+    counts = {t: q(b, f'SELECT COUNT(*) n FROM `{SOURCE}.{t}` WHERE video_id IN UNNEST(@ids)', ids=ids)[0]['n']
+              for t in VIDEO_TABLES}
+    counts = {t: n for t, n in counts.items() if n}
+    print(f'{len(ids)} videos, {sum(counts.values())} rows: ' + ', '.join(f'{t} {n}' for t, n in counts.items()))
+    if not apply or not counts:
+        return
+    for t in counts:
+        archive(b, 'purge', t, ids)
+    deletes = '\n'.join(f'DELETE FROM `{SOURCE}.{t}` WHERE video_id IN UNNEST(@ids);' for t in counts)
+    asserts = '\n'.join(f"ASSERT (SELECT COUNT(*) FROM `{SOURCE}.{t}` WHERE video_id IN UNNEST(@ids)) = 0 AS '{t} rows remain';"
+                         for t in counts)
+    q(b, f'BEGIN TRANSACTION;\n{deletes}\n{asserts}\nCOMMIT TRANSACTION;', ids=ids)
+    save(f'purge-{int(time.time())}.json', {'ids': ids, 'deleted': counts}, OUT / 'receipts')
+    print(f'  deleted {sum(counts.values())} rows from {len(counts)} tables')
+
+
 FIXES = {'lengths': fix_lengths, 'segments': fix_segments, 'duplicates': fix_duplicates,
          'speakers': fix_speakers, 'transcripts': fix_transcripts, 'windows': fix_windows,
-         'bunny-orphans': fix_bunny_orphans}
+         'bunny-orphans': fix_bunny_orphans, 'purge-rows': fix_purge_rows}
 
 
 def cmd_fix(args):
     c, b = corpus(), bq()
     print(f"[{'APPLY' if args.apply else 'dry run'}] {args.name} — snapshot {load('meta.json')['taken_at'][:19]}Z")
-    extra = {'ids_file': args.ids} if args.name == 'bunny-orphans' else {}
+    extra = {'ids_file': args.ids} if args.name in ('bunny-orphans', 'purge-rows') else {}
     FIXES[args.name](c, b, args.apply, **extra)
 
 
@@ -725,7 +751,7 @@ def main():
     f = sub.add_parser('fix')
     f.add_argument('name', choices=FIXES)
     f.add_argument('--apply', action='store_true')
-    f.add_argument('--ids', help='bunny-orphans: approved list of Bunny titles, one per line')
+    f.add_argument('--ids', help='bunny-orphans / purge-rows: approved list, one title or video ID per line')
     f.set_defaults(fn=cmd_fix)
     args = p.parse_args()
     args.fn(args)
