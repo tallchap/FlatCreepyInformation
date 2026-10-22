@@ -43,8 +43,8 @@ export default function Error({
         <button onClick={() => reset()} style={{ padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 6, background: "white", cursor: "pointer" }}>
           Try again
         </button>
-        <a href="/transcribe" style={{ padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 6, background: "white", textDecoration: "none", color: "#111827" }}>
-          Back to Transcribe
+        <a href="/" style={{ padding: "6px 12px", border: "1px solid #d1d5db", borderRadius: 6, background: "white", textDecoration: "none", color: "#111827" }}>
+          Back to home
         </a>
       </div>
     </div>
