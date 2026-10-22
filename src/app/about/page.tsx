@@ -32,19 +32,6 @@ export default function AboutPage() {
             <span className="font-medium">Export</span> all the results from a
             search into a plain-text file.
           </li>
-
-          <li>
-            Use{" "}
-            <Link
-              href="/transcribe"
-              className="text-blue-600 hover:underline font-medium"
-            >
-              Transcribe
-            </Link>{" "}
-            to add new transcripts, or
-            <span className="font-medium"> Bulk Import</span> up to 30 videos at
-            a time.
-          </li>
         </ul>
       </div>
 

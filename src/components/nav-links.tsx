@@ -7,7 +7,7 @@ const links = [
   { href: "/chat", label: "Chat" },
   { href: "/search", label: "Search" },
   { href: "/browse", label: "Browse" },
-  { href: "/transcribe", label: "Transcribe" },
+  // /transcribe is shelved: the page still exists but is intentionally unlinked.
   // Served by a rewrite to the Snippy Daily Worker, so it must be a full navigation, not a client-side Link.
   { href: "/daily", label: "Daily", external: true },
 ];
