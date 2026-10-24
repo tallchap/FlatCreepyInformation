@@ -9,6 +9,25 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
+/** "about 2 min", "about 40 s" */
+export function formatEta(sec: number): string {
+  if (sec <= 5) return "a few seconds";
+  if (sec < 60) return `about ${Math.ceil(sec / 5) * 5} s`;
+  const m = Math.floor(sec / 60);
+  const s = Math.round((sec % 60) / 15) * 15;
+  return s === 60 ? `about ${m + 1} min` : s ? `about ${m} min ${s} s` : `about ${m} min`;
+}
+
+/** Re-render once a second while something is downloading (countdown). */
+function useTick(active: boolean) {
+  const [, setN] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    const t = setInterval(() => setN((n) => n + 1), 1000);
+    return () => clearInterval(t);
+  }, [active]);
+}
+
 function StatusIcon({ status }: { status: DownloadItem["status"] }) {
   if (status === "complete") {
     return (
@@ -39,6 +58,10 @@ export function DownloadPanel() {
   const [prevActiveCount, setPrevActiveCount] = useState(0);
 
   const activeCount = downloads.filter((d) => d.status === "downloading").length;
+  useTick(activeCount > 0);
+  const now = Date.now();
+  const leftSec = (d: DownloadItem) =>
+    d.etaSec != null && d.etaAt ? Math.max(0, d.etaSec - (now - d.etaAt) / 1000) : null;
 
   // Auto-expand when a new download starts
   useEffect(() => {
@@ -71,7 +94,12 @@ export function DownloadPanel() {
           </svg>
         )}
         <span className="text-sm font-medium text-gray-700">
-          {hasActive ? `${activeCount} downloading` : `${downloads.length} downloads`}
+          {hasActive
+            ? (() => {
+                const left = downloads.filter((d) => d.status === "downloading").map(leftSec).filter((x): x is number => x != null);
+                return left.length ? `Ready in ${formatEta(Math.max(...left))}` : `${activeCount} downloading`;
+              })()
+            : `${downloads.length} downloads`}
         </span>
       </button>
     );
@@ -123,26 +151,38 @@ export function DownloadPanel() {
                     ? `${d.segments.length} segments · ${formatTime(d.segments.reduce((a, s) => a + s.out - s.in, 0))}`
                     : `${formatTime(d.startSec)} - ${formatTime(d.endSec)}`}{" "}
                   &middot; {d.quality}
-                  {d.elapsedSec != null && (
+                  {d.status === "complete" && d.elapsedSec != null && (
                     <span data-testid="download-elapsed">
-                      {" "}&middot; {d.status === "complete" ? "ready in" : "elapsed"} {formatTime(d.elapsedSec)}
+                      {" "}&middot; ready in {formatTime(d.elapsedSec)}
+                      {d.firstEtaSec != null && ` (estimate was ${formatTime(d.firstEtaSec)})`}
                     </span>
                   )}
                   {d.source && <> &middot; {d.source}</>}
                 </p>
-                {d.status === "downloading" && (
-                  <>
-                    <div className="mt-1.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
-                      <div
-                        className="h-full bg-[#DC2626] rounded-full transition-all duration-500 ease-out"
-                        style={{ width: `${d.progress}%` }}
-                      />
-                    </div>
-                    {d.stageDetail && (
-                      <p className="text-[10px] text-gray-400 mt-0.5">{d.stageDetail}</p>
-                    )}
-                  </>
-                )}
+                {d.status === "downloading" && (() => {
+                  const left = leftSec(d);
+                  const elapsed = d.startedAt ? (now - d.startedAt) / 1000 : d.elapsedSec ?? 0;
+                  // Time-based bar: elapsed / (elapsed + time left).
+                  const pct = left != null ? Math.min(98, Math.max(2, (elapsed / (elapsed + left)) * 100)) : d.progress;
+                  return (
+                    <>
+                      {left != null && (
+                        <p className="text-[12px] font-semibold text-gray-800 mt-1" data-testid="download-eta">
+                          Your clip will be ready in {formatEta(left)}
+                        </p>
+                      )}
+                      <div className="mt-1.5 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-[#DC2626] rounded-full transition-all duration-1000 ease-linear"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <p className="text-[10px] text-gray-400 mt-0.5">
+                        {formatTime(elapsed)} elapsed{d.stageDetail ? ` · ${d.stageDetail}` : ""}
+                      </p>
+                    </>
+                  );
+                })()}
                 {d.status === "error" && d.error && (
                   <p className="text-[11px] text-red-500 mt-0.5">{d.error}</p>
                 )}
