@@ -474,6 +474,267 @@ app.post("/download", async (req, res) => {
   }
 });
 
+// ─── Segments (multi-range clips) ───────────────────────────────────
+// A clip is a list of { in, out } ranges (seconds), joined in the order given.
+// `startSec`/`endSec` stay accepted as a one-segment shorthand.
+const MAX_CLIP_SEC = 11 * 60;
+const MAX_SEGMENTS = 20;
+
+function parseSegments(body) {
+  let segments;
+  let shorthand = false;
+  if (Array.isArray(body.segments)) {
+    segments = body.segments.map((s) => ({ in: Number(s && s.in), out: Number(s && s.out) }));
+    if (segments.length < 1 || segments.length > MAX_SEGMENTS) {
+      return { error: `segments must hold 1–${MAX_SEGMENTS} ranges (got ${segments.length})` };
+    }
+    for (let i = 0; i < segments.length; i++) {
+      const s = segments[i];
+      if (!Number.isFinite(s.in) || !Number.isFinite(s.out) || s.in < 0) return { error: `segment ${i + 1}: in/out must be numbers ≥ 0` };
+      if (s.out - s.in < 1) return { error: `segment ${i + 1} is shorter than 1 s` };
+    }
+  } else if (body.startSec != null && body.endSec != null) {
+    const s = { in: Number(body.startSec), out: Number(body.endSec) };
+    if (!Number.isFinite(s.in) || !Number.isFinite(s.out) || s.out <= s.in) return { error: "endSec must be after startSec" };
+    segments = [s];
+    shorthand = true;
+  } else {
+    return { error: "Missing segments (or startSec/endSec)" };
+  }
+  const total = segments.reduce((a, s) => a + (s.out - s.in), 0);
+  if (total > MAX_CLIP_SEC) return { error: `Clip exceeds ${MAX_CLIP_SEC / 60} minute limit (total ${total.toFixed(1)}s)`, total };
+  const lengthSeconds = Number(body.lengthSeconds);
+  if (Number.isFinite(lengthSeconds) && lengthSeconds > 0) {
+    const bad = segments.findIndex((s) => s.out > lengthSeconds + 0.5);
+    if (bad >= 0) return { error: `segment ${bad + 1} ends after the video (${lengthSeconds}s)` };
+  }
+  return { segments, total, shorthand };
+}
+
+const ENCODE_V = [
+  "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
+  "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+];
+
+// Run ffmpeg, parse time= for progress, kill it if no progress for 5 min.
+function runFfmpeg(args, { job, duration, label, onPct }) {
+  return new Promise((resolve, reject) => {
+    const lastLines = [];
+    let lastEncodedSecs = 0;
+    let previousCheckSecs = -1;
+    const proc = execFile("ffmpeg", args, { maxBuffer: 64 * 1024 * 1024 }, (error) => {
+      clearInterval(stallCheck);
+      if (error) { error.stderr = lastLines.join("\n"); reject(error); }
+      else resolve();
+    });
+    const stallCheck = setInterval(() => {
+      if (lastEncodedSecs === previousCheckSecs) {
+        logDebug("ffmpeg.stalled", { label, lastEncodedSecs });
+        proc.kill();
+      }
+      previousCheckSecs = lastEncodedSecs;
+    }, 300_000);
+    if (proc.stderr) proc.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      text.split("\n").filter((l) => l.trim()).forEach((l) => { lastLines.push(l); if (lastLines.length > 10) lastLines.shift(); });
+      const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
+      if (match && duration > 0) {
+        const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
+        lastEncodedSecs = secs;
+        const pct = Math.min(99, Math.round((secs / duration) * 100));
+        if (onPct) onPct(pct, `${match[1]}:${match[2]}:${match[3]}`);
+      }
+    });
+  });
+}
+
+// Frame rate of the first video stream (e.g. 59.94), or null.
+async function probeFps(input) {
+  try {
+    const r = await execCapture("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", input], { timeout: 30_000 });
+    const st = (JSON.parse(r.stdout).streams || [])[0] || {};
+    for (const v of [st.avg_frame_rate, st.r_frame_rate]) {
+      const [a, b] = String(v || "").split("/").map(Number);
+      const fps = b ? a / b : a;
+      if (Number.isFinite(fps) && fps > 1 && fps < 241) return fps;
+    }
+  } catch {}
+  return null;
+}
+
+// Cut one segment out of a file/URL (frame-accurate re-encode). With the
+// frame rate known, video is cut to round(len × fps) frames and audio to the
+// same length, so every join lands within half a frame of where it should.
+function cutSegmentArgs(input, seg, outFile, overlayFilter, fps) {
+  const len = seg.out - seg.in;
+  const frames = fps ? Math.max(1, Math.round(len * fps)) : null;
+  const exact = frames ? frames / fps : len;
+  return [
+    "-err_detect", "ignore_err", "-fflags", "+genpts",
+    "-ss", String(seg.in), "-to", String(seg.out + 0.1), "-i", input,
+    "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
+    ...(overlayFilter ? ["-vf", overlayFilter] : []),
+    ...(frames ? ["-frames:v", String(frames)] : []),
+    ...ENCODE_V,
+    "-af", `atrim=duration=${exact.toFixed(6)},afade=t=in:d=0.03,afade=t=out:st=${Math.max(0, exact - 0.03).toFixed(6)}:d=0.03`,
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart", "-y", outFile,
+  ];
+}
+
+// The single-range encode the editor has always used (kept byte-for-byte so
+// one-segment exports behave exactly as before).
+function legacySingleArgs(input, seg, outFile, overlayFilter) {
+  const duration = seg.out - seg.in;
+  return [
+    "-err_detect", "ignore_err", "-fflags", "+genpts",
+    "-ss", String(seg.in), "-to", String(seg.in + duration + 0.05), "-i", input,
+    "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
+    ...(overlayFilter ? ["-vf", overlayFilter] : []),
+    ...ENCODE_V,
+    "-af", `afade=t=out:st=${duration}:d=0.05`,
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart", "-y", outFile,
+  ];
+}
+
+// Cut every segment from `input` and join them into `clipFile`. Segment files
+// are deleted as soon as the join finishes (or fails).
+// `parts` = [{ input, seg }]: the range `seg` is cut out of file/URL `input`.
+async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pipeline, videoId }) {
+  const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
+  const overlayFilter = buildOverlayFilter(overlay, fontPath, videoWidth);
+  const n = parts.length;
+  const total = parts.reduce((a, p) => a + (p.seg.out - p.seg.in), 0);
+  let doneSec = 0;
+
+  if (n === 1) {
+    const { input, seg } = parts[0];
+    const duration = seg.out - seg.in;
+    job.stage = "trimming-clip";
+    job.stageDetail = "Trimming: 0%";
+    logClipEvent({ jobId, videoId, pipeline, step: "ffmpeg-trim-start", status: "info", detail: { startSec: seg.in, duration, overlay: !!overlayFilter } });
+    await runFfmpeg(legacySingleArgs(input, seg, clipFile, overlayFilter), {
+      job, duration, label: `${jobId}-trim`,
+      onPct: (pct) => { job.stageDetail = `Trimming: ${pct}%`; job.progress = Math.max(job.progress || 0, 50 + Math.round(pct * 0.45)); },
+    });
+    return;
+  }
+
+  const segFiles = parts.map((_, i) => join(tmpdir(), `seg-${jobId}-${i + 1}.mp4`));
+  const listFile = join(tmpdir(), `seg-${jobId}-list.txt`);
+  const fpsByInput = new Map();
+  for (const p of parts) if (!fpsByInput.has(p.input)) fpsByInput.set(p.input, await probeFps(p.input));
+  job.fps = fpsByInput.get(parts[0].input) || null;
+  try {
+    for (let i = 0; i < n; i++) {
+      const { input, seg } = parts[i];
+      const len = seg.out - seg.in;
+      job.stage = `cutting ${i + 1}/${n}`;
+      job.stageDetail = `Cutting ${i + 1}/${n}: 0%`;
+      logClipEvent({ jobId, videoId, pipeline, step: "segment-cut-start", status: "info", detail: { index: i + 1, of: n, in: seg.in, out: seg.out } });
+      await runFfmpeg(cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fpsByInput.get(input)), {
+        job, duration: len, label: `${jobId}-seg${i + 1}`,
+        onPct: (pct) => {
+          job.stageDetail = `Cutting ${i + 1}/${n}: ${pct}%`;
+          job.progress = Math.max(job.progress || 0, 50 + Math.round(((doneSec + (len * pct) / 100) / total) * 40));
+        },
+      });
+      doneSec += len;
+    }
+    job.stage = "joining";
+    job.stageDetail = `Joining ${n} segments...`;
+    job.progress = 92;
+    // Explicit per-file durations keep the joins exactly where the frames say.
+    fs.writeFileSync(listFile, segFiles.map((f, i) => {
+      const fps = fpsByInput.get(parts[i].input);
+      const len = parts[i].seg.out - parts[i].seg.in;
+      const exact = fps ? Math.max(1, Math.round(len * fps)) / fps : len;
+      return `file '${f.replace(/'/g, "'\\''")}'\nduration ${exact.toFixed(6)}`;
+    }).join("\n") + "\n");
+    await execCapture("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", "-y", clipFile], { timeout: 300_000 });
+  } finally {
+    for (const f of [...segFiles, listFile]) await unlink(f).catch(() => {});
+  }
+}
+
+// Stream a URL to disk. When the file is a fragmented MP4 (RapidAPI streams
+// one), stop as soon as it covers `needSec` — the rest of the video is never
+// pulled. Returns { bytes, complete, coveredSec }.
+function downloadUntil(url, outFile, { needSec, job, onCovered }) {
+  return new Promise((resolve, reject) => {
+    const proc = execFile("curl", ["-fL", "-sS", "-o", outFile, url], { timeout: 900_000 }, (error) => {
+      clearInterval(timer);
+      const bytes = fs.existsSync(outFile) ? fs.statSync(outFile).size : 0;
+      if (stoppedEarly) return resolve({ bytes, complete: false, coveredSec });
+      if (error) { error.stderr = error.stderr || error.message; return reject(error); }
+      resolve({ bytes, complete: true, coveredSec: null });
+    });
+    let stoppedEarly = false;
+    let fragmented = null;
+    let coveredSec = 0;
+    let probing = false;
+    let lastSize = 0;
+    const timer = setInterval(async () => {
+      if (probing || stoppedEarly) return;
+      const size = fs.existsSync(outFile) ? fs.statSync(outFile).size : 0;
+      if (job) {
+        job.stageDetail = `Fetching from YouTube: ${(size / 1024 / 1024).toFixed(0)} MB${coveredSec ? ` (${Math.round(coveredSec)}s of ${Math.round(needSec)}s needed)` : ""}`;
+        job.bytesPulled = size;
+      }
+      if (size === lastSize || size < 2_000_000) return;
+      lastSize = size;
+      probing = true;
+      try {
+        if (fragmented === null) {
+          const fd = fs.openSync(outFile, "r");
+          const head = Buffer.alloc(2_000_000);
+          fs.readSync(fd, head, 0, head.length, 0);
+          fs.closeSync(fd);
+          fragmented = head.includes(Buffer.from("moof"));
+          logDebug("download-until.layout", { fragmented });
+        }
+        if (fragmented) {
+          const r = await execCapture("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", outFile], { timeout: 20_000 });
+          coveredSec = parseFloat(r.stdout.trim()) || 0;
+          if (onCovered) onCovered(coveredSec);
+          if (coveredSec >= needSec + 3) {
+            stoppedEarly = true;
+            proc.kill("SIGTERM");
+          }
+        }
+      } catch {}
+      probing = false;
+    }, 3000);
+  });
+}
+
+async function probeDuration(file) {
+  try {
+    const r = await execCapture("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { timeout: 20_000 });
+    return parseFloat(r.stdout.trim()) || null;
+  } catch { return null; }
+}
+
+// Does this URL honour HTTP Range? Reads only the response headers of a
+// bytes=0-1023 request, then drops the connection.
+function supportsRange(url, redirects = 5) {
+  return new Promise((resolve) => {
+    let mod;
+    try { mod = new URL(url).protocol === "http:" ? require("http") : require("https"); } catch { return resolve(false); }
+    const req = mod.get(url, { headers: { Range: "bytes=0-1023" } }, (res) => {
+      const { statusCode, headers } = res;
+      res.destroy();
+      if (statusCode >= 300 && statusCode < 400 && headers.location && redirects > 0) {
+        return resolve(supportsRange(new URL(headers.location, url).toString(), redirects - 1));
+      }
+      resolve(statusCode === 206 && /^bytes /.test(headers["content-range"] || ""));
+    });
+    req.on("error", () => resolve(false));
+    req.setTimeout(15_000, () => { req.destroy(); resolve(false); });
+  });
+}
+
 // ─── Async clip job system ──────────────────────────────────────────
 const clipJobs = new Map(); // jobId → { status, progress, error, clipFile, createdAt }
 
@@ -489,201 +750,193 @@ setInterval(() => {
   }
 }, 5 * 60_000);
 
-async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }) {
+// YouTube-sourced clip: RapidAPI direct URL → yt-dlp per-segment sections →
+// yt-dlp full download. Nothing is written anywhere but /tmp, and every raw or
+// segment file is deleted the moment the final clip exists.
+async function processClipJob(jobId, { url, segments, quality, overlay }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
 
+  const videoId = extractVideoId(url) || "";
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
-  let videoMeta = null;
   const rawFile = join(tmpdir(), `raw-${jobId}.mp4`);
   const fmt = `bestvideo[height<=${heightLimit}]+bestaudio/best[height<=${heightLimit}]`;
+  const n = segments.length;
+  const total = segments.reduce((a, s) => a + (s.out - s.in), 0);
+  const maxOut = Math.max(...segments.map((s) => s.out));
+  const attempts = [];
+  job.attempts = attempts;
+  job.segments = segments;
+  let videoMeta = null;
 
   const timings = { start: Date.now(), rapidapiDone: 0, downloadDone: 0, trimDone: 0 };
+  const cleanupRaw = async () => {
+    await unlink(rawFile).catch(() => {});
+    for (let i = 1; i <= n; i++) await unlink(join(tmpdir(), `raw-${jobId}-${i}.mp4`)).catch(() => {});
+  };
+  // Output must be as long as the segments asked for, or the attempt failed.
+  const checkOutput = async () => {
+    const d = await probeDuration(clipFile);
+    const want = n === 1 ? total + 0.05 : total;
+    if (d == null || Math.abs(d - want) > 0.35) throw new Error(`output is ${d}s, expected ${want.toFixed(2)}s`);
+    job.outputDuration = d;
+  };
 
   try {
-    logDebug("clip.start", { jobId, url, startSec, endSec, quality: `${heightLimit}p`, rapidapi: !!RAPIDAPI_KEY });
+    logDebug("clip.start", { jobId, url, segments, total, quality: `${heightLimit}p`, rapidapi: !!RAPIDAPI_KEY });
     let downloaded = false;
 
-    // Attempt 1: RapidAPI (no timeout limit — runs in background)
+    // Attempt 1: RapidAPI direct URL
     if (RAPIDAPI_KEY) {
       try {
-        const videoId = extractVideoId(url);
         let downloadUrl;
-
         const cached = videoId && downloadUrlCache.get(`${videoId}-${heightLimit}`);
         if (cached && cached.expiresAt > Date.now()) {
           downloadUrl = cached.url;
           logDebug("rapidapi.cache-hit", { videoId });
         } else {
           job.progress = 5;
-          job.stage = "rapidapi-processing";
+          job.stage = "resolving source";
           job.stageDetail = "RapidAPI: requesting...";
           logDebug("rapidapi.starting", { url, quality: `${heightLimit}p` });
-          logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "rapidapi-init", status: "info", detail: { quality: `${heightLimit}p` } });
+          logClipEvent({ jobId, videoId, pipeline: "clip", step: "rapidapi-init", status: "info", detail: { quality: `${heightLimit}p` } });
           downloadUrl = await rapidApiDownload(url, quality, job);
           if (videoId) {
-            downloadUrlCache.set(`${videoId}-${heightLimit}`, {
-              url: downloadUrl, expiresAt: Date.now() + 3600_000,
-            });
+            downloadUrlCache.set(`${videoId}-${heightLimit}`, { url: downloadUrl, expiresAt: Date.now() + 3600_000 });
           }
         }
         timings.rapidapiDone = Date.now();
+        job.progress = 30;
 
-        job.progress = 70;
-        job.stage = "downloading-video";
-        job.stageDetail = "Downloading video...";
-        const duration = endSec - startSec;
-        const rapidRaw = join(tmpdir(), `rapid-raw-${jobId}.mp4`);
-        logDebug("rapidapi.downloading", { downloadUrl: downloadUrl.slice(0, 80), startSec, duration });
-        logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "download-start", status: "info", detail: { source: "rapidapi", quality: `${heightLimit}p` } });
+        const ranged = await supportsRange(downloadUrl);
+        logDebug("rapidapi.range-probe", { ranged });
+        logClipEvent({ jobId, videoId, pipeline: "clip", step: "download-start", status: "info", detail: { source: "rapidapi", ranged, quality: `${heightLimit}p`, segments: n } });
 
-        // Step 1: curl downloads full video to disk (handles HTTPS; static ffmpeg uses GnuTLS, can't)
-        await execCapture("curl", ["-fL", "-o", rapidRaw, downloadUrl], { timeout: 600_000 });
-        timings.downloadDone = Date.now();
+        if (ranged) {
+          // ffmpeg seeks inside the remote file and pulls only what each segment needs.
+          job.source = "rapidapi-range";
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: downloadUrl, seg })), clipFile, overlay, pipeline: "clip", videoId });
+          timings.downloadDone = Date.now();
+        } else {
+          // No Range support: stream the file once, stop after the last needed second.
+          const byTime = [...segments].sort((a, b) => a.out - b.out);
+          const onCovered = (sec) => {
+            const k = byTime.filter((s) => s.out <= sec).length;
+            job.stage = n > 1 ? `fetching ${Math.min(n, k + 1)}/${n}` : "downloading-video";
+          };
+          job.stage = n > 1 ? `fetching 1/${n}` : "downloading-video";
+          job.stageDetail = "Fetching from YouTube...";
+          const r = await downloadUntil(downloadUrl, rawFile, { needSec: maxOut, job, onCovered });
+          timings.downloadDone = Date.now();
+          job.source = r.complete ? "rapidapi-full" : "rapidapi-prefix";
+          job.bytesPulled = r.bytes;
+          logDebug("rapidapi.fetched", { bytes: r.bytes, mb: (r.bytes / 1024 / 1024).toFixed(1), complete: r.complete, coveredSec: r.coveredSec });
 
-        // Grab source video metadata before trimming
-        videoMeta = await getVideoMetadata(rapidRaw);
+          videoMeta = await getVideoMetadata(rawFile);
+          if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
+            const remuxFile = rawFile.replace(".mp4", "-remux.mp4");
+            job.stageDetail = "Re-muxing corrupt container...";
+            logDebug("rapidapi.remux-start", { warnings: videoMeta.warnings.trim() });
+            await execCapture("ffmpeg", ["-i", rawFile, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
+            await unlink(rawFile).catch(() => {});
+            fs.renameSync(remuxFile, rawFile);
+          }
+          const have = await probeDuration(rawFile);
+          if (have != null && have < maxOut - 0.05) throw new Error(`fetched ${have}s of video, segments need ${maxOut}s`);
+          job.sourceDuration = have;
 
-        // Re-mux if container is corrupt (e.g. timescale not set)
-        if (videoMeta.warnings && videoMeta.warnings.includes("timescale not set")) {
-          const remuxStart = Date.now();
-          const remuxFile = rapidRaw.replace(".mp4", "-remux.mp4");
-          job.stageDetail = "Re-muxing corrupt container...";
-          logDebug("rapidapi.remux-start", { warnings: videoMeta.warnings.trim() });
-          await execCapture("ffmpeg", ["-i", rapidRaw, "-c", "copy", "-y", remuxFile], { timeout: 120_000 });
-          await unlink(rapidRaw).catch(() => {});
-          require("fs").renameSync(remuxFile, rapidRaw);
-          logDebug("rapidapi.remux-done", { ms: Date.now() - remuxStart });
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId });
+          await unlink(rawFile).catch(() => {});
         }
-
-        // Step 2: ffmpeg trim with progress reporting
-        job.stage = "trimming-clip";
-        job.stageDetail = "Trimming: 0%";
-        const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
-        const overlayFilter = buildOverlayFilter(overlay, fontPath);
-        logDebug("rapidapi.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no" });
-        logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "ffmpeg-trim-start", status: "info", detail: { startSec, duration, overlay: !!overlayFilter } });
-        await new Promise((resolve, reject) => {
-          const args = [
-            "-err_detect", "ignore_err", "-fflags", "+genpts",
-            "-ss", String(startSec), "-to", String(startSec + duration + 0.05), "-i", rapidRaw,
-            "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
-            ...(overlayFilter ? ["-vf", overlayFilter] : []),
-            "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
-            "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
-            "-af", `afade=t=out:st=${duration}:d=0.05`,
-            "-c:a", "aac", "-b:a", "128k",
-            "-movflags", "+faststart", "-y", clipFile,
-          ];
-          const proc = execFile("ffmpeg", args, (error) => {
-            clearInterval(stallCheck);
-            if (error) { error.stderr = lastLines.join("\n"); reject(error); }
-            else resolve();
-          });
-          const lastLines = [];
-          let lastLoggedPct = -1;
-          let lastEncodedSecs = 0;
-          let previousCheckSecs = -1;
-          // Stall detection: every 5 min, compare progress. If unchanged, kill.
-          const stallCheck = setInterval(() => {
-            if (lastEncodedSecs === previousCheckSecs) {
-              logDebug("rapidapi.ffmpeg-stalled", { lastEncodedSecs, pct: job?.stageDetail });
-              proc.kill();
-            }
-            previousCheckSecs = lastEncodedSecs;
-          }, 300_000);
-          if (proc.stderr) proc.stderr.on("data", (chunk) => {
-            const text = chunk.toString();
-            // Keep last 10 lines for error reporting
-            const lines = text.split("\n").filter(l => l.trim());
-            lines.forEach(l => { lastLines.push(l); if (lastLines.length > 10) lastLines.shift(); });
-            // Parse time= for progress
-            const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-            if (match && duration > 0) {
-              const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
-              lastEncodedSecs = secs;
-              const pct = Math.min(99, Math.round((secs / duration) * 100));
-              if (job) job.stageDetail = `Trimming: ${pct}%`;
-              // Log at 10% intervals to stdout; 20% to Redis to keep the event list short
-              const bucket = Math.floor(pct / 10) * 10;
-              if (bucket > 0 && bucket > lastLoggedPct) {
-                lastLoggedPct = bucket;
-                logDebug("rapidapi.ffmpeg-progress", { pct: `${bucket}%`, time: `${match[1]}:${match[2]}:${match[3]}` });
-                if (bucket % 20 === 0) {
-                  logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "ffmpeg-progress", status: "info", detail: { pct: bucket, time: `${match[1]}:${match[2]}:${match[3]}` } });
-                }
-              }
-            }
-          });
-        });
-        await unlink(rapidRaw).catch(() => {});
+        await checkOutput();
         downloaded = true;
-        logDebug("rapidapi.clip-success", { jobId });
+        attempts.push({ source: job.source, ok: true });
+        logDebug("rapidapi.clip-success", { jobId, source: job.source });
       } catch (rapidErr) {
+        attempts.push({ source: job.source || "rapidapi", ok: false, error: String(rapidErr.stderr || rapidErr.message || rapidErr).slice(0, 500) });
         logDebug("rapidapi.failed", { error: rapidErr.stderr || "", message: rapidErr.message || "" });
+        await cleanupRaw();
+        await unlink(clipFile).catch(() => {});
       }
     }
 
-    // Attempt 2: yt-dlp direct with --download-sections
+    // Attempt 2: yt-dlp, one --download-sections call per segment
     if (!downloaded) {
       try {
         job.progress = 30;
-        job.stage = "ytdlp-fallback";
-        job.stageDetail = "yt-dlp: downloading section...";
-        await execYtdlp(url, [
-          url, "-f", fmt,
-          "--download-sections", `*${startSec}-${endSec}`,
-          "--force-keyframes-at-cuts",
-          "--merge-output-format", "mp4", "-o", clipFile,
-        ], { timeout: 300_000, useProxy: false });
+        job.source = "ytdlp-sections";
+        const parts = [];
+        for (let i = 0; i < n; i++) {
+          const seg = segments[i];
+          job.stage = n > 1 ? `fetching ${i + 1}/${n}` : "ytdlp-fallback";
+          job.stageDetail = `yt-dlp: downloading section ${i + 1}/${n}...`;
+          const out = n === 1 ? clipFile : join(tmpdir(), `raw-${jobId}-${i + 1}.mp4`);
+          await execYtdlp(url, [
+            url, "-f", fmt,
+            "--download-sections", `*${seg.in}-${seg.out}`,
+            "--force-keyframes-at-cuts",
+            "--merge-output-format", "mp4", "-o", out,
+          ], { timeout: 300_000, useProxy: false });
+          const d = await probeDuration(out);
+          parts.push({ input: out, seg: { in: 0, out: Math.min(seg.out - seg.in, d || seg.out - seg.in) } });
+        }
+        timings.downloadDone = Date.now();
+        if (n > 1) await cutAndJoin({ jobId, job, parts, clipFile, overlay, pipeline: "clip", videoId });
+        await cleanupRaw();
+        if (n > 1) await checkOutput();
         downloaded = true;
+        attempts.push({ source: "ytdlp-sections", ok: true });
       } catch (directErr) {
+        attempts.push({ source: "ytdlp-sections", ok: false, error: String(directErr.stderr || directErr.message || directErr).slice(0, 500) });
         logDebug("clip.direct-failed", { error: directErr.stderr || directErr.message || "" });
+        await cleanupRaw();
+        await unlink(clipFile).catch(() => {});
       }
     }
 
-    // Attempt 3: yt-dlp full download + ffmpeg trim
+    // Attempt 3: yt-dlp full download, then cut
     if (!downloaded) {
       job.progress = 30;
+      job.source = "ytdlp-full";
       job.stage = "ytdlp-fallback";
       job.stageDetail = "yt-dlp: full download...";
-      await execYtdlp(url, [
-        url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile,
-      ], { timeout: 300_000, useProxy: false });
-
-      job.progress = 80;
-      const duration = endSec - startSec;
-      await execCapture("ffmpeg", [
-        "-err_detect", "ignore_err", "-fflags", "+genpts",
-        "-ss", String(startSec), "-to", String(endSec + 0.05), "-i", rawFile,
-        "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
-        "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
-        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
-        "-af", `afade=t=out:st=${duration}:d=0.05`,
-        "-c:a", "aac", "-b:a", "128k",
-        "-movflags", "+faststart", clipFile,
-      ], { timeout: 300_000 });
-      await unlink(rawFile).catch(() => {});
+      try {
+        await execYtdlp(url, [url, "-f", fmt, "--merge-output-format", "mp4", "-o", rawFile], { timeout: 300_000, useProxy: false });
+        timings.downloadDone = Date.now();
+        job.progress = 50;
+        videoMeta = await getVideoMetadata(rawFile);
+        await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId });
+        await cleanupRaw();
+        await checkOutput();
+        attempts.push({ source: "ytdlp-full", ok: true });
+      } catch (fullErr) {
+        attempts.push({ source: "ytdlp-full", ok: false, error: String(fullErr.stderr || fullErr.message || fullErr).slice(0, 500) });
+        await cleanupRaw();
+        throw new Error(`All sources failed — ${attempts.map((a) => `${a.source}: ${a.error}`).join(" | ")}`);
+      }
     }
 
     timings.trimDone = Date.now();
-    const { size } = require("fs").statSync(clipFile);
+    const { size } = fs.statSync(clipFile);
     job.status = "ready";
     job.progress = 100;
+    job.stage = "ready";
+    job.stageDetail = "Ready";
     job.clipFile = clipFile;
     job.fileSize = size;
     const totalSec = (Date.now() - timings.start) / 1000;
-    logDebug("clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1) });
-    logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "clip-complete", status: "success", detail: { bytes: size, mb: Number((size / 1024 / 1024).toFixed(1)), totalSec: Number(totalSec.toFixed(1)) } });
+    job.timings = { totalSec, rapidapiSec: timings.rapidapiDone ? (timings.rapidapiDone - timings.start) / 1000 : null, downloadSec: timings.downloadDone ? (timings.downloadDone - (timings.rapidapiDone || timings.start)) / 1000 : null };
+    logDebug("clip.complete", { jobId, bytes: size, mb: (size / 1024 / 1024).toFixed(1), totalSec: totalSec.toFixed(1), source: job.source, segments: n });
+    logClipEvent({ jobId, videoId, pipeline: "clip", step: "clip-complete", status: "success", detail: { bytes: size, mb: Number((size / 1024 / 1024).toFixed(1)), totalSec: Number(totalSec.toFixed(1)), source: job.source, segments: n, attempts } });
 
     logClipToBigQuery({
       job_id: jobId,
-      video_id: extractVideoId(url) || "",
+      video_id: videoId,
       video_url: url,
-      start_sec: startSec,
-      end_sec: endSec,
-      clip_duration_sec: endSec - startSec,
+      start_sec: segments[0].in,
+      end_sec: segments[n - 1].out,
+      clip_duration_sec: total,
       quality: `${heightLimit}p`,
       status: "complete",
       error: null,
@@ -698,23 +951,23 @@ async function processClipJob(jobId, { url, startSec, endSec, quality, overlay }
     });
   } catch (error) {
     await unlink(clipFile).catch(() => {});
-    await unlink(rawFile).catch(() => {});
+    await cleanupRaw();
     const detail = error.stderr || error.message || "Unknown error";
     job.status = "failed";
     job.error = detail;
-    logDebug("clip.error", { jobId, url, error: detail });
-    logClipEvent({ jobId, videoId: extractVideoId(url) || "", pipeline: "clip", step: "clip-failed", status: "error", detail: { error: String(detail).slice(0, 500) } });
+    logDebug("clip.error", { jobId, url, error: detail, attempts });
+    logClipEvent({ jobId, videoId, pipeline: "clip", step: "clip-failed", status: "error", detail: { error: String(detail).slice(0, 500), attempts } });
 
     logClipToBigQuery({
       job_id: jobId,
-      video_id: extractVideoId(url) || "",
+      video_id: videoId,
       video_url: url,
-      start_sec: startSec,
-      end_sec: endSec,
-      clip_duration_sec: endSec - startSec,
+      start_sec: segments[0].in,
+      end_sec: segments[n - 1].out,
+      clip_duration_sec: total,
       quality: `${heightLimit}p`,
       status: "failed",
-      error: detail.slice(0, 2000),
+      error: String(detail).slice(0, 2000),
       total_sec: (Date.now() - timings.start) / 1000,
       rapidapi_sec: timings.rapidapiDone ? (timings.rapidapiDone - timings.start) / 1000 : null,
       download_sec: null,
@@ -940,15 +1193,21 @@ async function fetchBunnyHlsSegments(guid, heightLimit, startSec, endSec, scratc
   return { concatFile, segmentStartOffset, bytes: totalBytes, pickedHeight: picked.height, segmentCount: covering.length };
 }
 
-async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay, source }) {
+async function processGcsClipJob(jobId, { videoId, segments, quality, overlay, source }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
+
+  const n = segments.length;
+  const startSec = segments[0].in;
+  const endSec = segments[n - 1].out;
+  job.source = source.type;
+  job.segments = segments;
 
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
   const srcFile = join(tmpdir(), `gcs-src-${jobId}.mp4`);
   const hlsScratchDir = join(tmpdir(), `hls-${jobId}`);
-  const duration = endSec - startSec;
+  const duration = segments.reduce((a, s) => a + (s.out - s.in), 0);
 
   // Resolve the source URL + any required headers.
   // `source` comes from the POST handler: { type: "bunny" | "gcs", url, referer?, guid? }.
@@ -1026,71 +1285,30 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
         fs.renameSync(remuxFile, srcFile);
         logDebug("gcs-clip.remux-done", {});
       }
-      // Legacy seek: -ss and -to before -i (fast input seek + exact AV end alignment).
-      ffmpegInputArgs = ["-err_detect", "ignore_err", "-fflags", "+genpts", "-ss", String(startSec), "-to", String(endSec + 0.05), "-i", srcFile];
-      ffmpegSeekSec = null;
+      // cutAndJoin seeks with -ss/-to before -i (fast input seek + exact AV end alignment).
     }
 
-    // Step 3: ffmpeg trim with progress
-    job.stage = "trimming-clip";
-    job.stageDetail = "Trimming: 0%";
+    // Step 3: cut (and join, for several segments) with progress
     job.progress = 50;
-    const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
-    const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
-    logDebug("gcs-clip.ffmpeg-trim", { startSec, duration, overlay: overlayFilter ? "yes" : "no", mode: useHlsPath ? "hls" : "mp4" });
-    logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "ffmpeg-trim-start", status: "info", detail: { startSec, duration, overlay: !!overlayFilter, mode: useHlsPath ? "hls" : "mp4" } });
-    await new Promise((resolve, reject) => {
-      // Re-encode trim from full Bunny MP4 with Z-settings: frame-accurate AND smooth
-      // in QuickTime. 2.5 Mbps bitrate cap + zerolatency tune eliminates the bitrate
-      // spikes that cause QT's HW decoder to stall at regular intervals.
-      const args = [
+    logDebug("gcs-clip.ffmpeg-trim", { segments, duration, overlay: overlay?.text ? "yes" : "no", mode: useHlsPath ? "hls" : "mp4" });
+    if (useHlsPath) {
+      // HLS mode pre-builds its own seek args for a single range.
+      const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
+      const overlayFilter = buildOverlayFilter(overlay, fontPath, videoMeta?.width);
+      await runFfmpeg([
         ...ffmpegInputArgs,
-        ...(ffmpegSeekSec != null ? ["-ss", String(ffmpegSeekSec)] : []),
         "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
         ...(overlayFilter ? ["-vf", overlayFilter] : []),
-        "-c:v", "libx264", "-b:v", "2500k", "-maxrate", "2700k", "-bufsize", "5000k", "-preset", "fast", "-tune", "zerolatency",
-        "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+        ...ENCODE_V,
         "-af", `afade=t=out:st=${duration}:d=0.05`,
         "-c:a", "aac", "-b:a", "128k",
         "-movflags", "+faststart", "-y", clipFile,
-      ];
-      const proc = execFile("ffmpeg", args, (error) => {
-        clearInterval(stallCheck);
-        if (error) { error.stderr = lastLines.join("\n"); reject(error); }
-        else resolve();
-      });
-      const lastLines = [];
-      let lastLoggedPct = -1;
-      let lastEncodedSecs = 0;
-      let previousCheckSecs = -1;
-      const stallCheck = setInterval(() => {
-        if (lastEncodedSecs === previousCheckSecs) {
-          logDebug("gcs-clip.ffmpeg-stalled", { lastEncodedSecs, pct: job?.stageDetail });
-          proc.kill();
-        }
-        previousCheckSecs = lastEncodedSecs;
-      }, 300_000);
-      if (proc.stderr) proc.stderr.on("data", (chunk) => {
-        const text = chunk.toString();
-        const lines = text.split("\n").filter(l => l.trim());
-        lines.forEach(l => { lastLines.push(l); if (lastLines.length > 10) lastLines.shift(); });
-        const match = text.match(/time=(\d+):(\d+):(\d+\.\d+)/);
-        if (match && duration > 0) {
-          const secs = parseInt(match[1]) * 3600 + parseInt(match[2]) * 60 + parseFloat(match[3]);
-          lastEncodedSecs = secs;
-          const pct = Math.min(99, Math.round((secs / duration) * 100));
-          if (job) job.stageDetail = `Trimming: ${pct}%`;
-          const bucket = Math.floor(pct / 10) * 10;
-          if (bucket > 0 && bucket > lastLoggedPct) {
-            lastLoggedPct = bucket;
-            logDebug("gcs-clip.ffmpeg-progress", { pct: `${bucket}%`, time: `${match[1]}:${match[2]}:${match[3]}` });
-            if (bucket % 20 === 0) {
-              logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "ffmpeg-progress", status: "info", detail: { pct: bucket, time: `${match[1]}:${match[2]}:${match[3]}` } });
-            }
-          }
-        }
-      });
-    });
+      ], { job, duration, label: `${jobId}-hls`, onPct: (pct) => { job.stageDetail = `Trimming: ${pct}%`; } });
+    } else {
+      // Re-encode trim from the full Bunny MP4 with Z-settings: frame-accurate AND
+      // smooth in QuickTime (2.5 Mbps cap + zerolatency avoids HW decoder stalls).
+      await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: srcFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip-gcs", videoId });
+    }
     await unlink(srcFile).catch(() => {});
     fs.rmSync(hlsScratchDir, { recursive: true, force: true });
     timings.trimDone = Date.now();
@@ -1110,7 +1328,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       video_url: srcUrl || null,
       start_sec: startSec,
       end_sec: endSec,
-      clip_duration_sec: endSec - startSec,
+      clip_duration_sec: duration,
       quality: `${heightLimit}p`,
       status: "complete",
       error: null,
@@ -1140,7 +1358,7 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
       video_url: srcUrl || null,
       start_sec: startSec,
       end_sec: endSec,
-      clip_duration_sec: endSec - startSec,
+      clip_duration_sec: duration,
       quality: `${heightLimit}p`,
       status: "failed",
       error: String(detail).slice(0, 2000),
@@ -1156,145 +1374,146 @@ async function processGcsClipJob(jobId, { videoId, startSec, endSec, quality, ov
   }
 }
 
-app.post("/clip-gcs", async (req, res) => {
-  const { videoId, startSec, endSec, quality, overlay } = req.body;
+function rejectClip({ pipeline, videoId, url, segments, quality, reason, extra }) {
+  const rejectJobId = `reject-${crypto.randomUUID()}`;
+  const first = segments && segments[0];
+  const last = segments && segments[segments.length - 1];
+  logClipEvent({ jobId: rejectJobId, videoId: videoId || "", pipeline, step: "clip-rejected", status: "error", detail: { reason, segments: segments || null, ...(extra || {}) } });
+  logClipToBigQuery({
+    job_id: rejectJobId, video_id: videoId || "", video_url: url || null,
+    start_sec: first ? first.in : 0, end_sec: last ? last.out : 0,
+    clip_duration_sec: segments ? segments.reduce((x, s) => x + ((s.out - s.in) || 0), 0) : 0,
+    quality: quality || null, status: "rejected", error: reason,
+    total_sec: 0, rapidapi_sec: null, download_sec: null, trim_sec: null,
+    file_size_bytes: null, video_duration_sec: null, video_resolution: null,
+    created_at: new Date().toISOString(),
+  });
+}
 
-  if (!videoId || startSec == null || endSec == null) {
-    const reason = "Missing videoId, startSec, or endSec";
-    const rejectJobId = `reject-${crypto.randomUUID()}`;
-    logClipEvent({ jobId: rejectJobId, videoId: videoId || "", pipeline: "clip-gcs", step: "clip-rejected", status: "error", detail: { reason, startSec, endSec } });
-    logClipToBigQuery({
-      job_id: rejectJobId, video_id: videoId || "", video_url: null,
-      start_sec: startSec ?? 0, end_sec: endSec ?? 0,
-      clip_duration_sec: (endSec ?? 0) - (startSec ?? 0),
-      quality: quality || null, status: "rejected", error: reason,
-      total_sec: 0, rapidapi_sec: null, download_sec: null, trim_sec: null,
-      file_size_bytes: null, video_duration_sec: null, video_resolution: null,
-      created_at: new Date().toISOString(),
-    });
-    return res.status(400).json({ error: reason });
-  }
+// Jobs record every stage they pass through (stageLog), so a fast stage like
+// "joining" is visible after the fact even if no poll caught it live.
+function newJob(extra = {}) {
+  const jobId = crypto.randomUUID();
+  const createdAt = Date.now();
+  const job = { status: "processing", progress: 0, error: null, clipFile: null, createdAt, stageDetail: null, stageLog: [], ...extra };
+  let stage = null;
+  Object.defineProperty(job, "stage", {
+    enumerable: true,
+    get: () => stage,
+    set: (v) => {
+      if (v !== stage && v) job.stageLog.push({ stage: v, atSec: Number(((Date.now() - createdAt) / 1000).toFixed(1)) });
+      stage = v;
+    },
+  });
+  clipJobs.set(jobId, job);
+  return jobId;
+}
 
-  const maxClip = 11 * 60;
-  if (endSec - startSec > maxClip) {
-    const reason = `Clip duration ${endSec - startSec}s exceeds ${maxClip}s max`;
-    const rejectJobId = `reject-${crypto.randomUUID()}`;
-    logClipEvent({ jobId: rejectJobId, videoId, pipeline: "clip-gcs", step: "clip-rejected", status: "error", detail: { reason, startSec, endSec, cap: maxClip } });
-    logClipToBigQuery({
-      job_id: rejectJobId, video_id: videoId, video_url: null,
-      start_sec: startSec, end_sec: endSec, clip_duration_sec: endSec - startSec,
-      quality: quality || null, status: "rejected", error: reason,
-      total_sec: 0, rapidapi_sec: null, download_sec: null, trim_sec: null,
-      file_size_bytes: null, video_duration_sec: null, video_resolution: null,
-      created_at: new Date().toISOString(),
-    });
-    return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
-  }
-
-  // Resolve source: try Bunny first, fall back to GCS for legacy videos.
-  const https = require("https");
-  const heightLimit = quality === "1080p" ? 1080 : 720;
-
-  let source = null;
-
+// Bunny MP4 (preferred) or legacy GCS copy for a video, or null.
+async function resolveStoredSource(videoId, heightLimit) {
   const bunny = await bunnyLookup(videoId);
   if (bunny) {
     const pickedHeight = pickBunnyRendition(bunny.availableResolutions, heightLimit);
     if (pickedHeight) {
-      source = {
+      logDebug("clip-gcs.source-bunny", { videoId, guid: bunny.guid, pickedHeight, requested: heightLimit, available: bunny.availableResolutions });
+      return {
         type: "bunny",
         url: `https://${BUNNY_CDN_HOST}/${bunny.guid}/play_${pickedHeight}p.mp4`,
         referer: BUNNY_REFERER,
         pickedHeight,
         guid: bunny.guid,
       };
-      logDebug("clip-gcs.source-bunny", { videoId, guid: bunny.guid, pickedHeight, requested: heightLimit, available: bunny.availableResolutions });
     }
   }
+  const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
+  const https = require("https");
+  const gcsAvailable = await new Promise((resolve) => {
+    const r = https.request(gcsUrl, { method: "HEAD" }, (resp) => { resolve(resp.statusCode === 200); });
+    r.on("error", () => resolve(false));
+    r.setTimeout(5000, () => { r.destroy(); resolve(false); });
+    r.end();
+  });
+  if (!gcsAvailable) return null;
+  logDebug("clip-gcs.source-gcs", { videoId, gcsUrl });
+  return { type: "gcs", url: gcsUrl };
+}
 
-  if (!source) {
-    const gcsUrl = `${GCS_PUBLIC_BASE}/${videoId}.mp4`;
-    const gcsAvailable = await new Promise((resolve) => {
-      const r = https.request(gcsUrl, { method: "HEAD" }, (resp) => { resolve(resp.statusCode === 200); });
-      r.on("error", () => resolve(false));
-      r.setTimeout(5000, () => { r.destroy(); resolve(false); });
-      r.end();
-    });
-    if (!gcsAvailable) {
-      return res.status(404).json({ error: "Video not available in Bunny or GCS", videoId });
-    }
-    source = { type: "gcs", url: gcsUrl };
-    logDebug("clip-gcs.source-gcs", { videoId, gcsUrl });
+app.post("/clip-gcs", async (req, res) => {
+  const { videoId, quality, overlay } = req.body;
+  const parsed = parseSegments(req.body);
+
+  if (!videoId || parsed.error) {
+    const reason = !videoId ? "Missing videoId" : parsed.error;
+    rejectClip({ pipeline: "clip-gcs", videoId, segments: parsed.segments || req.body.segments || null, quality, reason, extra: { cap: MAX_CLIP_SEC } });
+    return res.status(400).json({ error: reason });
   }
+  const { segments } = parsed;
 
-  const jobId = crypto.randomUUID();
-  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
+  const source = await resolveStoredSource(videoId, quality === "1080p" ? 1080 : 720);
+  if (!source) return res.status(404).json({ error: "Video not available in Bunny or GCS", videoId });
 
+  const jobId = newJob({ source: source.type, segments });
   logClipEvent({
     jobId, videoId, pipeline: "clip-gcs", step: "clip-requested", status: "info",
-    detail: { startSec, endSec, quality: quality || null, overlay: !!overlay, source: source.type, guid: source.guid || null },
+    detail: { segments, quality: quality || null, overlay: !!overlay, source: source.type, guid: source.guid || null },
   });
 
-  processGcsClipJob(jobId, { videoId, startSec, endSec, quality, overlay, source }).catch(() => {});
+  processGcsClipJob(jobId, { videoId, segments, quality, overlay, source }).catch(() => {});
 
   res.json({ jobId, route: source.type });
 });
 
-// ─── RapidAPI-realtime clip endpoint (original) ─────────────────────
+// ─── Clip endpoint: Bunny for stored videos, YouTube on demand otherwise ─
+// Body: { videoId | url, segments: [{in, out}] | startSec+endSec, quality,
+//         overlay?, videoSource?: "bunny" | "youtube", lengthSeconds? }
+// No videoSource → the original behaviour (fetch from YouTube via RapidAPI).
 app.post("/clip", async (req, res) => {
-  const { url, startSec, endSec, quality, overlay } = req.body;
-  const videoId = extractVideoId(url || "") || "";
+  const { quality, overlay, videoSource } = req.body;
+  const videoId = req.body.videoId || extractVideoId(req.body.url || "") || "";
+  const url = req.body.url || (videoId ? `https://www.youtube.com/watch?v=${videoId}` : "");
+  const parsed = parseSegments(req.body);
 
-  if (!url || startSec == null || endSec == null) {
-    const reason = "Missing url, startSec, or endSec";
-    const rejectJobId = `reject-${crypto.randomUUID()}`;
-    logClipEvent({ jobId: rejectJobId, videoId, pipeline: "clip", step: "clip-rejected", status: "error", detail: { reason, startSec, endSec } });
-    logClipToBigQuery({
-      job_id: rejectJobId, video_id: videoId, video_url: url || null,
-      start_sec: startSec ?? 0, end_sec: endSec ?? 0,
-      clip_duration_sec: (endSec ?? 0) - (startSec ?? 0),
-      quality: quality || null, status: "rejected", error: reason,
-      total_sec: 0, rapidapi_sec: null, download_sec: null, trim_sec: null,
-      file_size_bytes: null, video_duration_sec: null, video_resolution: null,
-      created_at: new Date().toISOString(),
-    });
+  if (!url || !videoId || parsed.error) {
+    const reason = !url || !videoId ? "Missing url or videoId" : parsed.error;
+    rejectClip({ pipeline: "clip", videoId, url, segments: parsed.segments || req.body.segments || null, quality, reason, extra: { cap: MAX_CLIP_SEC } });
     return res.status(400).json({ error: reason });
   }
+  const { segments } = parsed;
 
-  const maxClip = 11 * 60;
-  if (endSec - startSec > maxClip) {
-    const reason = `Clip duration ${endSec - startSec}s exceeds ${maxClip}s max`;
-    const rejectJobId = `reject-${crypto.randomUUID()}`;
-    logClipEvent({ jobId: rejectJobId, videoId, pipeline: "clip", step: "clip-rejected", status: "error", detail: { reason, startSec, endSec, cap: maxClip } });
-    logClipToBigQuery({
-      job_id: rejectJobId, video_id: videoId, video_url: url,
-      start_sec: startSec, end_sec: endSec, clip_duration_sec: endSec - startSec,
-      quality: quality || null, status: "rejected", error: reason,
-      total_sec: 0, rapidapi_sec: null, download_sec: null, trim_sec: null,
-      file_size_bytes: null, video_duration_sec: null, video_resolution: null,
-      created_at: new Date().toISOString(),
-    });
-    return res.status(400).json({ error: `Clip exceeds ${maxClip / 60} minute limit` });
+  if (videoSource === "bunny") {
+    const source = await resolveStoredSource(videoId, quality === "1080p" ? 1080 : 720);
+    if (source) {
+      const jobId = newJob({ source: source.type, segments });
+      logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "clip-requested", status: "info", detail: { segments, quality: quality || null, overlay: !!overlay, source: source.type, guid: source.guid || null } });
+      processGcsClipJob(jobId, { videoId, segments, quality, overlay, source }).catch(() => {});
+      return res.json({ jobId, route: source.type });
+    }
+    logDebug("clip.bunny-missing", { videoId });
   }
 
-  const jobId = crypto.randomUUID();
-  clipJobs.set(jobId, { status: "processing", progress: 0, error: null, clipFile: null, createdAt: Date.now(), stage: null, stageDetail: null });
-
+  const jobId = newJob({ segments });
   logClipEvent({
     jobId, videoId, pipeline: "clip", step: "clip-requested", status: "info",
-    detail: { url: (url || "").slice(0, 100), startSec, endSec, quality: quality || null, overlay: !!overlay },
+    detail: { url: url.slice(0, 100), segments, quality: quality || null, overlay: !!overlay, videoSource: videoSource || null },
   });
 
   // Start background processing (don't await)
-  processClipJob(jobId, { url, startSec, endSec, quality, overlay }).catch(() => {});
+  processClipJob(jobId, { url, segments, quality, overlay }).catch(() => {});
 
-  res.json({ jobId });
+  res.json({ jobId, route: "youtube" });
 });
 
 app.get("/clip/:jobId", (req, res) => {
   const job = clipJobs.get(req.params.jobId);
   if (!job) return res.status(404).json({ error: "Job not found" });
-  res.json({ status: job.status, progress: job.progress, error: job.error, fileSize: job.fileSize || null, stage: job.stage || null, stageDetail: job.stageDetail || null });
+  res.json({
+    status: job.status, progress: job.progress, error: job.error, fileSize: job.fileSize || null,
+    stage: job.stage || null, stageDetail: job.stageDetail || null,
+    source: job.source || null, segments: job.segments || null, attempts: job.attempts || null,
+    bytesPulled: job.bytesPulled || null, sourceDuration: job.sourceDuration || null,
+    outputDuration: job.outputDuration || null, fps: job.fps || null, timings: job.timings || null,
+    stageLog: job.stageLog || null, elapsedSec: Number(((Date.now() - job.createdAt) / 1000).toFixed(1)),
+  });
 });
 
 app.get("/clip/:jobId/file", async (req, res) => {
@@ -1376,6 +1595,91 @@ app.get("/debug", async (_req, res) => {
   }
 
   res.json(results);
+});
+
+// Files in /tmp, optionally only those whose name contains ?match= (a jobId).
+// The yt-only verifier uses this to prove no seg-*/raw-* files outlive a job.
+app.get("/debug/tmp", (req, res) => {
+  const match = String(req.query.match || "");
+  try {
+    const files = fs.readdirSync(tmpdir())
+      .filter((f) => !match || f.includes(match))
+      .map((f) => {
+        try { const st = fs.statSync(join(tmpdir(), f)); return { name: f, bytes: st.size, mtime: st.mtime.toISOString() }; }
+        catch { return { name: f }; }
+      });
+    res.json({ dir: tmpdir(), match: match || null, files });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Feasibility gate A: does the RapidAPI direct URL honour Range, and how much
+// does a 45 s pull cost? ?videoId=&start=&end=&quality=
+app.get("/debug/gate-a", async (req, res) => {
+  const videoId = String(req.query.videoId || "");
+  const start = Number(req.query.start || 252);
+  const end = Number(req.query.end || 297);
+  const quality = req.query.quality === "1080p" ? "1080p" : "720p";
+  const heightLimit = quality === "1080p" ? 1080 : 720;
+  if (!/^[\w-]{11}$/.test(videoId)) return res.status(400).json({ error: "videoId required" });
+  const out = { videoId, quality, start, end };
+  const t0 = Date.now();
+  try {
+    const cached = downloadUrlCache.get(`${videoId}-${heightLimit}`);
+    let url = cached && cached.expiresAt > Date.now() ? cached.url : null;
+    if (!url) {
+      url = await rapidApiDownload(`https://www.youtube.com/watch?v=${videoId}`, quality, null);
+      downloadUrlCache.set(`${videoId}-${heightLimit}`, { url, expiresAt: Date.now() + 3600_000 });
+    }
+    out.resolveSec = (Date.now() - t0) / 1000;
+    out.ranged = await supportsRange(url);
+    const head = await execCapture("curl", ["-sS", "-I", "--max-time", "15", url], { timeout: 20_000 }).catch((e) => ({ stdout: e.stdout || "" }));
+    out.headHeaders = head.stdout.split("\n").filter((l) => /^(HTTP|accept-ranges|content-length|content-type)/i.test(l)).map((l) => l.trim());
+    if (out.ranged) {
+      const f = join(tmpdir(), `gate-a-${crypto.randomUUID()}.mp4`);
+      const t1 = Date.now();
+      const r = await execCapture("ffmpeg", ["-stats", "-ss", String(start), "-to", String(end), "-i", url, "-c", "copy", "-y", f], { timeout: 300_000 });
+      out.ffmpegSec = (Date.now() - t1) / 1000;
+      out.ffmpegBytes = fs.statSync(f).size;
+      out.ffmpegStats = (r.stderr.match(/size=.*$/m) || [""])[0].slice(0, 200);
+      await unlink(f).catch(() => {});
+    }
+    out.verdict = out.ranged ? "PASS: Range honoured" : "FAIL: Range ignored — exports stream the file and stop after the last needed second";
+  } catch (e) {
+    out.error = e.message;
+  }
+  res.json(out);
+});
+
+// Feasibility gate B: yt-dlp --download-sections from this box, one range.
+app.get("/debug/gate-b", async (req, res) => {
+  const videoId = String(req.query.videoId || "");
+  const start = Number(req.query.start || 252);
+  const end = Number(req.query.end || 297);
+  if (!/^[\w-]{11}$/.test(videoId)) return res.status(400).json({ error: "videoId required" });
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const f = join(tmpdir(), `gate-b-${crypto.randomUUID()}.mp4`);
+  const t0 = Date.now();
+  const out = { videoId, start, end };
+  try {
+    const r = await execYtdlp(url, [
+      url, "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]",
+      "--download-sections", `*${start}-${end}`, "--force-keyframes-at-cuts",
+      "--merge-output-format", "mp4", "-o", f,
+    ], { timeout: 300_000, useProxy: false });
+    out.ok = true;
+    out.sec = (Date.now() - t0) / 1000;
+    out.bytes = fs.statSync(f).size;
+    out.duration = await probeDuration(f);
+    out.stderrTail = r.stderr.slice(-1500);
+  } catch (e) {
+    out.ok = false;
+    out.sec = (Date.now() - t0) / 1000;
+    out.stderrTail = String(e.stderr || e.message).slice(-1500);
+  }
+  await unlink(f).catch(() => {});
+  res.json(out);
 });
 
 app.get("/debug/logs", (_req, res) => {
