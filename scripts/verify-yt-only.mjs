@@ -180,6 +180,12 @@ async function main() {
   report.requestToReadySec = readySec;
   check("export job completes, source recorded", status?.status === "ready" && status.source ? "pass" : "fail",
     `${status?.status} · source=${status?.source} · request→ready ${readySec.toFixed(1)} s${status?.attempts ? ` · attempts ${status.attempts.map((a) => `${a.source}:${a.ok ? "ok" : "failed"}`).join(", ")}` : ""}${status?.error ? ` · ${String(status.error).slice(0, 300)}` : ""}`);
+  report.trimChecks = status?.trimChecks || null;
+  if (status?.source === "rapidapi-trim") {
+    const tc = status.trimChecks || [];
+    check("witness check ran on every segment", tc.length === SEGMENTS.length && tc.every((c) => c && c.witness && c.d != null) ? "pass" : "warn",
+      tc.map((c) => c ? `#${c.segment} d=${c.d}${c.correction ? ` → corrected +${c.correction}f` : ""} (err ${c.err})` : "?").join(" · "));
+  }
   report.etaTrace = etaTrace;
   report.panelEta = panelEtaSeen;
   check("download panel shows \"ready in …\" while exporting", panelEtaSeen ? "pass" : "fail", panelEtaSeen || "not seen");
@@ -279,7 +285,7 @@ async function main() {
 async function pullReference(needSec) {
   const key = process.env.RAPIDAPI_KEY;
   const host = "youtube-info-download-api.p.rapidapi.com";
-  const q = new URLSearchParams({ format: QUALITY.replace("p", ""), add_info: "0", url: `https://www.youtube.com/watch?v=${VIDEO}`, allow_extended_duration: "1", no_merge: "false" });
+  const q = new URLSearchParams({ format: "720", add_info: "0", url: `https://www.youtube.com/watch?v=${VIDEO}`, allow_extended_duration: "1", no_merge: "false" });
   const init = await (await fetch(`https://${host}/ajax/download.php?${q}`, { headers: { "x-rapidapi-host": host, "x-rapidapi-key": key } })).json();
   if (!init.success) throw new Error(`RapidAPI: ${init.message}`);
   let url = null;

@@ -897,6 +897,32 @@ function trimFrameRange(trimStartSec, seg, fps) {
   const firstWanted = Math.ceil((seg.in - y0) * fps - 1e-6); // first YouTube frame shown at or after `in`
   return { startFrame: firstWanted - firstTrimFrame, frames: Math.max(1, Math.round((seg.out - seg.in) * fps)) };
 }
+// ~9% of trims start 1–2 frames early (random per request, any worker host;
+// never late). Each segment also gets a 3 s "witness" trim from the same
+// second: two trims that both follow the rule are bit-identical, so if the
+// main trim's frame d equals the witness's frame 0, the main started d frames
+// early. (If the witness is the early one, d < 0 and the main is fine.)
+const W_W = 192, W_H = 108, W_FR = W_W * W_H;
+function grayFrames(file, n) {
+  return new Promise((resolve, reject) => {
+    execFile("ffmpeg", ["-v", "error", "-i", file, "-map", "0:v:0", "-frames:v", String(n), "-vf", `scale=${W_W}:${W_H}:flags=area,format=gray`, "-fps_mode", "passthrough", "-f", "rawvideo", "-"],
+      { encoding: "buffer", maxBuffer: 256 * 1024 * 1024 }, (e, so) => (e ? reject(e) : resolve(Array.from({ length: Math.floor(so.length / W_FR) }, (_, i) => so.subarray(i * W_FR, (i + 1) * W_FR)))));
+  });
+}
+async function witnessOffset(mainFile, witnessFile) {
+  const m = await grayFrames(mainFile, 48);
+  const w = (await grayFrames(witnessFile, 24)).slice(0, 20);
+  const mse = (a, b) => { let x = 0; for (let i = 0; i < W_FR; i++) { const d = a[i] - b[i]; x += d * d; } return x / W_FR; };
+  const sc = [];
+  for (let d = -4; d <= 6; d++) {
+    let e = 0, n = 0;
+    for (let j = 0; j < w.length; j++) { const i = j + d; if (i < 0 || i >= m.length) continue; e += mse(m[i], w[j]); n++; }
+    if (n >= 12) sc.push({ d, e: e / n });
+  }
+  sc.sort((a, b) => a.e - b.e);
+  return { d: sc[0].d, err: Number(sc[0].e.toFixed(3)), margin: sc[1] ? Number((sc[1].e / Math.max(sc[0].e, 1e-6)).toFixed(1)) : null };
+}
+
 const TRIM_AUDIO_LEAD = 0.012; // trim audio plays ~6–17 ms late (file t ↔ S + t − lead); centre of that
 
 // Cut by frame number (video) and time (audio) from a RapidAPI trim.
@@ -915,7 +941,7 @@ function cutTrimArgs(input, cut, outFile, overlayFilter, fps, height) {
   ];
 }
 const TRIM_PAD_SEC = 1;
-const TRIM_CONCURRENCY = 6;
+const TRIM_CONCURRENCY = 12; // main trims + their witnesses
 
 function semaphore(max) {
   let active = 0;
@@ -947,7 +973,10 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
   const timings = { start: Date.now(), rapidapiDone: 0, downloadDone: 0, trimDone: 0 };
   const cleanupRaw = async () => {
     await unlink(rawFile).catch(() => {});
-    for (let i = 1; i <= n; i++) await unlink(join(tmpdir(), `raw-${jobId}-${i}.mp4`)).catch(() => {});
+    for (let i = 1; i <= n; i++) {
+      await unlink(join(tmpdir(), `raw-${jobId}-${i}.mp4`)).catch(() => {});
+      await unlink(join(tmpdir(), `raw-${jobId}-${i}-w.mp4`)).catch(() => {});
+    }
   };
   // Output must be as long as the segments asked for, or the attempt failed.
   const checkOutput = async () => {
@@ -972,6 +1001,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
     job.stageDetail = `RapidAPI: trimming ${n} segment${n > 1 ? "s" : ""} at ${q}...`;
     const limit = semaphore(TRIM_CONCURRENCY);
     let arrived = 0;
+    job.trimChecks = [];
     const parts = segments.map((seg, i) => {
       const ready = limit(async () => {
         const startSec = Math.max(0, Math.floor(seg.in) - TRIM_PAD_SEC);
@@ -980,6 +1010,12 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         const ps = plan.segs[i];
         ps.fetchLen = endSec - startSec;
         const t0 = Date.now();
+        const witness = join(tmpdir(), `raw-${jobId}-${i + 1}-w.mp4`);
+        const witnessReady = limit(async () => {
+          const wdl = await rapidApiDownload(url, q, null, { startSec, endSec: startSec + 3 });
+          await execCapture("curl", ["-fL", "-sS", "-o", witness, wdl], { timeout: 300_000 });
+          return witness;
+        }).catch((e) => { logDebug("rapidapi.witness-failed", { jobId, segment: i + 1, error: e.message }); return null; });
         const dl = await rapidApiDownload(url, q, null, { startSec, endSec });
         ps.urlAt = Date.now();
         learn(etaRates, "rapidPrepSec", (ps.urlAt - t0) / 1000);
@@ -994,6 +1030,22 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         job.stageDetail = `${arrived}/${n} segment${n > 1 ? "s" : ""} fetched (${(job.bytesPulled / 1024 / 1024).toFixed(1)} MB)`;
         const fps = (await probeFps(raw)) || 60000 / 1001;
         const cut = { ...trimFrameRange(startSec, seg, fps), audioStart: Math.max(0, seg.in - startSec + TRIM_AUDIO_LEAD) };
+        // Witness check: shift the cut if this trim started early.
+        const wf = await witnessReady;
+        let check = { segment: i + 1, witness: !!wf, d: null, correction: 0 };
+        if (wf) {
+          try {
+            job.bytesPulled += fs.statSync(wf).size;
+            const w = await witnessOffset(raw, wf);
+            const sure = w.err < 1 || (w.margin != null && w.margin >= 1.05);
+            check = { ...check, ...w, correction: sure && w.d > 0 ? w.d : 0 };
+            // Only the video starts early in these trims; their audio is unaffected.
+            if (check.correction) cut.startFrame += check.correction;
+          } catch (e) { check.error = e.message; }
+          await unlink(wf).catch(() => {});
+        }
+        job.trimChecks[i] = check;
+        logDebug("rapidapi.witness", { jobId, ...check });
         const got = await probeDuration(raw);
         if (!got || got < (cut.startFrame + cut.frames) / fps - 0.05) throw new Error(`segment ${i + 1}: trimmed file is ${got}s, needs ${((cut.startFrame + cut.frames) / fps).toFixed(2)}s`);
         logDebug("rapidapi.trim-arrived", { jobId, segment: i + 1, startSec, endSec, bytes: fs.statSync(raw).size, got, urlSec: (ps.urlAt - t0) / 1000, fetchSec: (ps.arrivedAt - ps.urlAt) / 1000 });
@@ -1776,7 +1828,7 @@ app.get("/clip/:jobId", (req, res) => {
     bytesPulled: job.bytesPulled || null, sourceDuration: job.sourceDuration || null,
     outputDuration: job.outputDuration || null, fps: job.fps || null, timings: job.timings || null,
     stageLog: job.stageLog || null, elapsedSec: Number(((Date.now() - job.createdAt) / 1000).toFixed(1)),
-    etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null,
+    etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null, trimChecks: job.trimChecks || null,
   });
 });
 
