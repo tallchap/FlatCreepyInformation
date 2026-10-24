@@ -17,7 +17,8 @@ function run(cmd, args) {
   });
 }
 
-const W = 64, H = 36, FRAME = W * H;
+// 192×108: enough detail to tell adjacent frames apart on near-static shots.
+const W = 192, H = 108, FRAME = W * H;
 const scale = `scale=${W}:${H}:flags=area,format=gray`;
 
 /** Every frame of a (short) file, in decode order. */
@@ -49,13 +50,21 @@ function mse(a, b) {
   return s / a.length;
 }
 
+// Motion signature: frame-to-frame change. Static background and encoder
+// noise mostly cancel, so a run of frames matches sharply even on talking heads.
+function motionErr(a0, a1, b0, b1) {
+  let s = 0;
+  for (let i = 0; i < a1.length; i++) { const d = (a1[i] - a0[i]) - (b1[i] - b0[i]); s += d * d; }
+  return s / a1.length;
+}
+
 /** Best offset (frames) of clip run vs source frames, where index `zero` is the requested cut. */
 export function bestFrameOffset(clipRun, src, zero) {
   const k = clipRun.length;
   const scores = [];
   for (let o = 0; o + k <= src.length; o++) {
     let e = 0;
-    for (let i = 0; i < k; i++) e += mse(clipRun[i], src[o + i]);
+    for (let i = 1; i < k; i++) e += motionErr(clipRun[i - 1], clipRun[i], src[o + i - 1], src[o + i]) + 0.05 * mse(clipRun[i], src[o + i]);
     scores.push({ offset: o - zero, err: e / k });
   }
   scores.sort((a, b) => a.err - b.err);
@@ -82,7 +91,7 @@ export function bestAudioLag(clip, src, leadSec, rate = 8000) {
  * sourceAt(i) → { input, shift }: file/URL holding segment i's source, and the
  * amount to add to its timestamps to get video time (0 for the full video).
  */
-export async function checkJoins({ clip, segments, fps, sourceAt, runFrames = 30, lead = 10 }) {
+export async function checkJoins({ clip, segments, fps, sourceAt, runFrames = 60, lead = 10, searchFrames = 600 }) {
   const clipFrames = await allFrames(clip);
   const rows = [];
   let idx = 0;
@@ -91,15 +100,24 @@ export async function checkJoins({ clip, segments, fps, sourceAt, runFrames = 30
     const seg = segments[i];
     const frames = Math.round((seg.out - seg.in) * fps);
     const { input, shift = 0 } = await sourceAt(i);
-    const src = await framesWithPts(input, seg.in - shift - (lead + 2) / fps, seg.in - shift + (runFrames + lead + 2) / fps);
-    const zero = src.findIndex((f) => f.pts + shift >= seg.in - 1e-4);
-    const run = clipFrames.slice(idx, idx + runFrames);
-    const v = bestFrameOffset(run, src.map((f) => f.data), zero);
+    // The offset is the same through the whole segment (it is one contiguous
+    // run of frames), so measure it where the picture moves most: a static
+    // shot at the join can't tell adjacent frames apart.
+    let w = 0, bestEnergy = -1;
+    for (let s0 = 0; s0 + runFrames < Math.min(frames, searchFrames); s0 += 15) {
+      let e = 0;
+      for (let j = s0 + 1; j < s0 + runFrames; j++) { const a = clipFrames[idx + j - 1], b = clipFrames[idx + j]; for (let k = 0; k < b.length; k += 7) { const d = b[k] - a[k]; e += d * d; } }
+      if (e > bestEnergy) { bestEnergy = e; w = s0; }
+    }
+    const src = await framesWithPts(input, seg.in - shift - (lead + 2) / fps, seg.in - shift + (w + runFrames + lead + 2) / fps);
+    const zero = src.findIndex((f) => f.pts + shift >= seg.in - 1e-4) + w;
+    const run = clipFrames.slice(idx + w, idx + w + runFrames);
+    const v = bestFrameOffset(run, src.map((f) => f.data).slice(Math.max(0, zero - lead - 2)), Math.min(zero, lead + 2));
     const clipA = await pcm(clip, audioAt + 0.05, 1.5);
     const srcA = await pcm(input, seg.in - shift + 0.05 - 0.25, 2.0);
     const a = bestAudioLag(clipA, srcA, 0.25);
     rows.push({
-      segment: i + 1, in: seg.in, clipFrame: idx, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)),
+      segment: i + 1, in: seg.in, clipFrame: idx, measuredAt: `+${(w / fps).toFixed(1)}s`, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)),
       margin: v.margin == null ? null : Number(v.margin.toFixed(2)),
       audioLagMs: a.lagMs == null ? null : Number(a.lagMs.toFixed(1)), audioCorr: Number(a.corr.toFixed(3)),
       pass: v.offset != null && Math.abs(v.offset) <= 1,

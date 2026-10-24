@@ -27,6 +27,22 @@ The spec below is the original draft; results and deviations come first.
 - **B — fail on Render (0/3), pass on the Mac (3/3, 10–13 s).** Render's IP gets "Sign in to confirm you're not a bot". Both yt-dlp fallbacks are dead in production today; RapidAPI is the only working source.
 - **C — pass with limits.** No control bar, title bar, "Watch on YouTube" or pause panel (screenshots: `qa-recordings/yt-only-gate-c/`). A poster hides YouTube's play button before the first play. Remaining: YouTube's small centre play/pause icon for ~3 s after playback starts, end-screen cards in the last 20 s, and YouTube's bot wall can replace the embed in automated/headless browsers.
 
+**RapidAPI trim behaviour (measured 2026-10-24, 37 trims of `anAmTGcewX8`).** Exports ask RapidAPI to trim
+each segment on its side (`start_time`/`end_time`, whole seconds), so a 2:10 clip pulls ~22 MB at 1080p.
+- RapidAPI's whole-video stream is a **stream copy** of YouTube's DASH video (itag 298: H.264 Main 3.2, 947 kbps,
+  "ISO Media file produced by Google Inc."), so its timestamps are YouTube's: frame k at y0 + k/fps, y0 = 1 frame
+  (H.264 reorder delay). The verifier uses it as the reference timeline.
+- Trims are **re-encoded** (ffmpeg 5.1 `Lavf59.27.100` + libx264, High, 2 B-frames, fragmented MP4) with video and
+  audio as separate inputs. ffmpeg adds each input's start time to the seek, so the video starts at the first YouTube
+  frame ≥ S + y0 (frame index ceil(S·fps)) and the audio at S (±12 ms, AAC packets). Deterministic: repeats and
+  720p/1080p give the same frame. **1080p: 19/19 trims follow this; 720p: 2 of 18 start 1–2 frames early.**
+- Trim video timestamps are unreliable: every trim starts at 0.0334 s (x264 delay, no edit list) and some step
+  1.39 frames between frame 0 and 1. So the exporter cuts trims **by frame number**, never by timestamp.
+- Joining AAC-in-MP4 pieces shifted the joined video 23 ms (one AAC priming packet) against the audio; pieces now
+  carry PCM audio and AAC is encoded once at the join.
+- Result (walkthrough, local, frame-matched on each segment's most-moving second): joins 0 / 0 / 0 frames,
+  audio −4.8 / −4.8 / +5.4 ms.
+
 **Deviations.**
 - Segment count: Apify returns 1,082 lines for this talk, not "2,9xx"; the verifier checks coverage (≥ 80% of the length, ≥ 1 line per 10 s) instead of > 2,000.
 - Storyboard: works when fetched from a residential IP; from Vercel the watch page doesn't yield the spec, so production falls back to the static thumbnails (verifier warns).
