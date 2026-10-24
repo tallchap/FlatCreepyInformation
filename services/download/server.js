@@ -565,8 +565,11 @@ async function probeFps(input) {
       const [a, b] = String(v || "").split("/").map(Number);
       const fps = b ? a / b : a;
       if (!Number.isFinite(fps) || fps <= 1 || fps >= 241) continue;
-      const near = STANDARD.find((x) => Math.abs(x - fps) / x < 0.002);
-      return near || fps;
+      // Nearest standard rate, and only for float noise: 24 vs 23.976 (and 30
+      // vs 29.97, 60 vs 59.94) differ by 0.1%, so a loose match picks the
+      // wrong one and every frame index drifts.
+      const near = STANDARD.reduce((best, x) => (Math.abs(x - fps) < Math.abs(best - fps) ? x : best), STANDARD[0]);
+      return Math.abs(near - fps) / near < 0.0005 ? near : fps;
     }
   } catch {}
   return null;
@@ -879,29 +882,49 @@ setInterval(() => {
 // YouTube-sourced clip: RapidAPI direct URL → yt-dlp per-segment sections →
 // yt-dlp full download. Nothing is written anywhere but /tmp, and every raw or
 // segment file is deleted the moment the final clip exists.
-// How a RapidAPI trim maps onto YouTube's frames (measured 2026-10-24 on 37
-// trims; docs/spec-yt-only-clipping.md, "RapidAPI trim behaviour"):
-//  - RapidAPI's whole-video stream is a stream copy of YouTube's DASH video, so
-//    its timestamps are YouTube's: frame k at y0 + k/fps, y0 = one frame (the
-//    H.264 reorder delay).
-//  - A trim requested at whole second S is re-encoded (ffmpeg 5.1 + libx264)
-//    with video and audio as separate inputs; ffmpeg adds each input's start
-//    time to the seek, so video starts at the first frame ≥ S + y0 (index
-//    ceil(S·fps)) and audio at S (± ~12 ms, AAC packets).
-//  - Its video timestamps are NOT reliable: some trims step 1.39 frames between
-//    frame 0 and 1. So trims are cut by frame number, never by timestamp.
-// Holds 19/19 at 1080p; 720p started 1–2 frames early in 2 of 18.
-function trimFrameRange(trimStartSec, seg, fps) {
-  const y0 = 1 / fps;
-  const firstTrimFrame = Math.ceil(trimStartSec * fps - 1e-6); // YouTube frame index of trim frame 0
-  const firstWanted = Math.ceil((seg.in - y0) * fps - 1e-6); // first YouTube frame shown at or after `in`
-  return { startFrame: firstWanted - firstTrimFrame, frames: Math.max(1, Math.round((seg.out - seg.in) * fps)) };
+// How a RapidAPI trim maps onto YouTube's frames (measured 2026-10-24: 158
+// trims of 10 videos at 23.976/24/29.97/30/59.94 fps; docs/spec-yt-only-clipping.md):
+//  - YouTube frame k is at y0 + k/fps, y0 = one frame (H.264 reorder delay).
+//    RapidAPI's whole-video stream is a stream copy, so it has these times.
+//  - Trims come from one of two sources, told apart by the video track's
+//    handler name:
+//      "…produced by Google Inc." (original, ~92%): first frame = YouTube
+//        frame ceil(S·fps)  (145/145 trims)
+//      "VideoHandler" (an intermediate copy, ~8%, likely a cache): its clock
+//        runs ~13 ms ahead, so first frame = first frame ≥ S − 13 ms
+//        (13/13 trims; one or two frames earlier than the original rule)
+//  - Audio: trim audio pts + base = YouTube time, base = time of the trim's
+//    first frame − its video start (+ one frame on the copy path).
+//  - Trim video timestamps can be irregular after frame 0, so video is cut by
+//    frame number, audio by its own timestamps.
+const COPY_PATH_SHIFT = 0.0127;
+function trimPlan(trimStartSec, seg, fps, path, videoStart) {
+  const googleFirst = Math.ceil(trimStartSec * fps - 1e-6);
+  const firstTrimFrame = path === "copy" ? Math.ceil((trimStartSec - COPY_PATH_SHIFT - 1 / fps) * fps - 1e-6) : googleFirst;
+  const firstWanted = Math.ceil((seg.in - 1 / fps) * fps - 1e-6); // first YouTube frame at or after `in`
+  // trim audio pts + audioBase = YouTube time. Audio is in step with the
+  // trim's own first frame on the original path, one frame after it on the copy path.
+  const audioBase = (firstTrimFrame + 1) / fps - videoStart + (path === "copy" ? 1 / fps : 0);
+  return {
+    startFrame: firstWanted - firstTrimFrame,
+    frames: Math.max(1, Math.round((seg.out - seg.in) * fps)),
+    audioStart: Math.max(0, seg.in - audioBase),
+    firstTrimFrame, googleFirst,
+  };
 }
-// ~9% of trims start 1–2 frames early (random per request, any worker host;
-// never late). Each segment also gets a 3 s "witness" trim from the same
-// second: two trims that both follow the rule are bit-identical, so if the
-// main trim's frame d equals the witness's frame 0, the main started d frames
-// early. (If the witness is the early one, d < 0 and the main is fine.)
+async function trimSource(file) {
+  try {
+    const r = await execCapture("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=start_time:stream_tags=handler_name", "-of", "json", file], { timeout: 20_000 });
+    const st = (JSON.parse(r.stdout).streams || [])[0] || {};
+    return { path: /Google/i.test(st.tags?.handler_name || "") ? "google" : "copy", handler: st.tags?.handler_name || "", videoStart: parseFloat(st.start_time) || 0 };
+  } catch { return { path: "google", handler: "", videoStart: 0 }; }
+}
+
+// Cross-check: each segment also gets a 3 s "witness" trim from the same
+// second. Given both files' paths, the rules predict how many frames apart
+// their starts are (0 when the paths match; two Google-path trims are
+// bit-identical). A mismatch means an unseen behaviour: trust the
+// Google-path file of the pair, log it, and record it on the job.
 const W_W = 192, W_H = 108, W_FR = W_W * W_H;
 function grayFrames(file, n) {
   return new Promise((resolve, reject) => {
@@ -923,7 +946,6 @@ async function witnessOffset(mainFile, witnessFile) {
   return { d: sc[0].d, err: Number(sc[0].e.toFixed(3)), margin: sc[1] ? Number((sc[1].e / Math.max(sc[0].e, 1e-6)).toFixed(1)) : null };
 }
 
-const TRIM_AUDIO_LEAD = 0.012; // trim audio plays ~6–17 ms late (file t ↔ S + t − lead); centre of that
 
 // Cut by frame number (video) and time (audio) from a RapidAPI trim.
 function cutTrimArgs(input, cut, outFile, overlayFilter, fps, height) {
@@ -1029,17 +1051,26 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         if (!plan.segs.some((x) => x.encoding)) job.stage = n > 1 ? `fetching ${arrived}/${n}` : "fetching";
         job.stageDetail = `${arrived}/${n} segment${n > 1 ? "s" : ""} fetched (${(job.bytesPulled / 1024 / 1024).toFixed(1)} MB)`;
         const fps = (await probeFps(raw)) || 60000 / 1001;
-        const cut = { ...trimFrameRange(startSec, seg, fps), audioStart: Math.max(0, seg.in - startSec + TRIM_AUDIO_LEAD) };
+        const src = await trimSource(raw);
+        const cut = trimPlan(startSec, seg, fps, src.path, src.videoStart);
         // Witness check: shift the cut if this trim started early.
         const wf = await witnessReady;
-        let check = { segment: i + 1, witness: !!wf, d: null, correction: 0 };
+        let check = { segment: i + 1, path: src.path, witness: !!wf, d: null, expected: null, correction: 0 };
         if (wf) {
           try {
             job.bytesPulled += fs.statSync(wf).size;
+            const wsrc = await trimSource(wf);
+            const wplan = trimPlan(startSec, seg, fps, wsrc.path, wsrc.videoStart);
             const w = await witnessOffset(raw, wf);
+            const expected = wplan.firstTrimFrame - cut.firstTrimFrame; // main frame `expected` == witness frame 0
             const sure = w.err < 1 || (w.margin != null && w.margin >= 1.05);
-            check = { ...check, ...w, correction: sure && w.d > 0 ? w.d : 0 };
-            // Only the video starts early in these trims; their audio is unaffected.
+            check = { ...check, ...w, witnessPath: wsrc.path, expected };
+            // Rules disagree with what the frames show: trust the Google-path file.
+            if (sure && w.d !== expected) {
+              check.mismatch = true;
+              if (src.path !== "google" && wsrc.path === "google") check.correction = w.d - expected;
+              logDebug("rapidapi.witness-mismatch", { jobId, ...check });
+            }
             if (check.correction) cut.startFrame += check.correction;
           } catch (e) { check.error = e.message; }
           await unlink(wf).catch(() => {});

@@ -47,6 +47,19 @@ each segment on its side (`start_time`/`end_time`, whole seconds), so a 2:10 cli
 - Result (walkthrough, local, frame-matched on each segment's most-moving second): joins 0 / 0 / 0 frames,
   audio −4.8 / −4.8 / +5.4 ms.
 
+**Frame-alignment study (2026-10-24, 158 trims, 10 Altman/Amodei videos at 23.976/24/29.97/30/59.94 fps).**
+- Original path (track handler "ISO Media file produced by Google Inc.", 145 trims): first frame = YouTube frame
+  ⌈S·fps⌉, every trim, every frame rate, 720p and 1080p.
+- Copy path (handler "VideoHandler", 13 trims, 8%; rate varies by video, 0–5 of 16; many worker hosts; likely a
+  RapidAPI-side cached copy): its clock runs a fixed ~13 ms ahead (5.7–19.8 ms fits all 13), so the first frame is
+  the first one at or after S − 13 ms (1–2 frames before the original rule).
+- Audio: trim audio pts + (first frame's time − video start) = YouTube time on the original path; one frame later
+  on the copy path. Trims open with a frame-sized audio timestamp gap, which is why a fixed audio constant jumped
+  by whole frames.
+- Simulated with the server's code on 51 cuts: video 51/51 exact; audio −19…+6 ms (mean −1.7).
+- Bug found on the way: frame-rate snapping matched 24→23.976 and 30→29.97 (first match within 0.2%), shifting
+  frame indices on 24/30 fps videos (the Chamath −1 frame). Now nearest standard rate within 0.05%.
+
 **Deviations.**
 - Segment count: Apify returns 1,082 lines for this talk, not "2,9xx"; the verifier checks coverage (≥ 80% of the length, ≥ 1 line per 10 s) instead of > 2,000.
 - Storyboard: works when fetched from a residential IP; from Vercel the watch page doesn't yield the spec, so production falls back to the static thumbnails (verifier warns).
