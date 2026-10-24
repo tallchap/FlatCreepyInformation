@@ -407,7 +407,8 @@ def cmd_check(args):
     print(f"info: {len(bunny_orphans)} Bunny videos have no transcript, so chat can't reach them (not deleted here)")
     print(f"info: {len(yt_only)} yt-only videos have no Bunny file by design (video_source='youtube'); "
           f"{len(yt_only_gone)} of them are gone from YouTube and can no longer be clipped")
-    print(f"info: {len(stored_without_bunny)} stored (video_source='bunny') videos have no Bunny file"
+    print(f"info: {len(stored_without_bunny)} video_source='bunny' videos have no Bunny file (GCS-era or never downloaded; "
+          f"the editor falls back to GCS, then YouTube)"
           + (f", e.g. {', '.join(sorted(stored_without_bunny)[:5])}" if stored_without_bunny else ''))
     print('\nALL CHECKS PASSED' if report['passed'] else '\nFAILED')
     sys.exit(0 if report['passed'] else 1)
