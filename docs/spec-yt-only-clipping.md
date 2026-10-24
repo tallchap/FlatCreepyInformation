@@ -1,6 +1,38 @@
 # Spec: YouTube-only clipping (no stored video)
 
-Status: draft for engineering, 2026-10-24. Nothing in this spec is built yet.
+Status: **built and verified in production, 2026-10-24** (PR #65, merge `c68a5bb`).
+The spec below is the original draft; results and deviations come first.
+
+## Results (2026-10-24)
+
+`scripts/verify-yt-only.mjs` against www.snippysaurus.com + Render: **18 pass, 1 warn, 0 fail**
+(report: `.context/verify-yt-only/2026-10-24T10-35-05/report.json` in the working copy).
+
+| Check | Result |
+|---|---|
+| Row `anAmTGcewX8`, `video_source='youtube'`, no Bunny asset | pass |
+| Transcript | 1,082 segments covering 99% of 48:48; 1,082 search windows |
+| `/edit?v=…&seg=252-297,1110.5-1160.5,2465-2500` | 200; panel shows `2:10.0`, rows equal the deep link; clean embed (controls=0, rel=0, fs=0, disablekb=1, iv_load_policy=3, shield); no Bunny/GCS lookups |
+| Export payload | equals the panel byte for byte |
+| Export | source `rapidapi-prefix`; stages fetching 1/3 → 2/3 → 3/3 → cutting 1/3 → 2/3 → 3/3 → joining → ready |
+| Request → ready | 219.4 s on Render (fetch ~35 s, cutting ~180 s; locally 78–148 s) |
+| File | 130.020 s, 1280×720 H.264 + AAC, 43.9 MB, `Sam-Altman-…-clip.mp4` |
+| Cut accuracy (frame-matched against the source) | 0, −1, −1 frames (pass ≤ 1); audio −23.3 ms on every join |
+| Render `/tmp` after the job | only `clip-<job>.mp4` |
+| Bunny library | 1924 → 1924 |
+| Add-video (Part 1) | 63 s; ingest verify `ok ok ok ok yt-only`; corpus-integrity all checks pass |
+
+**Gates.**
+- **A — fail.** RapidAPI's URL (`*.savenow.to/api/v2/download/…`) ignores `Range`: 200, no Content-Length, a fragmented MP4 streamed live. The exporter therefore streams once and stops as soon as the file covers the last out point (`rapidapi-prefix`); the walkthrough pulled ~324 MB of ~393 MB because segment 3 sits at 41:05. Ranged reads are used automatically if the URL ever answers 206.
+- **B — fail on Render (0/3), pass on the Mac (3/3, 10–13 s).** Render's IP gets "Sign in to confirm you're not a bot". Both yt-dlp fallbacks are dead in production today; RapidAPI is the only working source.
+- **C — pass with limits.** No control bar, title bar, "Watch on YouTube" or pause panel (screenshots: `qa-recordings/yt-only-gate-c/`). A poster hides YouTube's play button before the first play. Remaining: YouTube's small centre play/pause icon for ~3 s after playback starts, end-screen cards in the last 20 s, and YouTube's bot wall can replace the embed in automated/headless browsers.
+
+**Deviations.**
+- Segment count: Apify returns 1,082 lines for this talk, not "2,9xx"; the verifier checks coverage (≥ 80% of the length, ≥ 1 line per 10 s) instead of > 2,000.
+- Storyboard: works when fetched from a residential IP; from Vercel the watch page doesn't yield the spec, so production falls back to the static thumbnails (verifier warns).
+- Cut accuracy is measured against the source file, not against embed screenshots: headless embeds hit YouTube's bot wall.
+- `video_source` was backfilled to `'bunny'` on all 4,745 existing rows; 2,828 of them have no Bunny file (GCS-era or never downloaded) and keep the old Bunny → GCS → YouTube fallback.
+
 
 ## Goal
 
