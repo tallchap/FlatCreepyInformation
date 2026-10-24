@@ -688,6 +688,8 @@ export async function addToBigQuery(transcript: any, metadata: any) {
       video_length: metadata.duration || null,
       speaker_source: speakerSource,
       created_time: nowIso,
+      // yt-only adds pass "youtube"; everything else keeps/gets "bunny".
+      video_source: metadata.videoSource ?? null,
     };
 
     // One transaction replaces the video row and every segment, so a

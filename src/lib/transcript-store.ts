@@ -32,6 +32,9 @@ export interface VideoRow {
   video_length: string | null;
   speaker_source: string | null;
   created_time: string; // ISO timestamp
+  // 'bunny' (file stored in Bunny) or 'youtube' (yt-only). Omitted/null keeps
+  // an existing row's value and makes new rows 'bunny'.
+  video_source?: "bunny" | "youtube" | null;
 }
 
 export interface SegmentRow {
@@ -85,11 +88,12 @@ WHEN MATCHED THEN UPDATE SET
   youtube_link = @youtube_link,
   video_length = @video_length,
   speaker_source = @speaker_source,
-  created_time = TIMESTAMP(@created_time)
+  created_time = TIMESTAMP(@created_time),
+  video_source = COALESCE(@video_source, T.video_source)
 WHEN NOT MATCHED THEN INSERT
-  (video_id, video_title, channel_name, published_date, youtube_link, video_length, speaker_source, created_time)
+  (video_id, video_title, channel_name, published_date, youtube_link, video_length, speaker_source, created_time, video_source)
   VALUES (@video_id, @video_title, @channel_name, SAFE_CAST(@published_date AS DATE), @youtube_link,
-          @video_length, @speaker_source, TIMESTAMP(@created_time));
+          @video_length, @speaker_source, TIMESTAMP(@created_time), COALESCE(@video_source, 'bunny'));
 DELETE FROM ${S} WHERE video_id = @video_id;
 INSERT INTO ${S} (video_id, segment_id, segment_index, line_index, start_sec, end_sec, text, created_at)
 SELECT @video_id, s.segment_id, s.segment_index, s.line_index, s.start_sec, s.end_sec, s.text, TIMESTAMP(@created_time)
@@ -110,6 +114,7 @@ export const REPLACE_TRANSCRIPT_TYPES = {
   video_length: "STRING",
   speaker_source: "STRING",
   created_time: "STRING",
+  video_source: "STRING",
   segments: [
     {
       segment_id: "STRING",
@@ -130,7 +135,7 @@ export async function replaceTranscript(
 ): Promise<void> {
   await bigQuery.query({
     query: replaceTranscriptSql(tables),
-    params: { ...video, segments },
+    params: { ...video, video_source: video.video_source ?? null, segments },
     types: REPLACE_TRANSCRIPT_TYPES,
   });
 }

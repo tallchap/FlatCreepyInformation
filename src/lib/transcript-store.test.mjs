@@ -37,8 +37,18 @@ test('replaceTranscript sends typed params so null fields and empty transcripts 
   const video={video_id:'abcdefghijk',video_title:null,channel_name:'c',published_date:'2026-01-02',youtube_link:null,video_length:null,speaker_source:'A, B',created_time:'2026-10-04T00:00:00.000Z'};
   await replaceTranscript(fake,video,[]);
   assert.equal(calls.length,1);
-  assert.deepEqual(calls[0].params,{...video,segments:[]});
+  assert.deepEqual(calls[0].params,{...video,video_source:null,segments:[]});
   assert.equal(calls[0].types,REPLACE_TRANSCRIPT_TYPES);
   assert.equal(calls[0].types.segments[0].end_sec,'FLOAT64');
   assert.equal(DEFAULT_TRANSCRIPT_TABLES.segments,'youtubetranscripts-429803.reptranscripts.youtube_transcript_segments');
+});
+test('video_source: new rows default to bunny, re-ingests keep the stored value unless one is given',async()=>{
+  const sql=replaceTranscriptSql();
+  assert.match(sql,/video_source = COALESCE\(@video_source, T\.video_source\)/);
+  assert.match(sql,/COALESCE\(@video_source, 'bunny'\)\);/);
+  const calls=[];const fake={query:async o=>{calls.push(o);return [[]]}};
+  const video={video_id:'abcdefghijk',video_title:'t',channel_name:'c',published_date:'2026-01-02',youtube_link:null,video_length:'48:48',speaker_source:'A',created_time:'2026-10-24T00:00:00.000Z',video_source:'youtube'};
+  await replaceTranscript(fake,video,[]);
+  assert.equal(calls[0].params.video_source,'youtube');
+  assert.equal(calls[0].types.video_source,'STRING');
 });

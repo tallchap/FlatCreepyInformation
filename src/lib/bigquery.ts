@@ -78,6 +78,7 @@ export async function fetchVideoMeta(id: string) {
           v.video_length AS video_length,
           v.youtube_link AS youtube_url,
           v.speaker_source AS speakers,
+          COALESCE(v.video_source, 'bunny') AS video_source,
           d.description
         FROM ${VIDEOS_TABLE} v
         LEFT JOIN \`youtubetranscripts-429803.reptranscripts.video_descriptions\` d
@@ -115,6 +116,7 @@ export async function fetchVideoMeta(id: string) {
         video_length: string | null;
         youtube_url: string;
         speakers: string | null;
+        video_source?: "bunny" | "youtube";
       }
     | undefined;
 }
