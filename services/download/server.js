@@ -127,7 +127,10 @@ const RAPIDAPI_KEY = process.env.RAPIDAPI_KEY || "";
 const RAPIDAPI_HOST = "youtube-info-download-api.p.rapidapi.com";
 const downloadUrlCache = new Map(); // videoId → { url, expiresAt }
 
-async function rapidApiDownload(videoUrl, quality, job) {
+// range = { startSec, endSec } (whole seconds) asks RapidAPI to trim on its
+// side: the returned file holds only that stretch (it rounds the start down to
+// the second), so an export pulls a few MB instead of the whole video.
+async function rapidApiDownload(videoUrl, quality, job, range) {
   const https = require("https");
   const format = quality === "1080p" ? "1080" : "720";
   const params = new URLSearchParams({
@@ -136,6 +139,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
     url: videoUrl,
     allow_extended_duration: "1",
     no_merge: "false",
+    ...(range ? { start_time: String(range.startSec), end_time: String(range.endSec) } : {}),
   });
 
   // Step 1: Request download
@@ -170,7 +174,7 @@ async function rapidApiDownload(videoUrl, quality, job) {
   let consecutiveErrors = 0;
 
   while (true) {
-    await new Promise(r => setTimeout(r, 5000));
+    await new Promise(r => setTimeout(r, range ? 2000 : 5000));
     pollCount++;
 
     // Poll with transient error resilience
@@ -204,8 +208,9 @@ async function rapidApiDownload(videoUrl, quality, job) {
       progressChanges++;
     }
 
-    // Update job stage for frontend visibility
-    if (job) {
+    // Update job stage for frontend visibility (whole-video requests only;
+    // per-segment trims report through their own stage)
+    if (job && !range) {
       job.stage = "rapidapi-processing";
       job.stageDetail = `RapidAPI: ${progress.progress}% — ${progress.text || "processing"}`;
     }
@@ -562,10 +567,21 @@ async function probeFps(input) {
   return null;
 }
 
+// Segment encodes: veryfast is ~2× faster than fast at the same bitrate
+// (Render's container gets about one CPU); 1080p gets twice the bitrate.
+function segmentEncodeArgs(height) {
+  const hd = (height || 0) >= 1000;
+  return [
+    "-c:v", "libx264", "-b:v", hd ? "5000k" : "2500k", "-maxrate", hd ? "5400k" : "2700k", "-bufsize", hd ? "10000k" : "5000k",
+    "-preset", "veryfast", "-tune", "zerolatency",
+    "-g", "30", "-keyint_min", "30", "-sc_threshold", "0", "-bf", "0", "-refs", "1",
+  ];
+}
+
 // Cut one segment out of a file/URL (frame-accurate re-encode). With the
 // frame rate known, video is cut to round(len × fps) frames and audio to the
 // same length, so every join lands within half a frame of where it should.
-function cutSegmentArgs(input, seg, outFile, overlayFilter, fps) {
+function cutSegmentArgs(input, seg, outFile, overlayFilter, fps, height) {
   const len = seg.out - seg.in;
   const frames = fps ? Math.max(1, Math.round(len * fps)) : null;
   const exact = frames ? frames / fps : len;
@@ -575,7 +591,7 @@ function cutSegmentArgs(input, seg, outFile, overlayFilter, fps) {
     "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
     ...(overlayFilter ? ["-vf", overlayFilter] : []),
     ...(frames ? ["-frames:v", String(frames)] : []),
-    ...ENCODE_V,
+    ...segmentEncodeArgs(height),
     "-af", `atrim=duration=${exact.toFixed(6)},afade=t=in:d=0.03,afade=t=out:st=${Math.max(0, exact - 0.03).toFixed(6)}:d=0.03`,
     "-c:a", "aac", "-b:a", "128k",
     "-movflags", "+faststart", "-y", outFile,
@@ -598,63 +614,156 @@ function legacySingleArgs(input, seg, outFile, overlayFilter) {
   ];
 }
 
-// Cut every segment from `input` and join them into `clipFile`. Segment files
-// are deleted as soon as the join finishes (or fails).
-// `parts` = [{ input, seg }]: the range `seg` is cut out of file/URL `input`.
-async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pipeline, videoId }) {
+// ─── ETA model ──────────────────────────────────────────────────────
+// Rates are wall seconds per second of video, learned from finished jobs
+// (exponential average, in memory) and seeded from measured Render runs.
+const etaRates = {
+  rapidPrepSec: 24,                                   // RapidAPI: request → download URL
+  trimDelivery: { "720p": 1.05, "1080p": 1.2 },       // trimmed file arrives at ~len × this after its URL
+  encode: { "720p": 0.75, "1080p": 1.6 },             // re-encode, per output second
+  prefixFetch: { "720p": 0.015, "1080p": 0.035 },     // streaming the whole file, per source second
+  bunnyFetchSec: 25,
+};
+function learn(obj, key, observed) {
+  if (!Number.isFinite(observed) || observed <= 0) return;
+  obj[key] = Number((obj[key] * 0.6 + observed * 0.4).toFixed(4));
+  const r = redisClient();
+  if (r) r.set("clip:eta-rates", JSON.stringify(etaRates)).catch(() => {});
+}
+// Learned rates survive restarts/deploys when Redis is configured.
+setTimeout(async () => {
+  const r = redisClient();
+  if (!r) return;
+  try {
+    const saved = JSON.parse((await r.get("clip:eta-rates")) || "null");
+    if (saved) for (const k of Object.keys(etaRates)) if (saved[k] != null) etaRates[k] = typeof etaRates[k] === "object" ? { ...etaRates[k], ...saved[k] } : saved[k];
+    logDebug("eta.rates-loaded", etaRates);
+  } catch {}
+}, 1000);
+
+// Seconds until the job's clip is ready, simulated from what has happened so
+// far: segments still to arrive, the encoder queue, then the join.
+function etaRemainingSec(job) {
+  if (job.status !== "processing") return 0;
+  const plan = job.etaPlan;
+  const now = Date.now();
+  if (!plan) {
+    const elapsed = (now - job.createdAt) / 1000;
+    const p = Math.max(1, job.progress || 1);
+    return Math.max(5, Math.round((elapsed * (100 - p)) / p));
+  }
+  const q = plan.quality;
+  const encodeRate = plan.liveEncodeRate || etaRates.encode[q];
+  let free = Math.max(now, plan.encoderFreeAt || now);
+  const todo = plan.segs.filter((sg) => !sg.encoded && !sg.encoding).map((sg) => {
+    let arrival = sg.arrivedAt;
+    if (!arrival) {
+      const urlAt = sg.urlAt || (plan.startedAt + etaRates.rapidPrepSec * 1000);
+      arrival = Math.max(now, urlAt + sg.fetchLen * etaRates.trimDelivery[q] * 1000);
+      if (plan.kind === "prefix") arrival = Math.max(now, plan.fetchDoneEst || now);
+    }
+    return { arrival, len: sg.len };
+  }).sort((x, y) => x.arrival - y.arrival);
+  for (const sg of todo) free = Math.max(free, sg.arrival) + sg.len * encodeRate * 1000;
+  const join = plan.segs.length > 1 ? 2000 : 500;
+  return Math.max(1, Math.round((free + join - now) / 1000));
+}
+
+// Cut every segment and join them into `clipFile`. Segment files are deleted
+// as soon as the join finishes (or fails).
+// `parts` = [{ input, seg }] or [{ ready: Promise<{ input, seg }> }]: the range
+// `seg` is cut out of file/URL `input`. Parts are cut in the order they become
+// ready (a slow download doesn't hold the encoder up) and joined in list order.
+// exact: use the frame-exact segment encode even for one part (YouTube path);
+// otherwise one part keeps the legacy single-range encode (Bunny path).
+async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pipeline, videoId, exact = false, height = null }) {
   const fontPath = overlay?.fontFamily ? await downloadGoogleFont(overlay.fontFamily) : null;
   const overlayFilter = buildOverlayFilter(overlay, fontPath, videoWidth);
   const n = parts.length;
-  const total = parts.reduce((a, p) => a + (p.seg.out - p.seg.in), 0);
-  let doneSec = 0;
 
-  if (n === 1) {
-    const { input, seg } = parts[0];
+  if (n === 1 && !exact) {
+    const { input, seg } = parts[0].ready ? await parts[0].ready : parts[0];
     const duration = seg.out - seg.in;
     job.stage = "trimming-clip";
     job.stageDetail = "Trimming: 0%";
     logClipEvent({ jobId, videoId, pipeline, step: "ffmpeg-trim-start", status: "info", detail: { startSec: seg.in, duration, overlay: !!overlayFilter } });
+    const plan = job.etaPlan;
+    const t0 = Date.now();
+    if (plan?.segs[0]) { plan.segs[0].encoding = true; plan.encoderFreeAt = t0 + duration * etaRates.encode[plan.quality] * 1000; }
     await runFfmpeg(legacySingleArgs(input, seg, clipFile, overlayFilter), {
       job, duration, label: `${jobId}-trim`,
-      onPct: (pct) => { job.stageDetail = `Trimming: ${pct}%`; job.progress = Math.max(job.progress || 0, 50 + Math.round(pct * 0.45)); },
+      onPct: (pct) => {
+        job.stageDetail = `Trimming: ${pct}%`;
+        job.progress = Math.max(job.progress || 0, 50 + Math.round(pct * 0.45));
+        if (plan && pct >= 5) {
+          const rate = (Date.now() - t0) / 1000 / ((duration * pct) / 100);
+          plan.liveEncodeRate = rate;
+          plan.encoderFreeAt = Date.now() + duration * (1 - pct / 100) * rate * 1000;
+        }
+      },
     });
+    if (plan?.segs[0]) { plan.segs[0].encoding = false; plan.segs[0].encoded = true; }
     return;
   }
 
-  const segFiles = parts.map((_, i) => join(tmpdir(), `seg-${jobId}-${i + 1}.mp4`));
+  const segFiles = parts.map((_, i) => (n === 1 ? clipFile : join(tmpdir(), `seg-${jobId}-${i + 1}.mp4`)));
   const listFile = join(tmpdir(), `seg-${jobId}-list.txt`);
   const fpsByInput = new Map();
-  for (const p of parts) if (!fpsByInput.has(p.input)) fpsByInput.set(p.input, await probeFps(p.input));
-  job.fps = fpsByInput.get(parts[0].input) || null;
+  const exactLen = new Array(n);
+  const plan = job.etaPlan;
   try {
-    for (let i = 0; i < n; i++) {
-      const { input, seg } = parts[i];
+    // Ready promises tagged with their index, cut in arrival order.
+    const pending = new Map(parts.map((p, i) => [i, Promise.resolve(p.ready || p).then((r) => ({ i, r }))]));
+    let done = 0;
+    let doneSec = 0;
+    const total = plan ? plan.segs.reduce((a, sg) => a + sg.len, 0) : null;
+    while (pending.size) {
+      const { i, r } = await Promise.race(pending.values());
+      pending.delete(i);
+      const { input, seg } = r;
+      if (!fpsByInput.has(input)) fpsByInput.set(input, await probeFps(input));
+      const fps = fpsByInput.get(input);
+      if (!job.fps && fps) job.fps = fps;
       const len = seg.out - seg.in;
-      job.stage = `cutting ${i + 1}/${n}`;
-      job.stageDetail = `Cutting ${i + 1}/${n}: 0%`;
+      exactLen[i] = fps ? Math.max(1, Math.round(len * fps)) / fps : len;
+      const label = n > 1 ? `cutting ${i + 1}/${n}` : "cutting";
+      job.stage = label;
+      job.stageDetail = `${n > 1 ? `Cutting ${i + 1}/${n}` : "Cutting"}: 0%`;
+      const ps = plan?.segs[i];
+      const t0 = Date.now();
+      if (ps) { ps.encoding = true; plan.encoderFreeAt = t0 + len * (plan.liveEncodeRate || etaRates.encode[plan.quality]) * 1000; }
       logClipEvent({ jobId, videoId, pipeline, step: "segment-cut-start", status: "info", detail: { index: i + 1, of: n, in: seg.in, out: seg.out } });
-      await runFfmpeg(cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fpsByInput.get(input)), {
+      await runFfmpeg(cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fps, height), {
         job, duration: len, label: `${jobId}-seg${i + 1}`,
         onPct: (pct) => {
-          job.stageDetail = `Cutting ${i + 1}/${n}: ${pct}%`;
-          job.progress = Math.max(job.progress || 0, 50 + Math.round(((doneSec + (len * pct) / 100) / total) * 40));
+          job.stageDetail = `${n > 1 ? `Cutting ${i + 1}/${n}` : "Cutting"}: ${pct}%`;
+          job.progress = Math.max(job.progress || 0, 50 + Math.round(((doneSec + (len * pct) / 100) / (total || len)) * 40));
+          if (plan && pct >= 5) {
+            const rate = (Date.now() - t0) / 1000 / ((len * pct) / 100);
+            plan.liveEncodeRate = rate;
+            plan.encoderFreeAt = Date.now() + len * (1 - pct / 100) * rate * 1000;
+          }
         },
       });
+      if (ps) { ps.encoding = false; ps.encoded = true; plan.encoderFreeAt = Date.now(); }
+      if (plan) learn(etaRates.encode, plan.quality, (Date.now() - t0) / 1000 / len);
+      done++;
       doneSec += len;
+      if (pending.size) {
+        job.stage = "waiting for segments";
+        job.stageDetail = `${done}/${n} cut · waiting for ${pending.size} more from YouTube`;
+      }
     }
-    job.stage = "joining";
-    job.stageDetail = `Joining ${n} segments...`;
-    job.progress = 92;
-    // Explicit per-file durations keep the joins exactly where the frames say.
-    fs.writeFileSync(listFile, segFiles.map((f, i) => {
-      const fps = fpsByInput.get(parts[i].input);
-      const len = parts[i].seg.out - parts[i].seg.in;
-      const exact = fps ? Math.max(1, Math.round(len * fps)) / fps : len;
-      return `file '${f.replace(/'/g, "'\\''")}'\nduration ${exact.toFixed(6)}`;
-    }).join("\n") + "\n");
-    await execCapture("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", "-y", clipFile], { timeout: 300_000 });
+    if (n > 1) {
+      job.stage = "joining";
+      job.stageDetail = `Joining ${n} segments...`;
+      job.progress = 92;
+      // Explicit per-file durations keep the joins exactly where the frames say.
+      fs.writeFileSync(listFile, segFiles.map((f, i) => `file '${f.replace(/'/g, "'\\''")}'\nduration ${exactLen[i].toFixed(6)}`).join("\n") + "\n");
+      await execCapture("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", "-y", clipFile], { timeout: 300_000 });
+    }
   } finally {
-    for (const f of [...segFiles, listFile]) await unlink(f).catch(() => {});
+    for (const f of [...segFiles, listFile]) if (f !== clipFile) await unlink(f).catch(() => {});
   }
 }
 
@@ -753,7 +862,23 @@ setInterval(() => {
 // YouTube-sourced clip: RapidAPI direct URL → yt-dlp per-segment sections →
 // yt-dlp full download. Nothing is written anywhere but /tmp, and every raw or
 // segment file is deleted the moment the final clip exists.
-async function processClipJob(jobId, { url, segments, quality, overlay }) {
+// RapidAPI's trimmed file starts a hair before the requested whole second
+// (measured −4 … −32 ms over 4 requests); the middle of that is used.
+const TRIM_BASE_OFFSET = 0.014;
+const TRIM_PAD_SEC = 1;
+const TRIM_CONCURRENCY = 6;
+
+function semaphore(max) {
+  let active = 0;
+  const queue = [];
+  const next = () => { if (active < max && queue.length) { active++; queue.shift()(); } };
+  return (fn) => new Promise((resolve, reject) => {
+    queue.push(() => fn().then(resolve, reject).finally(() => { active--; next(); }));
+    next();
+  });
+}
+
+async function processClipJob(jobId, { url, segments, quality, overlay, lengthSeconds }) {
   const job = clipJobs.get(jobId);
   if (!job) return;
 
@@ -778,17 +903,90 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
   // Output must be as long as the segments asked for, or the attempt failed.
   const checkOutput = async () => {
     const d = await probeDuration(clipFile);
-    const want = n === 1 ? total + 0.05 : total;
-    if (d == null || Math.abs(d - want) > 0.35) throw new Error(`output is ${d}s, expected ${want.toFixed(2)}s`);
+    if (d == null || Math.abs(d - total) > 0.35) throw new Error(`output is ${d}s, expected ${total.toFixed(2)}s`);
     job.outputDuration = d;
+  };
+  const planFor = (kind, q) => ({
+    kind, quality: q, startedAt: Date.now(), encoderFreeAt: null, liveEncodeRate: null,
+    segs: segments.map((sg) => ({ len: sg.out - sg.in, fetchLen: Math.ceil(sg.out) - Math.floor(sg.in) + 2 * TRIM_PAD_SEC })),
+  });
+
+  // RapidAPI trims each segment on its side, in parallel; each piece is cut
+  // frame-exact as soon as it lands. Pulls a few MB per segment.
+  const trimExport = async (q) => {
+    const plan = planFor("trim", q);
+    job.etaPlan = plan;
+    job.source = "rapidapi-trim";
+    job.qualityUsed = q;
+    job.bytesPulled = 0;
+    job.stage = "resolving source";
+    job.stageDetail = `RapidAPI: trimming ${n} segment${n > 1 ? "s" : ""} at ${q}...`;
+    const limit = semaphore(TRIM_CONCURRENCY);
+    let arrived = 0;
+    const parts = segments.map((seg, i) => {
+      const ready = limit(async () => {
+        const startSec = Math.max(0, Math.floor(seg.in) - TRIM_PAD_SEC);
+        let endSec = Math.ceil(seg.out) + TRIM_PAD_SEC;
+        if (Number.isFinite(lengthSeconds) && lengthSeconds > 0) endSec = Math.min(endSec, Math.ceil(lengthSeconds));
+        const ps = plan.segs[i];
+        ps.fetchLen = endSec - startSec;
+        const t0 = Date.now();
+        const dl = await rapidApiDownload(url, q, null, { startSec, endSec });
+        ps.urlAt = Date.now();
+        learn(etaRates, "rapidPrepSec", (ps.urlAt - t0) / 1000);
+        const raw = join(tmpdir(), `raw-${jobId}-${i + 1}.mp4`);
+        await execCapture("curl", ["-fL", "-sS", "-o", raw, dl], { timeout: 600_000 });
+        ps.arrivedAt = Date.now();
+        learn(etaRates.trimDelivery, q, (ps.arrivedAt - ps.urlAt) / 1000 / ps.fetchLen);
+        job.bytesPulled += fs.statSync(raw).size;
+        arrived++;
+        if (!plan.segs.some((x) => x.encoding)) job.stage = n > 1 ? `fetching ${arrived}/${n}` : "fetching";
+        job.stageDetail = `${arrived}/${n} segment${n > 1 ? "s" : ""} fetched (${(job.bytesPulled / 1024 / 1024).toFixed(1)} MB)`;
+        const base = startSec - TRIM_BASE_OFFSET;
+        const got = await probeDuration(raw);
+        if (!got || got < seg.out - base - 0.05) throw new Error(`segment ${i + 1}: trimmed file is ${got}s, needs ${(seg.out - base).toFixed(2)}s`);
+        logDebug("rapidapi.trim-arrived", { jobId, segment: i + 1, startSec, endSec, bytes: fs.statSync(raw).size, got, urlSec: (ps.urlAt - t0) / 1000, fetchSec: (ps.arrivedAt - ps.urlAt) / 1000 });
+        return { input: raw, seg: { in: seg.in - base, out: seg.out - base } };
+      });
+      ready.catch(() => {}); // failures surface through cutAndJoin
+      return { ready };
+    });
+    try {
+      await cutAndJoin({ jobId, job, parts, clipFile, overlay, pipeline: "clip", videoId, exact: true, height: q === "1080p" ? 1080 : 720 });
+    } catch (e) {
+      await Promise.allSettled(parts.map((p) => p.ready)); // let stragglers finish before cleanup
+      throw e;
+    }
+    timings.downloadDone = Date.now();
+    await cleanupRaw();
+    await checkOutput();
   };
 
   try {
     logDebug("clip.start", { jobId, url, segments, total, quality: `${heightLimit}p`, rapidapi: !!RAPIDAPI_KEY });
     let downloaded = false;
+    // The ETA is available the moment the job exists.
+    job.etaPlan = planFor(RAPIDAPI_KEY ? "trim" : "prefix", heightLimit === 1080 ? "1080p" : "720p");
 
-    // Attempt 1: RapidAPI direct URL
+    // Attempt 1: RapidAPI trims (1080p falls back to 720p)
     if (RAPIDAPI_KEY) {
+      for (const q of heightLimit === 1080 ? ["1080p", "720p"] : ["720p"]) {
+        try {
+          await trimExport(q);
+          downloaded = true;
+          attempts.push({ source: "rapidapi-trim", quality: q, ok: true });
+          break;
+        } catch (e) {
+          attempts.push({ source: "rapidapi-trim", quality: q, ok: false, error: String(e.stderr || e.message || e).slice(0, 500) });
+          logDebug("rapidapi.trim-failed", { jobId, quality: q, error: e.message });
+          await cleanupRaw();
+          await unlink(clipFile).catch(() => {});
+        }
+      }
+    }
+
+    // Attempt 2: RapidAPI whole-video URL
+    if (!downloaded && RAPIDAPI_KEY) {
       try {
         let downloadUrl;
         const cached = videoId && downloadUrlCache.get(`${videoId}-${heightLimit}`);
@@ -816,7 +1014,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
         if (ranged) {
           // ffmpeg seeks inside the remote file and pulls only what each segment needs.
           job.source = "rapidapi-range";
-          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: downloadUrl, seg })), clipFile, overlay, pipeline: "clip", videoId });
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: downloadUrl, seg })), clipFile, overlay, pipeline: "clip", videoId, exact: true, height: heightLimit });
           timings.downloadDone = Date.now();
         } else {
           // No Range support: stream the file once, stop after the last needed second.
@@ -827,7 +1025,13 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
           };
           job.stage = n > 1 ? `fetching 1/${n}` : "downloading-video";
           job.stageDetail = "Fetching from YouTube...";
+          const plan = planFor("prefix", `${heightLimit}p`);
+          plan.fetchDoneEst = Date.now() + maxOut * etaRates.prefixFetch[plan.quality] * 1000;
+          job.etaPlan = plan;
+          const fetchT0 = Date.now();
           const r = await downloadUntil(downloadUrl, rawFile, { needSec: maxOut, job, onCovered });
+          learn(etaRates.prefixFetch, plan.quality, (Date.now() - fetchT0) / 1000 / (r.coveredSec || maxOut));
+          plan.fetchDoneEst = Date.now();
           timings.downloadDone = Date.now();
           job.source = r.complete ? "rapidapi-full" : "rapidapi-prefix";
           job.bytesPulled = r.bytes;
@@ -846,7 +1050,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
           if (have != null && have < maxOut - 0.05) throw new Error(`fetched ${have}s of video, segments need ${maxOut}s`);
           job.sourceDuration = have;
 
-          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId });
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId, exact: true, height: heightLimit });
           await unlink(rawFile).catch(() => {});
         }
         await checkOutput();
@@ -882,7 +1086,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
           parts.push({ input: out, seg: { in: 0, out: Math.min(seg.out - seg.in, d || seg.out - seg.in) } });
         }
         timings.downloadDone = Date.now();
-        if (n > 1) await cutAndJoin({ jobId, job, parts, clipFile, overlay, pipeline: "clip", videoId });
+        if (n > 1) await cutAndJoin({ jobId, job, parts, clipFile, overlay, pipeline: "clip", videoId, exact: true, height: heightLimit });
         await cleanupRaw();
         if (n > 1) await checkOutput();
         downloaded = true;
@@ -906,7 +1110,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay }) {
         timings.downloadDone = Date.now();
         job.progress = 50;
         videoMeta = await getVideoMetadata(rawFile);
-        await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId });
+        await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId, exact: true, height: heightLimit });
         await cleanupRaw();
         await checkOutput();
         attempts.push({ source: "ytdlp-full", ok: true });
@@ -1202,6 +1406,11 @@ async function processGcsClipJob(jobId, { videoId, segments, quality, overlay, s
   const endSec = segments[n - 1].out;
   job.source = source.type;
   job.segments = segments;
+  job.etaPlan = {
+    kind: "prefix", quality: quality === "1080p" ? "1080p" : "720p", startedAt: Date.now(), encoderFreeAt: null, liveEncodeRate: null,
+    fetchDoneEst: Date.now() + etaRates.bunnyFetchSec * 1000,
+    segs: segments.map((sg) => ({ len: sg.out - sg.in, fetchLen: 0 })),
+  };
 
   const heightLimit = quality === "1080p" ? 1080 : 720;
   const clipFile = join(tmpdir(), `clip-${jobId}.mp4`);
@@ -1273,6 +1482,8 @@ async function processGcsClipJob(jobId, { videoId, segments, quality, overlay, s
       curlArgs.push(srcUrl);
       await execCapture("curl", curlArgs, { timeout: 600_000 });
       timings.downloadDone = Date.now();
+      learn(etaRates, "bunnyFetchSec", (timings.downloadDone - timings.start) / 1000);
+      job.etaPlan.fetchDoneEst = Date.now();
       job.progress = 40;
 
       videoMeta = await getVideoMetadata(srcFile);
@@ -1460,7 +1671,7 @@ app.post("/clip-gcs", async (req, res) => {
 
   processGcsClipJob(jobId, { videoId, segments, quality, overlay, source }).catch(() => {});
 
-  res.json({ jobId, route: source.type });
+  res.json({ jobId, route: source.type, etaSec: etaRemainingSec(clipJobs.get(jobId)) });
 });
 
 // ─── Clip endpoint: Bunny for stored videos, YouTube on demand otherwise ─
@@ -1486,7 +1697,7 @@ app.post("/clip", async (req, res) => {
       const jobId = newJob({ source: source.type, segments });
       logClipEvent({ jobId, videoId, pipeline: "clip-gcs", step: "clip-requested", status: "info", detail: { segments, quality: quality || null, overlay: !!overlay, source: source.type, guid: source.guid || null } });
       processGcsClipJob(jobId, { videoId, segments, quality, overlay, source }).catch(() => {});
-      return res.json({ jobId, route: source.type });
+      return res.json({ jobId, route: source.type, etaSec: etaRemainingSec(clipJobs.get(jobId)) });
     }
     logDebug("clip.bunny-missing", { videoId });
   }
@@ -1498,9 +1709,10 @@ app.post("/clip", async (req, res) => {
   });
 
   // Start background processing (don't await)
-  processClipJob(jobId, { url, segments, quality, overlay }).catch(() => {});
+  const lengthSeconds = Number(req.body.lengthSeconds) || null;
+  processClipJob(jobId, { url, segments, quality, overlay, lengthSeconds }).catch(() => {});
 
-  res.json({ jobId, route: "youtube" });
+  res.json({ jobId, route: "youtube", etaSec: etaRemainingSec(clipJobs.get(jobId)) });
 });
 
 app.get("/clip/:jobId", (req, res) => {
@@ -1513,6 +1725,7 @@ app.get("/clip/:jobId", (req, res) => {
     bytesPulled: job.bytesPulled || null, sourceDuration: job.sourceDuration || null,
     outputDuration: job.outputDuration || null, fps: job.fps || null, timings: job.timings || null,
     stageLog: job.stageLog || null, elapsedSec: Number(((Date.now() - job.createdAt) / 1000).toFixed(1)),
+    etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null,
   });
 });
 
@@ -1599,6 +1812,27 @@ app.get("/debug", async (_req, res) => {
 
 // Files in /tmp, optionally only those whose name contains ?match= (a jobId).
 // The yt-only verifier uses this to prove no seg-*/raw-* files outlive a job.
+// Estimate an export before it starts: same model as the live ETA.
+// POST { segments, quality, videoSource } → { etaSec, path }
+app.post("/estimate", (req, res) => {
+  const parsed = parseSegments(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+  const q = req.body.quality === "720p" ? "720p" : "1080p";
+  const youtube = req.body.videoSource === "youtube";
+  const fake = {
+    status: "processing", createdAt: Date.now(),
+    etaPlan: {
+      kind: youtube && RAPIDAPI_KEY ? "trim" : "prefix", quality: q, startedAt: Date.now(), encoderFreeAt: null, liveEncodeRate: null,
+      fetchDoneEst: Date.now() + etaRates.bunnyFetchSec * 1000,
+      segs: parsed.segments.map((sg) => ({ len: sg.out - sg.in, fetchLen: Math.ceil(sg.out) - Math.floor(sg.in) + 2 * TRIM_PAD_SEC })),
+    },
+  };
+  res.json({ etaSec: etaRemainingSec(fake), path: fake.etaPlan.kind === "trim" ? "rapidapi-trim" : "bunny" });
+});
+
+// Current ETA model (seeded, then learned from finished jobs).
+app.get("/debug/eta-rates", (_req, res) => res.json(etaRates));
+
 app.get("/debug/tmp", (req, res) => {
   const match = String(req.query.match || "");
   try {

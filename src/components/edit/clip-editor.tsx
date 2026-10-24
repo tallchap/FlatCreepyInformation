@@ -9,6 +9,7 @@ import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal
 import { ClipsSection } from "./clips-section";
 import { mountYouTubeCleanPlayer, type CleanPlayer } from "./youtube-clean-player";
 import { segmentColor } from "./timeline";
+import { formatEta } from "@/components/download-panel";
 import type { Storyboard } from "@/lib/youtube-storyboard";
 import {
   MAX_CLIP_SEC, MAX_SEGMENTS, formatSegTime, formatTotal, parseSegParam, segParam, totalLength, type ClipSegment,
@@ -62,7 +63,8 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const setEndSec = useCallback((v: number) => updateActive({ out: v }), [updateActive]);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [quality, setQuality] = useState<Quality>("720p");
+  // 1080p by default; drops to 720p when the source has no 1080p.
+  const [quality, setQuality] = useState<Quality>("1080p");
   const [has1080, setHas1080] = useState(false);
   const { startDownload, hasActive: exporting } = useDownload();
   const [gcsAvailable, setGcsAvailable] = useState<boolean | null>(null);
@@ -379,7 +381,9 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
           const dur = p.getDuration();
           setDuration(dur);
           const levels = p.getAvailableQualityLevels() || [];
-          const supports1080 = levels.includes("hd1080");
+          // The embed often lists no levels until playback starts; then offer
+          // 1080p anyway (the exporter falls back to 720p if YouTube lacks it).
+          const supports1080 = levels.length ? levels.includes("hd1080") : true;
           setHas1080(supports1080);
           if (!supports1080) setQuality("720p");
           applyPendingSegments(dur);
@@ -437,6 +441,46 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     const id = extractVideoId(url);
     if (id) setVideoId(id);
   };
+
+  // Prefer Bunny's availableResolutions when present (Bunny-only videos);
+  // otherwise has1080 (GCS metadata / YouTube levels).
+  const qualityOptions: Quality[] = (() => {
+    if (bunnyResolutions.length) {
+      const out: Quality[] = [];
+      if (bunnyResolutions.includes("720p")) out.push("720p");
+      if (bunnyResolutions.includes("1080p")) out.push("1080p");
+      return out.length ? out : ["720p"];
+    }
+    return has1080 ? ["720p", "1080p"] : ["720p"];
+  })();
+  const qualityKey = qualityOptions.join(",");
+  const userPickedQualityRef = useRef(false);
+  useEffect(() => {
+    // Default to the best quality the source has (1080p when available),
+    // unless the user picked one that is still offered.
+    const best: Quality = qualityKey.includes("1080p") ? "1080p" : "720p";
+    if (!userPickedQualityRef.current || !qualityKey.split(",").includes(quality)) setQuality(best);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [qualityKey]);
+
+  // "≈ 2 min" next to Export: the download service's estimate for these segments.
+  const [exportEta, setExportEta] = useState<number | null>(null);
+  const segKey = segParam(segments);
+  useEffect(() => {
+    if (!videoId || !segments.length || totalLength(segments) > MAX_CLIP_SEC) { setExportEta(null); return; }
+    const t = setTimeout(() => {
+      fetch("/api/clip-estimate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoId, quality, segments }),
+      })
+        .then((r) => r.json())
+        .then((d) => setExportEta(typeof d.etaSec === "number" ? d.etaSec : null))
+        .catch(() => setExportEta(null));
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId, segKey, quality]);
 
   const clipDuration = endSec - startSec;
   const clipTotal = totalLength(segments);
@@ -876,21 +920,13 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                 {debugOpen ? "Hide Debug" : "Show Debug"}
               </button>
               <div className="flex-1" />
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden">
-                {((): Quality[] => {
-                  // Prefer Bunny's availableResolutions when present (Bunny-only videos).
-                  // Fall back to has1080 (GCS videos use video metadata).
-                  if (bunnyResolutions.length) {
-                    const out: Quality[] = [];
-                    if (bunnyResolutions.includes("720p")) out.push("720p");
-                    if (bunnyResolutions.includes("1080p")) out.push("1080p");
-                    return out.length ? out : ["720p"];
-                  }
-                  return has1080 ? ["720p", "1080p"] : ["720p"];
-                })().map((q) => (
+              <div className="flex rounded-lg border border-gray-200 overflow-hidden" data-testid="quality-picker">
+                {qualityOptions.map((q) => (
                   <button
                     key={q}
-                    onClick={() => setQuality(q)}
+                    data-testid={`quality-${q}`}
+                    data-selected={quality === q}
+                    onClick={() => { userPickedQualityRef.current = true; setQuality(q); }}
                     className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                       quality === q ? "text-white" : "bg-white text-gray-600 hover:bg-gray-50"
                     }`}
@@ -911,6 +947,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
               >
                 Export Snippet
               </button>
+              {exportEta != null && segments.length > 0 && (
+                <span className="text-[12px] text-gray-500 whitespace-nowrap" data-testid="export-estimate" title="Estimated time from Export to the file">
+                  ready in {formatEta(exportEta)}
+                </span>
+              )}
             </div>
           </div>
 

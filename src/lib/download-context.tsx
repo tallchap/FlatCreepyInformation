@@ -20,6 +20,10 @@ export type DownloadItem = {
   stageDetail?: string;
   source?: string; // which path the server used (bunny, rapidapi-prefix, ytdlp-sections, ...)
   elapsedSec?: number; // request → clip ready
+  etaSec?: number; // server's estimate of seconds left, as of etaAt
+  etaAt?: number; // ms timestamp the estimate was read
+  firstEtaSec?: number; // the estimate shown when the export started
+  startedAt?: number; // ms timestamp of the request
   date: string;
 };
 
@@ -97,6 +101,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         quality: params.quality,
         status: "downloading",
         progress: 0,
+        startedAt: t0,
         date: new Date().toISOString(),
       };
 
@@ -123,7 +128,11 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             return;
           }
 
-          const { jobId } = await startResp.json();
+          const started = await startResp.json();
+          const { jobId } = started;
+          if (typeof started.etaSec === "number") {
+            updateItem(id, { etaSec: started.etaSec, etaAt: Date.now(), firstEtaSec: started.etaSec });
+          }
           if (!jobId) {
             updateItem(id, { status: "error", error: "No job ID returned", progress: 0 });
             return;
@@ -210,6 +219,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
                 stageDetail: [status.stage, status.stageDetail].filter(Boolean).join(" — ") || undefined,
                 source: status.source || undefined,
                 elapsedSec: (Date.now() - t0) / 1000,
+                ...(typeof status.etaSec === "number" ? { etaSec: status.etaSec, etaAt: Date.now() } : {}),
               });
             }
           }

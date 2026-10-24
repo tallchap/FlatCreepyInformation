@@ -4,7 +4,7 @@
 //
 //   PLAYWRIGHT_MODULE=/path/to/node_modules/playwright node scripts/verify-yt-only.mjs
 //     [--site https://www.snippysaurus.com] [--render https://snippysaurus-download.onrender.com]
-//     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500] [--quality 720p]
+//     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500] [--quality 1080p]
 //     [--reference <local copy of the source mp4>]   (else pulled via RapidAPI)
 //     [--wait-ttl]                                   (also wait 31 min and check /tmp is empty)
 //
@@ -26,7 +26,7 @@ const SITE = arg("site", "https://www.snippysaurus.com").replace(/\/$/, "");
 const RENDER = arg("render", "https://snippysaurus-download.onrender.com").replace(/\/$/, "");
 const VIDEO = arg("video", "anAmTGcewX8");
 const SEG = arg("seg", "252-297,1110.5-1160.5,2465-2500");
-const QUALITY = arg("quality", "720p");
+const QUALITY = arg("quality", "1080p");
 const SEGMENTS = SEG.split(",").map((p) => { const [a, b] = p.split("-").map(Number); return { in: a, out: b }; });
 const TOTAL = SEGMENTS.reduce((a, s) => a + s.out - s.in, 0);
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -122,6 +122,13 @@ async function main() {
     badge && lookups.length === 0 && pv.controls === "0" && pv.rel === "0" && pv.fs === "0" && pv.disablekb === "1" && pv.iv_load_policy === "3" ? "pass" : "fail",
     `badge=${badge} lookups=${lookups.length} controls=${pv.controls} rel=${pv.rel} fs=${pv.fs} disablekb=${pv.disablekb} iv_load_policy=${pv.iv_load_policy} shield=${!!(await page.$('[data-testid="yt-shield"]'))}`);
   check("timeline filmstrip from YouTube storyboard", filmstrip === "storyboard" ? "pass" : filmstrip === "thumbnails" ? "warn" : "fail", `source=${filmstrip}`);
+  const selected = await page.$$eval('[data-testid^="quality-"][data-selected="true"]', (b) => b.map((x) => x.textContent?.trim()));
+  check(`quality defaults to ${QUALITY}`, selected[0] === QUALITY ? "pass" : "fail", `selected: ${selected.join(",") || "none"}`);
+  if (selected[0] !== QUALITY) await page.click(`[data-testid="quality-${QUALITY}"]`);
+  await page.waitForSelector('[data-testid="export-estimate"]', { timeout: 20_000 }).catch(() => null);
+  const preEstimate = (await page.textContent('[data-testid="export-estimate"]').catch(() => null))?.trim() || null;
+  report.preEstimate = preEstimate;
+  check("estimate shown before export", preEstimate ? "pass" : "fail", preEstimate || "no estimate next to Export");
   await page.screenshot({ path: path.join(OUT, "editor.png"), fullPage: true });
 
   // Export: click the button, capture the exact payload the UI sends.
@@ -144,10 +151,13 @@ async function main() {
   }
   const jobId = started.jobId;
   report.jobId = jobId;
-  check("export job started", "pass", `job ${jobId} · route ${started.route}`);
+  report.initialEtaSec = started.etaSec ?? null;
+  check("export job started with an ETA", started.etaSec != null ? "pass" : "fail", `job ${jobId} · route ${started.route} · initial ETA ${started.etaSec ?? "?"} s`);
 
   // Poll the job ourselves for stages + source; the page keeps its own poll and downloads.
   const stages = [];
+  const etaTrace = [];
+  let panelEtaSeen = null;
   let status = null;
   while (Date.now() - exportAt < 15 * 60_000) {
     await sleep(3000);
@@ -155,7 +165,9 @@ async function main() {
     if (!r.ok) continue;
     status = await r.json();
     const s = `${status.stage || "-"}`;
-    if (stages.at(-1) !== s) { stages.push(s); console.log(`    ${((Date.now() - exportAt) / 1000).toFixed(0).padStart(4)}s  ${s}  ${status.stageDetail || ""}`); }
+    etaTrace.push({ atSec: Number(((Date.now() - exportAt) / 1000).toFixed(1)), etaSec: status.etaSec, stage: s });
+    if (!panelEtaSeen) panelEtaSeen = (await page.textContent('[data-testid="download-eta"]').catch(() => null))?.trim() || null;
+    if (stages.at(-1) !== s) { stages.push(s); console.log(`    ${((Date.now() - exportAt) / 1000).toFixed(0).padStart(4)}s  ${s}  ${status.stageDetail || ""}  · ETA ${status.etaSec ?? "?"} s`); }
     if (status.status === "ready" || status.status === "failed") break;
   }
   const readySec = (Date.now() - exportAt) / 1000;
@@ -164,6 +176,24 @@ async function main() {
   report.requestToReadySec = readySec;
   check("export job completes, source recorded", status?.status === "ready" && status.source ? "pass" : "fail",
     `${status?.status} · source=${status?.source} · request→ready ${readySec.toFixed(1)} s${status?.attempts ? ` · attempts ${status.attempts.map((a) => `${a.source}:${a.ok ? "ok" : "failed"}`).join(", ")}` : ""}${status?.error ? ` · ${String(status.error).slice(0, 300)}` : ""}`);
+  report.etaTrace = etaTrace;
+  report.panelEta = panelEtaSeen;
+  check("download panel shows \"ready in …\" while exporting", panelEtaSeen ? "pass" : "fail", panelEtaSeen || "not seen");
+  if (status?.status === "ready" && started.etaSec != null) {
+    const err = (started.etaSec - readySec) / readySec;
+    const mid = etaTrace[Math.floor(etaTrace.length / 2)];
+    const midErr = mid ? (mid.atSec + (mid.etaSec || 0) - readySec) : null;
+    report.etaAccuracy = { initialEtaSec: started.etaSec, actualSec: readySec, initialErrPct: Math.round(err * 100), midwayPredictedTotal: mid ? mid.atSec + mid.etaSec : null };
+    check("initial ETA within ±35% of the real time", Math.abs(err) <= 0.35 ? "pass" : "warn",
+      `estimated ${started.etaSec} s, took ${readySec.toFixed(0)} s (${err >= 0 ? "+" : ""}${Math.round(err * 100)}%) · halfway it predicted ${mid ? (mid.atSec + mid.etaSec).toFixed(0) : "?"} s total (${midErr != null ? (midErr >= 0 ? "+" : "") + midErr.toFixed(0) : "?"} s)`);
+  }
+  if (status?.bytesPulled) {
+    const fetchedSec = SEGMENTS.reduce((a, sg) => a + Math.ceil(sg.out) - Math.floor(sg.in) + 2, 0);
+    const lenS = report.transcript?.lengthSec || 1;
+    report.data = { bytesPulled: status.bytesPulled, fetchedSec, videoSec: lenS };
+    check("pulls only the moments needed (< 25% of the video)", status.source === "rapidapi-trim" && fetchedSec / lenS < 0.25 ? "pass" : "fail",
+      `${(status.bytesPulled / 1024 / 1024).toFixed(1)} MB for ${fetchedSec} s of ${lenS} s (${((fetchedSec / lenS) * 100).toFixed(1)}%) · quality used ${status.qualityUsed || "?"}`);
+  }
   const perSeg = SEGMENTS.length > 1;
   const logged = (status?.stageLog || []).map((x) => x.stage);
   const seen = logged.length ? logged : stages;
