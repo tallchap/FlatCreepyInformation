@@ -4,7 +4,7 @@
 //
 //   PLAYWRIGHT_MODULE=/path/to/node_modules/playwright node scripts/verify-yt-only.mjs
 //     [--site https://www.snippysaurus.com] [--render https://snippysaurus-download.onrender.com]
-//     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500] [--quality 1080p]
+//     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500]
 //     [--reference <local copy of the source mp4>]   (else pulled via RapidAPI)
 //     [--wait-ttl]                                   (also wait 31 min and check /tmp is empty)
 //
@@ -26,7 +26,7 @@ const SITE = arg("site", "https://www.snippysaurus.com").replace(/\/$/, "");
 const RENDER = arg("render", "https://snippysaurus-download.onrender.com").replace(/\/$/, "");
 const VIDEO = arg("video", "anAmTGcewX8");
 const SEG = arg("seg", "252-297,1110.5-1160.5,2465-2500");
-const QUALITY = arg("quality", "1080p");
+const QUALITY = "1080p"; // the editor always exports at 1080p
 const SEGMENTS = SEG.split(",").map((p) => { const [a, b] = p.split("-").map(Number); return { in: a, out: b }; });
 const TOTAL = SEGMENTS.reduce((a, s) => a + s.out - s.in, 0);
 const STAMP = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
@@ -105,13 +105,17 @@ async function main() {
   page.on("pageerror", (e) => errors.push(e.message));
   page.on("request", (r) => { if (/bunny-lookup|clip-gcs-check|\/api\/clip-gcs/.test(r.url())) lookups.push(r.url()); });
   await page.goto(editUrl, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(`[data-testid="segment-row-${SEGMENTS.length}"]`, { timeout: 90_000 });
+  await page.waitForSelector('[data-testid="segment-active"]', { timeout: 90_000 });
   await page.waitForTimeout(3000);
   const total = (await page.textContent('[data-testid="segment-total"]'))?.trim();
-  const panel = await page.$$eval('[data-testid^="segment-row-"]', (rows) => rows.map((r) => ({ in: Number(r.dataset.in), out: Number(r.dataset.out), text: r.querySelector('[data-testid="segment-text"]')?.textContent?.trim() })));
+  // The panel shows only the active segment; the full list rides in a hidden element.
+  const panel = JSON.parse((await page.getAttribute('[data-testid="segment-list"]', "data-segments")) || "[]");
+  const shownRows = await page.$$('[data-testid="segment-active"]');
+  const shownText = (await page.textContent('[data-testid="segment-active"] [data-testid="segment-text"]'))?.trim();
   const expectTotal = fmtSec(TOTAL);
-  check(`segment panel shows ${SEGMENTS.length} segments, total ${expectTotal}`, total === expectTotal && panel.length === SEGMENTS.length ? "pass" : "fail",
-    `total "${total}" · ${panel.map((p) => p.text).join(" | ")}`);
+  check(`segment panel shows one segment (the active one), total ${expectTotal}`,
+    total === expectTotal && panel.length === SEGMENTS.length && shownRows.length === 1 ? "pass" : "fail",
+    `total "${total}" · shown: ${shownText} · ${panel.length} segments in the clip`);
   const panelMatches = JSON.stringify(panel.map(({ in: a, out: o }) => ({ in: a, out: o }))) === JSON.stringify(SEGMENTS);
   check("panel segments equal the deep link", panelMatches ? "pass" : "fail", JSON.stringify(panel.map(({ in: a, out: o }) => [a, o])));
   const filmstrip = await page.getAttribute('[data-testid="filmstrip"]', "data-source").catch(() => null);
@@ -122,9 +126,8 @@ async function main() {
     badge && lookups.length === 0 && pv.controls === "0" && pv.rel === "0" && pv.fs === "0" && pv.disablekb === "1" && pv.iv_load_policy === "3" ? "pass" : "fail",
     `badge=${badge} lookups=${lookups.length} controls=${pv.controls} rel=${pv.rel} fs=${pv.fs} disablekb=${pv.disablekb} iv_load_policy=${pv.iv_load_policy} shield=${!!(await page.$('[data-testid="yt-shield"]'))}`);
   check("timeline filmstrip from YouTube storyboard", filmstrip === "storyboard" ? "pass" : filmstrip === "thumbnails" ? "warn" : "fail", `source=${filmstrip}`);
-  const selected = await page.$$eval('[data-testid^="quality-"][data-selected="true"]', (b) => b.map((x) => x.textContent?.trim()));
-  check(`quality defaults to ${QUALITY}`, selected[0] === QUALITY ? "pass" : "fail", `selected: ${selected.join(",") || "none"}`);
-  if (selected[0] !== QUALITY) await page.click(`[data-testid="quality-${QUALITY}"]`);
+  const picker = await page.$$('[data-testid^="quality-"]');
+  check("no quality picker (always 1080p)", picker.length === 0 ? "pass" : "fail", `${picker.length} quality buttons on the page`);
   await page.waitForSelector('[data-testid="export-estimate"]', { timeout: 20_000 }).catch(() => null);
   const preEstimate = (await page.textContent('[data-testid="export-estimate"]').catch(() => null))?.trim() || null;
   report.preEstimate = preEstimate;
@@ -141,6 +144,7 @@ async function main() {
   const payload = req.postDataJSON();
   report.payload = payload;
   const sentSegs = JSON.stringify(payload.segments);
+  check("export requests 1080p", payload.quality === "1080p" ? "pass" : "fail", `quality=${payload.quality}`);
   check("API payload segments equal the panel, byte for byte", sentSegs === JSON.stringify(panel.map(({ in: a, out: o }) => ({ in: a, out: o }))) ? "pass" : "fail", sentSegs);
   const res = await resPromise;
   const started = await res.json().catch(() => ({}));
