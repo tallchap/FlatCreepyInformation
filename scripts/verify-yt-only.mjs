@@ -241,7 +241,11 @@ async function main() {
       const ref = arg("reference") || (await pullReference(Math.max(...SEGMENTS.map((s) => s.out)) + 5));
       // The reference is RapidAPI's whole-video stream: a stream copy of
       // YouTube's DASH video, so its timestamps are YouTube's (no shift).
-      const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: status.fps || 60000 / 1001, runFrames: 60, sourceAt: async () => ({ input: ref }) });
+      // Nominal frame rate of the clip (not the job's reported fps).
+      const { stdout: rf } = await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", clipPath]);
+      const [fa, fb] = rf.trim().split("/").map(Number);
+      const clipFps = fb ? fa / fb : fa || 60000 / 1001;
+      const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: clipFps, runFrames: 60, sourceAt: async () => ({ input: ref }) });
       report.cuts = rows;
       console.table(rows);
       check("every cut lands within 1 frame of the requested time", rows.every((r) => r.pass) ? "pass" : "fail",
