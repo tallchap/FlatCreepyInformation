@@ -239,7 +239,9 @@ async function main() {
     // ── 6. Cut accuracy ──
     try {
       const ref = arg("reference") || (await pullReference(Math.max(...SEGMENTS.map((s) => s.out)) + 5));
-      const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: status.fps || 60000 / 1001, sourceAt: async () => ({ input: ref }) });
+      // The reference is RapidAPI's whole-video stream: a stream copy of
+      // YouTube's DASH video, so its timestamps are YouTube's (no shift).
+      const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: status.fps || 60000 / 1001, runFrames: 60, sourceAt: async () => ({ input: ref }) });
       report.cuts = rows;
       console.table(rows);
       check("every cut lands within 1 frame of the requested time", rows.every((r) => r.pass) ? "pass" : "fail",

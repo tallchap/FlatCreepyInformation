@@ -706,7 +706,11 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
     return;
   }
 
-  const segFiles = parts.map((_, i) => (n === 1 ? clipFile : join(tmpdir(), `seg-${jobId}-${i + 1}.mp4`)));
+  // Pieces of a multi-segment clip are Matroska with PCM audio; AAC is encoded
+  // once, at the join. (Joining AAC-in-MP4 pieces shifted the joined video
+  // 1024 samples — one AAC priming packet, 23 ms — against the audio.)
+  const segFiles = parts.map((_, i) => (n === 1 ? clipFile : join(tmpdir(), `seg-${jobId}-${i + 1}.mkv`)));
+  const pieceAudio = n === 1 ? null : ["-c:a", "pcm_s16le"];
   const listFile = join(tmpdir(), `seg-${jobId}-list.txt`);
   const fpsByInput = new Map();
   const exactLen = new Array(n);
@@ -720,12 +724,12 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
     while (pending.size) {
       const { i, r } = await Promise.race(pending.values());
       pending.delete(i);
-      const { input, seg } = r;
+      const { input, seg, cut } = r;
       if (!fpsByInput.has(input)) fpsByInput.set(input, await probeFps(input));
       const fps = fpsByInput.get(input);
       if (!job.fps && fps) job.fps = fps;
-      const len = seg.out - seg.in;
-      exactLen[i] = fps ? Math.max(1, Math.round(len * fps)) / fps : len;
+      const len = cut ? cut.frames / fps : seg.out - seg.in;
+      exactLen[i] = cut ? cut.frames / fps : fps ? Math.max(1, Math.round(len * fps)) / fps : len;
       const label = n > 1 ? `cutting ${i + 1}/${n}` : "cutting";
       job.stage = label;
       job.stageDetail = `${n > 1 ? `Cutting ${i + 1}/${n}` : "Cutting"}: 0%`;
@@ -733,7 +737,15 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
       const t0 = Date.now();
       if (ps) { ps.encoding = true; plan.encoderFreeAt = t0 + len * (plan.liveEncodeRate || etaRates.encode[plan.quality]) * 1000; }
       logClipEvent({ jobId, videoId, pipeline, step: "segment-cut-start", status: "info", detail: { index: i + 1, of: n, in: seg.in, out: seg.out } });
-      await runFfmpeg(cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fps, height), {
+      const args = cut ? cutTrimArgs(input, cut, segFiles[i], overlayFilter, fps, height) : cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fps, height);
+      if (pieceAudio) {
+        // swap the AAC encode for PCM, drop mp4-only flags
+        const ca = args.indexOf("-c:a");
+        args.splice(ca, 4, ...pieceAudio);
+        const mf = args.indexOf("-movflags");
+        if (mf >= 0) args.splice(mf, 2);
+      }
+      await runFfmpeg(args, {
         job, duration: len, label: `${jobId}-seg${i + 1}`,
         onPct: (pct) => {
           job.stageDetail = `${n > 1 ? `Cutting ${i + 1}/${n}` : "Cutting"}: ${pct}%`;
@@ -760,7 +772,7 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
       job.progress = 92;
       // Explicit per-file durations keep the joins exactly where the frames say.
       fs.writeFileSync(listFile, segFiles.map((f, i) => `file '${f.replace(/'/g, "'\\''")}'\nduration ${exactLen[i].toFixed(6)}`).join("\n") + "\n");
-      await execCapture("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listFile, "-c", "copy", "-movflags", "+faststart", "-y", clipFile], { timeout: 300_000 });
+      await execCapture("ffmpeg", ["-f", "concat", "-safe", "0", "-i", listFile, "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart", "-y", clipFile], { timeout: 300_000 });
     }
   } finally {
     for (const f of [...segFiles, listFile]) if (f !== clipFile) await unlink(f).catch(() => {});
@@ -862,9 +874,41 @@ setInterval(() => {
 // YouTube-sourced clip: RapidAPI direct URL → yt-dlp per-segment sections →
 // yt-dlp full download. Nothing is written anywhere but /tmp, and every raw or
 // segment file is deleted the moment the final clip exists.
-// RapidAPI's trimmed file starts a hair before the requested whole second
-// (measured −4 … −32 ms over 4 requests); the middle of that is used.
-const TRIM_BASE_OFFSET = 0.014;
+// How a RapidAPI trim maps onto YouTube's frames (measured 2026-10-24 on 37
+// trims; docs/spec-yt-only-clipping.md, "RapidAPI trim behaviour"):
+//  - RapidAPI's whole-video stream is a stream copy of YouTube's DASH video, so
+//    its timestamps are YouTube's: frame k at y0 + k/fps, y0 = one frame (the
+//    H.264 reorder delay).
+//  - A trim requested at whole second S is re-encoded (ffmpeg 5.1 + libx264)
+//    with video and audio as separate inputs; ffmpeg adds each input's start
+//    time to the seek, so video starts at the first frame ≥ S + y0 (index
+//    ceil(S·fps)) and audio at S (± ~12 ms, AAC packets).
+//  - Its video timestamps are NOT reliable: some trims step 1.39 frames between
+//    frame 0 and 1. So trims are cut by frame number, never by timestamp.
+// Holds 19/19 at 1080p; 720p started 1–2 frames early in 2 of 18.
+function trimFrameRange(trimStartSec, seg, fps) {
+  const y0 = 1 / fps;
+  const firstTrimFrame = Math.ceil(trimStartSec * fps - 1e-6); // YouTube frame index of trim frame 0
+  const firstWanted = Math.ceil((seg.in - y0) * fps - 1e-6); // first YouTube frame shown at or after `in`
+  return { startFrame: firstWanted - firstTrimFrame, frames: Math.max(1, Math.round((seg.out - seg.in) * fps)) };
+}
+const TRIM_AUDIO_LEAD = 0.012; // trim audio plays ~6–17 ms late (file t ↔ S + t − lead); centre of that
+
+// Cut by frame number (video) and time (audio) from a RapidAPI trim.
+function cutTrimArgs(input, cut, outFile, overlayFilter, fps, height) {
+  const exact = cut.frames / fps;
+  const vchain = [`trim=start_frame=${cut.startFrame}:end_frame=${cut.startFrame + cut.frames}`, "setpts=PTS-STARTPTS", ...(overlayFilter ? [overlayFilter] : [])].join(",");
+  const achain = `atrim=start=${cut.audioStart.toFixed(6)}:duration=${exact.toFixed(6)},asetpts=PTS-STARTPTS,afade=t=in:d=0.03,afade=t=out:st=${Math.max(0, exact - 0.03).toFixed(6)}:d=0.03`;
+  return [
+    "-err_detect", "ignore_err", "-i", input,
+    "-filter_complex", `[0:v:0]${vchain}[v];[0:a:0]${achain}[a]`,
+    "-map", "[v]", "-map", "[a]", "-dn", "-sn", "-map_chapters", "-1",
+    "-fps_mode", "passthrough", "-frames:v", String(cut.frames),
+    ...segmentEncodeArgs(height),
+    "-c:a", "aac", "-b:a", "128k",
+    "-movflags", "+faststart", "-y", outFile,
+  ];
+}
 const TRIM_PAD_SEC = 1;
 const TRIM_CONCURRENCY = 6;
 
@@ -939,14 +983,16 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         ps.arrivedAt = Date.now();
         learn(etaRates.trimDelivery, q, (ps.arrivedAt - ps.urlAt) / 1000 / ps.fetchLen);
         job.bytesPulled += fs.statSync(raw).size;
+        if (process.env.DEBUG_KEEP_TRIMS) { fs.mkdirSync(process.env.DEBUG_KEEP_TRIMS, { recursive: true }); fs.copyFileSync(raw, join(process.env.DEBUG_KEEP_TRIMS, `${jobId}-${startSec}-${endSec}.mp4`)); }
         arrived++;
         if (!plan.segs.some((x) => x.encoding)) job.stage = n > 1 ? `fetching ${arrived}/${n}` : "fetching";
         job.stageDetail = `${arrived}/${n} segment${n > 1 ? "s" : ""} fetched (${(job.bytesPulled / 1024 / 1024).toFixed(1)} MB)`;
-        const base = startSec - TRIM_BASE_OFFSET;
+        const fps = (await probeFps(raw)) || 60000 / 1001;
+        const cut = { ...trimFrameRange(startSec, seg, fps), audioStart: Math.max(0, seg.in - startSec + TRIM_AUDIO_LEAD) };
         const got = await probeDuration(raw);
-        if (!got || got < seg.out - base - 0.05) throw new Error(`segment ${i + 1}: trimmed file is ${got}s, needs ${(seg.out - base).toFixed(2)}s`);
+        if (!got || got < (cut.startFrame + cut.frames) / fps - 0.05) throw new Error(`segment ${i + 1}: trimmed file is ${got}s, needs ${((cut.startFrame + cut.frames) / fps).toFixed(2)}s`);
         logDebug("rapidapi.trim-arrived", { jobId, segment: i + 1, startSec, endSec, bytes: fs.statSync(raw).size, got, urlSec: (ps.urlAt - t0) / 1000, fetchSec: (ps.arrivedAt - ps.urlAt) / 1000 });
-        return { input: raw, seg: { in: seg.in - base, out: seg.out - base } };
+        return { input: raw, seg: { in: cut.startFrame / fps, out: (cut.startFrame + cut.frames) / fps }, cut };
       });
       ready.catch(() => {}); // failures surface through cutAndJoin
       return { ready };
@@ -1049,7 +1095,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
           const have = await probeDuration(rawFile);
           if (have != null && have < maxOut - 0.05) throw new Error(`fetched ${have}s of video, segments need ${maxOut}s`);
           job.sourceDuration = have;
-
+          // Whole-video stream = YouTube's own timestamps: cut by time.
           await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId, exact: true, height: heightLimit });
           await unlink(rawFile).catch(() => {});
         }
