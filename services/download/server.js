@@ -558,10 +558,15 @@ async function probeFps(input) {
   try {
     const r = await execCapture("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=avg_frame_rate,r_frame_rate", "-of", "json", input], { timeout: 30_000 });
     const st = (JSON.parse(r.stdout).streams || [])[0] || {};
-    for (const v of [st.avg_frame_rate, st.r_frame_rate]) {
+    // Nominal rate first: RapidAPI trims' average rate is skewed by their
+    // irregular first frame (59.93 for a 59.94 video). Snap to standard rates.
+    const STANDARD = [24000 / 1001, 24, 25, 30000 / 1001, 30, 48, 50, 60000 / 1001, 60, 120];
+    for (const v of [st.r_frame_rate, st.avg_frame_rate]) {
       const [a, b] = String(v || "").split("/").map(Number);
       const fps = b ? a / b : a;
-      if (Number.isFinite(fps) && fps > 1 && fps < 241) return fps;
+      if (!Number.isFinite(fps) || fps <= 1 || fps >= 241) continue;
+      const near = STANDARD.find((x) => Math.abs(x - fps) / x < 0.002);
+      return near || fps;
     }
   } catch {}
   return null;
