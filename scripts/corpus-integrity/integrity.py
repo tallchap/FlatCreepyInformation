@@ -167,7 +167,8 @@ def archive_files(b, fix, files):
 def cmd_snapshot(_):
     b = bq()
     videos = q(b, f'''SELECT video_id, video_title, channel_name, CAST(published_date AS STRING) published_date,
-                       video_length, speaker_source, CAST(created_time AS STRING) created_time FROM `{SOURCE}.youtube_videos`''')
+                       video_length, speaker_source, CAST(created_time AS STRING) created_time,
+                       COALESCE(video_source, 'bunny') video_source FROM `{SOURCE}.youtube_videos`''')
     save('videos.json', videos)
     segs = q(b, f'''SELECT video_id, COUNT(*) rows_, COUNT(DISTINCT FORMAT('%d/%d', segment_index, line_index)) lines,
                      COUNT(DISTINCT created_at) ingests, MAX(COALESCE(end_sec, start_sec)) last_time,
@@ -384,11 +385,18 @@ def cmd_check(args):
             f"{sum(1 for d in dup if not d['survivor'])} need a human")
     gone = [v for v in vids if v not in c['youtube']]
     bunny_orphans = [t for t in c['bunny'] if t not in vids]
+    # yt-only rows (video_source='youtube') are complete without a Bunny asset.
+    yt_only = [v for v in vids if c['videos'][v].get('video_source') == 'youtube']
+    stored_without_bunny = [v for v in vids if v not in c['bunny'] and c['videos'][v].get('video_source', 'bunny') != 'youtube']
+    yt_only_gone = [v for v in yt_only if v not in c['youtube']]
 
     report = {'snapshot_taken_at': meta['taken_at'], 'checked_at': dt.datetime.now(dt.timezone.utc).isoformat(),
               'videos': len(vids), 'chat_files': sum(map(len, c['files'].values())), 'bunny_videos': len(c['bunny']),
               'passed': all(x['ok'] for x in checks), 'checks': checks,
-              'info': {'videos no longer on YouTube': len(gone), 'Bunny videos with no transcript': len(bunny_orphans)}}
+              'info': {'videos no longer on YouTube': len(gone), 'Bunny videos with no transcript': len(bunny_orphans),
+                       'yt-only videos (no Bunny file by design)': len(yt_only),
+                       'yt-only videos gone from YouTube (no longer clippable)': len(yt_only_gone),
+                       'stored videos without a Bunny file': len(stored_without_bunny)}}
     save('check.json', report, OUT)
     print(f"snapshot {meta['taken_at'][:19]}Z · {len(vids)} videos · {report['chat_files']} chat files · {len(c['bunny'])} Bunny\n")
     for x in checks:
@@ -397,6 +405,10 @@ def cmd_check(args):
         print(f"{mark}  {x['check']}: {x['bad']}/{x['of']} bad{(' (' + x['detail'] + ')') if x['detail'] else ''}{tail}")
     print(f"\ninfo: {len(gone)} videos are no longer on YouTube (kept; Bunny/transcript still serve them)")
     print(f"info: {len(bunny_orphans)} Bunny videos have no transcript, so chat can't reach them (not deleted here)")
+    print(f"info: {len(yt_only)} yt-only videos have no Bunny file by design (video_source='youtube'); "
+          f"{len(yt_only_gone)} of them are gone from YouTube and can no longer be clipped")
+    print(f"info: {len(stored_without_bunny)} stored (video_source='bunny') videos have no Bunny file"
+          + (f", e.g. {', '.join(sorted(stored_without_bunny)[:5])}" if stored_without_bunny else ''))
     print('\nALL CHECKS PASSED' if report['passed'] else '\nFAILED')
     sys.exit(0 if report['passed'] else 1)
 

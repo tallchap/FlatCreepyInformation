@@ -1,6 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
+import type { Storyboard } from "@/lib/youtube-storyboard";
+
+export const SEGMENT_COLORS = ["#99cc66", "#60a5fa", "#f59e0b", "#a78bfa", "#f472b6", "#2dd4bf", "#fb7185", "#facc15"];
+export const segmentColor = (i: number) => SEGMENT_COLORS[i % SEGMENT_COLORS.length];
 
 const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -23,6 +27,12 @@ interface TimelineProps {
   onFromStart?: () => void;
   onLast5?: () => void;
   clipRangeNode?: React.ReactNode;
+  /** All segments of a multi-range clip; the active one is startSec/endSec. */
+  segments?: { in: number; out: number }[];
+  activeIdx?: number;
+  onSelectSegment?: (idx: number) => void;
+  /** yt-only videos: YouTube storyboard sprites instead of the waveform bars. */
+  storyboard?: Storyboard | null;
 }
 
 function formatTime(sec: number): string {
@@ -55,12 +65,25 @@ export function Timeline({
   onFromStart,
   onLast5,
   clipRangeNode,
+  segments,
+  activeIdx = 0,
+  onSelectSegment,
+  storyboard,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
   const minimapRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState<"start" | "end" | "playhead" | "minimap" | null>(null);
   const [zoom, setZoom] = useState(5);
   const [panCenter, setPanCenter] = useState<number | null>(null);
+  const [trackWidth, setTrackWidth] = useState(0);
+
+  useEffect(() => {
+    const el = trackRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(([e]) => setTrackWidth(e.contentRect.width));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   // Suppress browser zoom over timeline (non-passive wheel listener)
   useEffect(() => {
@@ -336,28 +359,60 @@ export function Timeline({
           onPointerUp={handlePointerUp}
           onWheel={handleWheel}
         >
-          {/* Waveform bars */}
-          <div className="absolute inset-0 flex items-center gap-[1px] px-2 overflow-hidden rounded-lg">
-            {bars.map((h, i) => (
+          {storyboard ? (
+            <Filmstrip storyboard={storyboard} visibleStart={visibleStart} visibleDuration={visibleDuration} width={trackWidth} />
+          ) : (
+            /* Waveform bars */
+            <div className="absolute inset-0 flex items-center gap-[1px] px-2 overflow-hidden rounded-lg">
+              {bars.map((h, i) => (
+                <div
+                  key={i}
+                  className="flex-1 bg-gray-300 rounded-sm min-w-[2px]"
+                  style={{ height: h }}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* Other segments: coloured bands, click one to make it active */}
+          {segments && segments.length > 1 && segments.map((seg, i) => {
+            if (i === activeIdx) return null;
+            const l = clampPct(pctOf(seg.in));
+            const r = clampPct(pctOf(seg.out));
+            if (r <= l) return null;
+            return (
               <div
                 key={i}
-                className="flex-1 bg-gray-300 rounded-sm min-w-[2px]"
-                style={{ height: h }}
-              />
-            ))}
-          </div>
+                data-handle="band"
+                data-testid={`segment-band-${i + 1}`}
+                title={`Segment ${i + 1} — click to edit`}
+                className="absolute top-0 bottom-0 z-[5] cursor-pointer rounded-sm flex items-start justify-center"
+                style={{ left: `${l}%`, width: `${r - l}%`, backgroundColor: `${segmentColor(i)}55`, borderLeft: `2px solid ${segmentColor(i)}`, borderRight: `2px solid ${segmentColor(i)}` }}
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onSelectSegment?.(i); }}
+              >
+                <span className="text-[9px] font-bold text-white px-1 rounded-b" style={{ backgroundColor: segmentColor(i) }}>{i + 1}</span>
+              </div>
+            );
+          })}
 
           {/* Selected region */}
           {handlesPlaced && regionWidth > 0 && (
             <div
-              className="absolute top-0 bottom-0 bg-[#99cc66]/25"
+              data-testid="segment-band-active"
+              className="absolute top-0 bottom-0 pointer-events-none flex items-start justify-center"
               style={{
                 left: `${regionLeft}%`,
                 width: `${regionWidth}%`,
-                borderLeft: startVisible ? "3px solid #99cc66" : undefined,
+                backgroundColor: `${segmentColor(activeIdx)}40`,
+                borderLeft: startVisible ? `3px solid ${segmentColor(activeIdx)}` : undefined,
                 borderRight: endVisible ? "3px solid #ef4444" : undefined,
               }}
-            />
+            >
+              {segments && segments.length > 1 && (
+                <span className="text-[9px] font-bold text-white px-1 rounded-b" style={{ backgroundColor: segmentColor(activeIdx) }}>{activeIdx + 1}</span>
+              )}
+            </div>
           )}
 
           {/* Playhead */}
@@ -463,13 +518,17 @@ export function Timeline({
             onPointerUp={handlePointerUp}
           >
             {/* Selection region on minimap */}
-            {handlesPlaced && <div
-              className="absolute top-0 bottom-0 bg-[#99cc66]/40 pointer-events-none"
-              style={{
-                left: `${(startSec / duration) * 100}%`,
-                width: `${((endSec - startSec) / duration) * 100}%`,
-              }}
-            />}
+            {handlesPlaced && (segments && segments.length > 1 ? segments : [{ in: startSec, out: endSec }]).map((seg, i) => (
+              <div
+                key={i}
+                className="absolute top-0 bottom-0 pointer-events-none"
+                style={{
+                  left: `${(seg.in / duration) * 100}%`,
+                  width: `${((seg.out - seg.in) / duration) * 100}%`,
+                  backgroundColor: `${segmentColor(segments && segments.length > 1 ? i : 0)}66`,
+                }}
+              />
+            ))}
             {/* Viewport indicator — draggable */}
             <div
               className="absolute top-0 bottom-0 border-2 border-gray-500 rounded-full bg-white/40 cursor-grab active:cursor-grabbing pointer-events-none"
@@ -481,6 +540,56 @@ export function Timeline({
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ── Filmstrip from YouTube storyboard sprites (yt-only videos) ── */
+
+function Filmstrip({ storyboard, visibleStart, visibleDuration, width }: {
+  storyboard: Storyboard; visibleStart: number; visibleDuration: number; width: number;
+}) {
+  const H = 48;
+  if (!width || visibleDuration <= 0) return null;
+  if (storyboard.source === "thumbnails") {
+    const tileW = Math.round((H * 16) / 9);
+    const n = Math.max(1, Math.ceil(width / tileW));
+    return (
+      <div className="absolute inset-0 flex overflow-hidden rounded-lg opacity-80" data-testid="filmstrip" data-source="thumbnails">
+        {Array.from({ length: n }, (_, i) => (
+          <div key={i} className="shrink-0 h-full bg-cover bg-center" style={{ width: tileW, backgroundImage: `url(${storyboard.thumbnails[i % storyboard.thumbnails.length]})` }} />
+        ))}
+      </div>
+    );
+  }
+  // Prefer ~160px-wide tiles (sharp at 48px tall); fall back to the largest level.
+  const lv = storyboard.levels.find((l) => l.width >= 120) || storyboard.levels[storyboard.levels.length - 1];
+  const scale = H / lv.height;
+  const tileW = lv.width * scale;
+  const n = Math.max(1, Math.ceil(width / tileW));
+  const perSheet = lv.cols * lv.rows;
+  return (
+    <div className="absolute inset-0 flex overflow-hidden rounded-lg opacity-80" data-testid="filmstrip" data-source="storyboard">
+      {Array.from({ length: n }, (_, i) => {
+        const t = visibleStart + ((i + 0.5) * tileW / width) * visibleDuration;
+        const frame = Math.min(lv.count - 1, Math.max(0, Math.floor((t * 1000) / lv.intervalMs)));
+        const sheet = Math.floor(frame / perSheet);
+        const k = frame % perSheet;
+        const col = k % lv.cols;
+        const row = Math.floor(k / lv.cols);
+        return (
+          <div
+            key={i}
+            className="shrink-0 h-full"
+            style={{
+              width: tileW,
+              backgroundImage: `url(${lv.sheets[sheet] || lv.sheets[0]})`,
+              backgroundSize: `${lv.cols * tileW}px ${lv.rows * H}px`,
+              backgroundPosition: `-${col * tileW}px -${row * H}px`,
+            }}
+          />
+        );
+      })}
     </div>
   );
 }

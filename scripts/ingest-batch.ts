@@ -19,6 +19,12 @@
  *   BigQuery row + segments, speaker in speaker_source, a vector-store (chat)
  *   file for the speaker, and a finished Bunny video. Exits 1 if anything is
  *   missing. --repair fixes the speaker field and uploads missing chat files.
+ *   Rows with video_source='youtube' (yt-only, added by /admin/add-video or
+ *   --yt-only) are complete without a Bunny asset.
+ *
+ * --yt-only: never download the video. Skips the videos phase and stores rows
+ *   with video_source='youtube'; the editor plays the YouTube embed and exports
+ *   fetch from YouTube on demand.
  *
  * --confirmed-speaker: the speaker is already confirmed in every video (e.g. by
  *   the research server's judge). The GPT speaker passes only read the first
@@ -58,6 +64,7 @@ const TRIGGER_GAP_MS = Number(arg("trigger-gap-ms") || 10000);
 const DRY_RUN = process.argv.includes("--dry-run");
 const CONFIRMED_SPEAKER = process.argv.includes("--confirmed-speaker");
 const REPAIR = process.argv.includes("--repair");
+const YT_ONLY = process.argv.includes("--yt-only");
 // Directory of <videoId>.json transcripts to use instead of fetching (e.g. ElevenLabs
 // Scribe output for videos with no English captions). Same shape as fetchYoutubeTranscript.
 const TRANSCRIPTS_DIR = arg("transcripts-dir");
@@ -106,7 +113,7 @@ async function main() {
   const summary: Record<string, string[]> = {};
   const note = (bucket: string, id: string) => (summary[bucket] ||= []).push(id);
 
-  if (!ONLY || ONLY === "videos") await videosPhase(ids, note);
+  if ((!ONLY || ONLY === "videos") && !YT_ONLY) await videosPhase(ids, note);
   if (!ONLY || ONLY === "transcripts") await transcriptsPhase(ids, note, bigQuery);
   if (ONLY === "respeaker") await respeakerPhase(ids, note, bigQuery);
   if (!DRY_RUN && (!ONLY || ONLY === "verify" || ONLY === "transcripts")) await verifyPhase(ids, note, bigQuery);
@@ -272,6 +279,7 @@ async function transcriptsPhase(ids: string[], note: (b: string, id: string) => 
     const t0 = Date.now();
     try {
       const metadata: any = await fetchYoutubeMetadata(url, SPEAKER!);
+      if (YT_ONLY) metadata.videoSource = "youtube";
 
       await bigQuery
         .dataset("reptranscripts")
@@ -434,6 +442,7 @@ async function verifyPhase(ids: string[], note: (b: string, id: string) => void,
     query: `SELECT v.video_id, ANY_VALUE(v.speaker_source) AS speaker_source, ANY_VALUE(v.video_title) AS title,
               ANY_VALUE(v.channel_name) AS channel, ANY_VALUE(CAST(v.published_date AS STRING)) AS published_date,
               ANY_VALUE(v.video_length) AS video_length, COUNT(DISTINCT v.created_time) AS copies,
+              COALESCE(ANY_VALUE(v.video_source), 'bunny') AS video_source,
               (SELECT COUNT(DISTINCT s.segment_index) FROM \`${PROJECT}.reptranscripts.youtube_transcript_segments\` s WHERE s.video_id = v.video_id) AS segments
             FROM \`${PROJECT}.reptranscripts.youtube_videos\` v WHERE v.video_id IN UNNEST(@ids) GROUP BY v.video_id`,
     params: { ids },
@@ -462,7 +471,9 @@ async function verifyPhase(ids: string[], note: (b: string, id: string) => void,
       problems.push(`chat check error: ${e.message}`);
     }
 
-    try {
+    const ytOnly = r?.video_source === "youtube";
+    if (ytOnly) bunny = "yt-only";
+    else try {
       const key = (process.env.BUNNY_STREAM_API_KEY || "").trim();
       const b = await fetch(`https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos?search=${id}&itemsPerPage=10`, { headers: { AccessKey: key } });
       const items = ((await b.json()).items || []).filter((v: any) => v.title === id);
@@ -521,7 +532,7 @@ async function verifyPhase(ids: string[], note: (b: string, id: string) => void,
       if (r.copies > 1) problems.push(`${r.copies} duplicate youtube_videos rows`);
     }
     if (!chatOk) problems.push(`no ${SPEAKER} chat file`);
-    if (!/^\d+p$/.test(bunny)) problems.push(`Bunny: ${bunny}`);
+    if (!ytOnly && !/^\d+p$/.test(bunny)) problems.push(`Bunny: ${bunny}`);
 
     const ok = (b: boolean) => (b ? "ok" : "--");
     console.log(`  ${id}  ${ok(!!r)}  ${String(r?.segments ?? 0).padStart(5)}  ${ok(speakerOk).padEnd(7)}  ${ok(chatOk).padEnd(4)}  ${bunny}${problems.length ? "   ⚠ " + problems.join("; ") : ""}`);

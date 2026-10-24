@@ -22,6 +22,20 @@ checks each one.
 | Chat file for the speaker | OpenAI vector store `vs_69b1015315d88191b6f26c169575bc4c`, one file per speaker per video, attribute `speaker` | The speaker's chat (file_search filtered by speaker) |
 | Video file | Bunny Stream library `627230`, asset title = YouTube ID | Clip editor / downloads |
 
+### YouTube-only (no stored video)
+
+A video can also be added **without** a file in Bunny: `youtube_videos.video_source = 'youtube'`.
+The editor plays the YouTube embed (no YouTube controls; `src/components/edit/youtube-clean-player.ts`)
+and every export fetches the video from YouTube at that moment (RapidAPI, then yt-dlp), cuts it on
+the Render download service, sends it, and deletes it. Nothing is written to Bunny or GCS.
+
+- One video: `/admin/add-video` — paste a URL, check the speaker, **Add**. Under a minute.
+- In bulk: `npx tsx scripts/ingest-batch.ts --ids ids.txt --speaker "…" --yt-only` (skips the videos phase).
+- The verify phase shows `yt-only` in the Bunny column and counts it as complete.
+- Private, age-restricted, non-embeddable and live videos are refused.
+- If the video later disappears from YouTube it can no longer be clipped (Bunny copies could be).
+- End-to-end check against production: `scripts/verify-yt-only.mjs` (see `docs/spec-yt-only-clipping.md`).
+
 ## Prerequisites
 
 - `.env.local` at the repo root with `GOOGLE_APPLICATION_CREDENTIALS_JSON`,

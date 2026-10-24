@@ -119,7 +119,16 @@ export function DownloadPanel() {
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-medium text-gray-800 truncate">{d.title}</p>
                 <p className="text-[11px] text-gray-400">
-                  {formatTime(d.startSec)} - {formatTime(d.endSec)} &middot; {d.quality}
+                  {d.segments && d.segments.length > 1
+                    ? `${d.segments.length} segments · ${formatTime(d.segments.reduce((a, s) => a + s.out - s.in, 0))}`
+                    : `${formatTime(d.startSec)} - ${formatTime(d.endSec)}`}{" "}
+                  &middot; {d.quality}
+                  {d.elapsedSec != null && (
+                    <span data-testid="download-elapsed">
+                      {" "}&middot; {d.status === "complete" ? "ready in" : "elapsed"} {formatTime(d.elapsedSec)}
+                    </span>
+                  )}
+                  {d.source && <> &middot; {d.source}</>}
                 </p>
                 {d.status === "downloading" && (
                   <>
