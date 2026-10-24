@@ -31,7 +31,9 @@ videos, no `search.list`); credentials otherwise come from `.env.local` and
 | transcripts reach 80% of the real length, or are waived | waivers record what was tried |
 | no re-uploads of one recording | the chat cites the wrong copy; "Snip It" may miss the Bunny file |
 
-Info only: videos gone from YouTube, Bunny videos with no transcript.
+Info only: videos gone from YouTube, Bunny videos with no transcript, yt-only videos
+(`video_source='youtube'`, no Bunny file by design — never flagged for it) and how many of them are
+gone from YouTube, and stored videos that are missing their Bunny file.
 
 ## Fixes
 
