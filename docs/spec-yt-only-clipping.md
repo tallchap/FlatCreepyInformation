@@ -38,6 +38,10 @@ each segment on its side (`start_time`/`end_time`, whole seconds), so a 2:10 cli
   720p/1080p give the same frame. **1080p: 19/19 trims follow this; 720p: 2 of 18 start 1–2 frames early.**
 - Trim video timestamps are unreliable: every trim starts at 0.0334 s (x264 delay, no edit list) and some step
   1.39 frames between frame 0 and 1. So the exporter cuts trims **by frame number**, never by timestamp.
+- About 9% of trims (4 of 45 seen, 720p and 1080p, any worker host) start the video 1–2 frames **early**, never
+  late; same request minutes later is normal, and audio is unaffected. Each segment therefore also requests a 3 s
+  witness trim from the same second: two normal trims are bit-identical, so the main trim's offset from the witness
+  is its early start, and the cut moves by that many frames (`job.trimChecks`).
 - Joining AAC-in-MP4 pieces shifted the joined video 23 ms (one AAC priming packet) against the audio; pieces now
   carry PCM audio and AAC is encoded once at the join.
 - Result (walkthrough, local, frame-matched on each segment's most-moving second): joins 0 / 0 / 0 frames,
