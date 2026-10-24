@@ -63,8 +63,9 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const setEndSec = useCallback((v: number) => updateActive({ out: v }), [updateActive]);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
-  // 1080p by default; drops to 720p when the source has no 1080p.
-  const [quality, setQuality] = useState<Quality>("1080p");
+  // Exports are always requested at 1080p; the server uses the best the
+  // source has (720p when there is no 1080p).
+  const quality: Quality = "1080p";
   const [has1080, setHas1080] = useState(false);
   const { startDownload, hasActive: exporting } = useDownload();
   const [gcsAvailable, setGcsAvailable] = useState<boolean | null>(null);
@@ -353,7 +354,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
         setDuration(video.duration);
         setVideoRes(`${video.videoHeight}p`);
         setHas1080(video.videoHeight >= 1080);
-        if (video.videoHeight < 1080) setQuality("720p");
         applyPendingSegments(video.duration);
       });
       container.appendChild(video);
@@ -385,7 +385,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
           // 1080p anyway (the exporter falls back to 720p if YouTube lacks it).
           const supports1080 = levels.length ? levels.includes("hd1080") : true;
           setHas1080(supports1080);
-          if (!supports1080) setQuality("720p");
           applyPendingSegments(dur);
         },
       });
@@ -442,27 +441,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     if (id) setVideoId(id);
   };
 
-  // Prefer Bunny's availableResolutions when present (Bunny-only videos);
-  // otherwise has1080 (GCS metadata / YouTube levels).
-  const qualityOptions: Quality[] = (() => {
-    if (bunnyResolutions.length) {
-      const out: Quality[] = [];
-      if (bunnyResolutions.includes("720p")) out.push("720p");
-      if (bunnyResolutions.includes("1080p")) out.push("1080p");
-      return out.length ? out : ["720p"];
-    }
-    return has1080 ? ["720p", "1080p"] : ["720p"];
-  })();
-  const qualityKey = qualityOptions.join(",");
-  const userPickedQualityRef = useRef(false);
-  useEffect(() => {
-    // Default to the best quality the source has (1080p when available),
-    // unless the user picked one that is still offered.
-    const best: Quality = qualityKey.includes("1080p") ? "1080p" : "720p";
-    if (!userPickedQualityRef.current || !qualityKey.split(",").includes(quality)) setQuality(best);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [qualityKey]);
-
   // "≈ 2 min" next to Export: the download service's estimate for these segments.
   const [exportEta, setExportEta] = useState<number | null>(null);
   const segKey = segParam(segments);
@@ -505,18 +483,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     setActiveIdx(i);
     const seg = segments[i];
     if (seg && playerReadyRef.current) { playerRef.current?.seekTo(seg.in, true); setPlayheadSec(seg.in); }
-  };
-
-  const moveSegment = (i: number, dir: -1 | 1) => {
-    const j = i + dir;
-    if (j < 0 || j >= segments.length) return;
-    setSegments((prev) => {
-      const next = [...prev];
-      [next[i], next[j]] = [next[j], next[i]];
-      return next;
-    });
-    if (activeIdx === i) setActiveIdx(j);
-    else if (activeIdx === j) setActiveIdx(i);
   };
 
   const removeSegment = (i: number) => {
@@ -920,22 +886,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                 {debugOpen ? "Hide Debug" : "Show Debug"}
               </button>
               <div className="flex-1" />
-              <div className="flex rounded-lg border border-gray-200 overflow-hidden" data-testid="quality-picker">
-                {qualityOptions.map((q) => (
-                  <button
-                    key={q}
-                    data-testid={`quality-${q}`}
-                    data-selected={quality === q}
-                    onClick={() => { userPickedQualityRef.current = true; setQuality(q); }}
-                    className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                      quality === q ? "text-white" : "bg-white text-gray-600 hover:bg-gray-50"
-                    }`}
-                    style={quality === q ? { backgroundColor: DINO_RED } : undefined}
-                  >
-                    {q}
-                  </button>
-                ))}
-              </div>
               <button
                 onClick={handleExport}
                 disabled={clipTooLong || !segments.length}
@@ -979,40 +929,28 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                 </button>
               </div>
             </div>
-            {segments.length === 0 ? (
+            {/* Only the segment that's in the timeline; click another band there to switch. */}
+            <div hidden data-testid="segment-list" data-segments={JSON.stringify(segments)} />
+            {!active ? (
               <p className="px-4 py-3 text-[12px] text-gray-400">Click the timeline or a transcript line to start a segment.</p>
             ) : (
-              <table className="w-full text-[12px] font-mono">
-                <tbody>
-                  {segments.map((seg, i) => (
-                    <tr
-                      key={i}
-                      data-testid={`segment-row-${i + 1}`}
-                      data-in={seg.in}
-                      data-out={seg.out}
-                      onClick={() => selectSegment(i)}
-                      className={`cursor-pointer border-b border-gray-50 ${i === activeIdx ? "bg-gray-50" : "hover:bg-gray-50"}`}
-                    >
-                      <td className="pl-3 py-1.5 w-6">
-                        <span className="inline-block w-2.5 h-2.5 rounded-sm align-middle" style={{ backgroundColor: segmentColor(i) }} />
-                      </td>
-                      <td className="py-1.5 text-gray-500">{i + 1}</td>
-                      <td className="py-1.5 text-gray-800" data-testid="segment-text">
-                        {formatSegTime(seg.in)} → {formatSegTime(seg.out)}
-                      </td>
-                      <td className="py-1.5 text-gray-500 text-right">{(seg.out - seg.in).toFixed(1)} s</td>
-                      <td className="py-1.5 pr-2 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                        <button onClick={() => moveSegment(i, -1)} disabled={i === 0} className="px-1 text-gray-400 hover:text-gray-700 disabled:opacity-20" title="Move up">▲</button>
-                        <button onClick={() => moveSegment(i, 1)} disabled={i === segments.length - 1} className="px-1 text-gray-400 hover:text-gray-700 disabled:opacity-20" title="Move down">▼</button>
-                        <button onClick={() => removeSegment(i)} className="px-1 text-gray-400 hover:text-red-600" title="Remove" data-testid={`segment-remove-${i + 1}`}>✕</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <div
+                className="flex items-center gap-2 px-4 py-2.5 text-[12px] font-mono"
+                data-testid="segment-active"
+                data-in={active.in}
+                data-out={active.out}
+              >
+                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: segmentColor(activeIdx) }} />
+                {segments.length > 1 && <span className="text-gray-500 font-sans">{activeIdx + 1}/{segments.length}</span>}
+                <span className="text-gray-800" data-testid="segment-text">{formatSegTime(active.in)} → {formatSegTime(active.out)}</span>
+                <span className="text-gray-500 ml-auto">{(active.out - active.in).toFixed(1)} s</span>
+                <button onClick={() => removeSegment(activeIdx)} className="px-1 text-gray-400 hover:text-red-600" title="Remove this segment" data-testid="segment-remove">✕</button>
+              </div>
             )}
-            <div className="flex justify-between px-4 py-2 text-[12px]">
-              <span className="text-gray-500">{segments.length} segment{segments.length === 1 ? "" : "s"}</span>
+            <div className="flex justify-between px-4 py-2 text-[12px] border-t border-gray-50">
+              <span className="text-gray-500">
+                {segments.length > 1 ? `${segments.length} segments joined · click a band in the timeline to edit it` : `${segments.length} segment${segments.length === 1 ? "" : "s"}`}
+              </span>
               <span className={`font-mono font-semibold ${clipTooLong ? "text-red-600" : "text-gray-800"}`}>
                 Total <span data-testid="segment-total">{formatTotal(clipTotal)}</span>
                 {clipTooLong && <span className="ml-1 font-sans font-normal">(max {MAX_CLIP_SEC / 60}:00)</span>}
