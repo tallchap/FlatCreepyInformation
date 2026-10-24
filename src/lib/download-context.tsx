@@ -4,27 +4,36 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 
 export type DownloadStatus = "downloading" | "complete" | "error";
 
+export type ClipSegment = { in: number; out: number };
+
 export type DownloadItem = {
   id: string;
   videoId: string;
   title: string;
   startSec: number;
   endSec: number;
+  segments?: ClipSegment[];
   quality: string;
   status: DownloadStatus;
   progress: number;
   error?: string;
   stageDetail?: string;
+  source?: string; // which path the server used (bunny, rapidapi-prefix, ytdlp-sections, ...)
+  elapsedSec?: number; // request → clip ready
   date: string;
 };
 
 export type StartDownloadParams = {
   videoId: string;
   title: string;
-  startSec: number;
-  endSec: number;
+  segments: ClipSegment[];
   quality: string;
+  overlay?: unknown;
 };
+
+function slug(s: string) {
+  return s.normalize("NFKD").replace(/[^\w\s-]/g, "").trim().replace(/\s+/g, "-").slice(0, 60) || "clip";
+}
 
 type DownloadContextType = {
   downloads: DownloadItem[];
@@ -76,12 +85,15 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const startDownload = useCallback(
     (params: StartDownloadParams) => {
       const id = crypto.randomUUID();
+      const segs = params.segments;
+      const t0 = Date.now();
       const item: DownloadItem = {
         id,
         videoId: params.videoId,
         title: params.title,
-        startSec: params.startSec,
-        endSec: params.endSec,
+        startSec: segs[0].in,
+        endSec: segs[segs.length - 1].out,
+        segments: segs,
         quality: params.quality,
         status: "downloading",
         progress: 0,
@@ -92,35 +104,18 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
       (async () => {
         try {
-          // Step 1: Start the clip job — try GCS first, fall back to RapidAPI
-          let startResp = await fetch("/api/clip-gcs", {
+          // Step 1: Start the clip job. /api/clip picks the source: the Bunny
+          // file for stored videos, YouTube on demand for yt-only ones.
+          const startResp = await fetch("/api/clip", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               videoId: params.videoId,
-              startSec: params.startSec,
-              endSec: params.endSec,
               quality: params.quality,
-              ...((params as any).overlay ? { overlay: (params as any).overlay } : {}),
+              segments: segs,
+              ...(params.overlay ? { overlay: params.overlay } : {}),
             }),
           });
-
-          let route = "gcs";
-          if (!startResp.ok) {
-            // GCS not available — fall back to RapidAPI
-            route = "rapidapi";
-            startResp = await fetch("/api/clip", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                url: `https://www.youtube.com/watch?v=${params.videoId}`,
-                startSec: params.startSec,
-                endSec: params.endSec,
-                quality: params.quality,
-                ...((params as any).overlay ? { overlay: (params as any).overlay } : {}),
-              }),
-            });
-          }
 
           if (!startResp.ok) {
             const err = await startResp.json().catch(() => ({ error: "Export failed" }));
@@ -191,11 +186,13 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
               }
 
               const blob = await fileResp.blob();
-              updateItem(id, { status: "complete", progress: 100 });
+              updateItem(id, { status: "complete", progress: 100, source: status.source || undefined, elapsedSec: (Date.now() - t0) / 1000 });
 
               const a = document.createElement("a");
               a.href = URL.createObjectURL(blob);
-              a.download = `clip-${params.videoId}-${Math.round(params.startSec)}-${Math.round(params.endSec)}.mp4`;
+              a.download = segs.length > 1
+                ? `${slug(params.title)}-clip.mp4`
+                : `clip-${params.videoId}-${Math.round(segs[0].in)}-${Math.round(segs[0].out)}.mp4`;
               a.click();
               URL.revokeObjectURL(a.href);
               return;
@@ -210,7 +207,9 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             if (status.progress != null) {
               updateItem(id, {
                 progress: Math.min(90, status.progress),
-                stageDetail: status.stageDetail || undefined,
+                stageDetail: [status.stage, status.stageDetail].filter(Boolean).join(" — ") || undefined,
+                source: status.source || undefined,
+                elapsedSec: (Date.now() - t0) / 1000,
               });
             }
           }
