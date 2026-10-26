@@ -5,19 +5,19 @@
 //   PLAYWRIGHT_MODULE=/path/to/node_modules/playwright node scripts/verify-yt-only.mjs
 //     [--site https://www.snippysaurus.com] [--render https://snippysaurus-download.onrender.com]
 //     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500]
-//     [--reference <local copy of the source mp4>]   (else pulled via RapidAPI)
+//     [--reference <YouTube DASH video+audio mp4>]   (else pulled with yt-dlp)
 //     [--wait-ttl]                                   (also wait 31 min and check /tmp is empty)
 //
 // Needs .env.local (GOOGLE_APPLICATION_CREDENTIALS_JSON, BUNNY_STREAM_API_KEY,
-// RAPIDAPI_KEY), ffmpeg/ffprobe, curl and Playwright with Chrome.
+// RAPIDAPI_KEY), ffmpeg/ffprobe, yt-dlp, curl and Playwright with Chrome.
 // Writes the report, clip and screenshots to .context/verify-yt-only/<stamp>/.
 
 import fs from "node:fs";
 import path from "node:path";
-import { execFile, spawn } from "node:child_process";
+import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { BigQuery } from "@google-cloud/bigquery";
-import { checkJoins } from "./yt-only/frame-match.mjs";
+import { checkCuts, pullYouTubeDash, SYNC_MS } from "./yt-only/frame-match.mjs";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : d; };
@@ -239,29 +239,29 @@ async function main() {
     const v = p.streams.find((s) => s.width);
     const codecs = p.streams.map((s) => s.codec_name).join("+");
     report.file = { duration: dur, width: v?.width, height: v?.height, codecs, bytes: fs.statSync(clipPath).size };
-    check(`duration ${(TOTAL - 0.1).toFixed(1)}–${(TOTAL + 0.1).toFixed(1)} s`, Math.abs(dur - TOTAL) <= 0.1 ? "pass" : "fail", `${dur.toFixed(3)} s`);
+    // Each segment runs to the frame shown just before End: up to a frame more than out − in.
+    const slack = 0.1 + SEGMENTS.length / 24;
+    check(`duration ${(TOTAL - 0.1).toFixed(1)}–${(TOTAL + slack).toFixed(1)} s`, dur >= TOTAL - 0.1 && dur <= TOTAL + slack ? "pass" : "fail", `${dur.toFixed(3)} s`);
     check(`${QUALITY}, H.264 + AAC`, v?.height === Number(QUALITY.replace("p", "")) && codecs === "h264+aac" ? "pass" : "fail",
       `${v?.width}x${v?.height} ${codecs} · ${(report.file.bytes / 1024 / 1024).toFixed(1)} MB`);
 
-    // ── 6. Cut accuracy ──
+    // ── 6. Cut accuracy: against YouTube's own DASH streams ──
     try {
-      const ref = arg("reference") || (await pullReference(Math.max(...SEGMENTS.map((s) => s.out)) + 5));
-      // The reference is RapidAPI's whole-video stream: a stream copy of
-      // YouTube's DASH video, so its timestamps are YouTube's (no shift).
       // Nominal frame rate of the clip (not the job's reported fps).
       const { stdout: rf } = await run("ffprobe", ["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", clipPath]);
       const [fa, fb] = rf.trim().split("/").map(Number);
       const clipFps = fb ? fa / fb : fa || 60000 / 1001;
-      const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: clipFps, runFrames: 60, sourceAt: async () => ({ input: ref }) });
-      report.cuts = rows;
-      console.table(rows);
-      // Picture and sound both: the audio must be the same audio (correlation) and in sync (±45 ms).
-      check("audio matches YouTube and is in sync (±45 ms)", rows.every((r) => r.audioCorr >= 0.8 && Math.abs(r.audioLagMs) <= 45) ? "pass" : "fail",
-        rows.map((r) => `#${r.segment} ${r.audioLagMs} ms (corr ${r.audioCorr})`).join(" · "));
-      check("every cut lands within 1 frame of the requested time", rows.every((r) => r.pass) ? "pass" : "fail",
-        rows.map((r) => `#${r.segment} ${r.frameOffset >= 0 ? "+" : ""}${r.frameOffset}f (audio ${r.audioLagMs} ms)`).join(" · "));
+      const ref = arg("reference") || (await pullYouTubeDash(VIDEO, clipFps, OUT));
+      const { cuts, frames, expectFrames } = await checkCuts({ clip: clipPath, segments: SEGMENTS, fps: clipFps, ref });
+      report.cuts = cuts;
+      console.table(cuts.map(({ segment, kind, t, frameOffset, syncMs, audioCorr }) => ({ segment, kind, t, frameOffset, syncMs, audioCorr })));
+      const fmtCut = (c) => `#${c.segment} ${c.kind} ${c.frameOffset >= 0 ? "+" : ""}${c.frameOffset}f`;
+      check("frame count = every frame YouTube shows from Start to End", frames === expectFrames ? "pass" : "fail", `${frames} frames, expected ${expectFrames}`);
+      check("every cut is the frame YouTube shows there (±1 frame)", cuts.every((c) => c.picturePass) ? "pass" : "fail", cuts.map(fmtCut).join(" · "));
+      check(`sound in sync with picture at every cut (±${SYNC_MS} ms)`, cuts.every((c) => c.soundPass) ? "pass" : "fail",
+        cuts.map((c) => `#${c.segment} ${c.kind} ${c.syncMs} ms (corr ${c.audioCorr})`).join(" · "));
     } catch (e) {
-      check("every cut lands within 1 frame of the requested time", "fail", `reference unavailable: ${e.message.slice(0, 200)}`);
+      check("every cut is the frame YouTube shows there (±1 frame)", "fail", `reference unavailable: ${e.message.slice(0, 200)}`);
     }
   }
 
@@ -283,37 +283,6 @@ async function main() {
   report.bunnyAfter = bunnyAfter;
   check("Bunny library count unchanged", bunnyAfter === bunnyBefore ? "pass" : "fail", `${bunnyBefore} → ${bunnyAfter}`);
   finish(report);
-}
-
-// The source, straight from RapidAPI, streamed until it covers `needSec`.
-async function pullReference(needSec) {
-  const key = process.env.RAPIDAPI_KEY;
-  const host = "youtube-info-download-api.p.rapidapi.com";
-  const q = new URLSearchParams({ format: "720", add_info: "0", url: `https://www.youtube.com/watch?v=${VIDEO}`, allow_extended_duration: "1", no_merge: "false" });
-  const init = await (await fetch(`https://${host}/ajax/download.php?${q}`, { headers: { "x-rapidapi-host": host, "x-rapidapi-key": key } })).json();
-  if (!init.success) throw new Error(`RapidAPI: ${init.message}`);
-  let url = null;
-  for (let i = 0; i < 120 && !url; i++) {
-    await sleep(5000);
-    const p = await (await fetch(init.progress_url)).json().catch(() => ({}));
-    if (p.success === 1 && p.download_url) url = p.download_url;
-  }
-  if (!url) throw new Error("RapidAPI gave no download URL");
-  const file = path.join(OUT, "reference.mp4");
-  console.log(`    pulling reference source from RapidAPI (until ${needSec}s)...`);
-  await new Promise((resolve, reject) => {
-    const c = spawn("curl", ["-fsSL", "-o", file, url]);
-    let done = false;
-    const timer = setInterval(async () => {
-      if (!fs.existsSync(file) || fs.statSync(file).size < 2e6) return;
-      try {
-        const { stdout } = await run("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file]);
-        if (Number(stdout) >= needSec) { done = true; c.kill(); }
-      } catch {}
-    }, 4000);
-    c.on("exit", (code) => { clearInterval(timer); done || code === 0 ? resolve() : reject(new Error(`curl exit ${code}`)); });
-  });
-  return file;
 }
 
 function finish(report) {

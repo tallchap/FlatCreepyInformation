@@ -7,6 +7,7 @@
 // pts ≥ in — what ffmpeg's accurate seek and the editor both mean by `in`.
 // A run of clip frames is slid over the source; the best offset is the cut
 // error in frames. Audio is cross-correlated as a second, sub-frame signal.
+import path from "node:path";
 import { execFile } from "node:child_process";
 
 function run(cmd, args) {
@@ -128,3 +129,82 @@ export async function checkJoins({ clip, segments, fps, sourceAt, runFrames = 60
   }
   return rows;
 }
+
+// ── Clip vs YouTube, the way the player shows it ──
+// The reference is YouTube's own DASH streams (video + original audio, muxed
+// without re-encoding). RapidAPI's whole-video file is NOT a valid reference:
+// its video sits one frame late against its audio.
+export const SYNC_MS = 20;
+const runText = (cmd, args) => new Promise((resolve, reject) => execFile(cmd, args, { maxBuffer: 64 * 1024 * 1024 }, (e, so, se) => (e ? reject(new Error(`${e.message}\n${se}`)) : resolve(so))));
+
+/** Frames YouTube shows from `in` up to `out`. */
+export function framesShown(seg, fps) {
+  return Math.max(1, Math.ceil(seg.out * fps - 1e-6) - Math.floor(seg.in * fps + 1e-6));
+}
+
+/** Every cut of a clip (Start and End of each segment), picture and sound. */
+export async function checkCuts({ clip, segments, fps, ref }) {
+  const clipFrames = await allFrames(clip);
+  const cuts = [];
+  let idx = 0;
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    const frames = framesShown(s, fps);
+    cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx, segFrames: frames, t: s.in, kind: "start", fps, ref })) });
+    cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx + frames - 1, segFrames: frames, t: s.out, kind: "end", fps, ref })) });
+    idx += frames;
+  }
+  return { cuts, frames: clipFrames.length, expectFrames: idx };
+}
+
+// YouTube's DASH streams for the video, muxed by stream copy (timestamps untouched).
+export async function pullYouTubeDash(videoId, fps, dir) {
+  const url = `https://www.youtube.com/watch?v=${videoId}`;
+  const v = path.join(dir, "dash-video.mp4"), a = path.join(dir, "dash-audio.m4a"), file = path.join(dir, "reference-dash.mp4");
+  console.log("pulling YouTube DASH streams with yt-dlp...");
+  // Same frame rate as the clip; 480p is plenty (frames are compared at 192×108, proof images at 640 wide).
+  const vf = fps > 50 ? "bv[fps>50][height<=720][ext=mp4]" : "bv[fps<50][height<=480][ext=mp4]";
+  await runText("yt-dlp", ["--ignore-config", "-f", vf, "-o", v, url]);
+  await runText("yt-dlp", ["--ignore-config", "-f", "ba[ext=m4a]", "-o", a, url]); // yt-dlp picks the original-language track
+  await runText("ffmpeg", ["-v", "error", "-y", "-i", v, "-i", a, "-map", "0:v", "-map", "1:a", "-c", "copy", file]);
+  return file;
+}
+
+/**
+ * One cut point. kind "start": the clip frame at `clipIdx` should be the source
+ * frame showing at `t`; kind "end": the clip frame at `clipIdx` (the segment's
+ * last) should be the last source frame before `t`. Picture is matched on the
+ * most-moving 48-frame run next to the cut; sound is compared against the
+ * source sound at the matched frame.
+ */
+export async function checkCut({ clip, clipFrames, clipIdx, segFrames, t, kind, fps, ref, run = 48, search = 480, lead = 10 }) {
+  // Run of clip frames inside the segment, as near the cut as motion allows.
+  let w = 0, bestEnergy = -1;
+  for (let s0 = 0; s0 + run < Math.min(segFrames, search); s0 += 12) {
+    const from = kind === "start" ? clipIdx + s0 : clipIdx - s0 - run + 1;
+    let e = 0;
+    for (let j = from + 1; j < from + run; j++) { const a = clipFrames[j - 1], b = clipFrames[j]; for (let k = 0; k < b.length; k += 7) { const d = b[k] - a[k]; e += d * d; } }
+    if (e > bestEnergy) { bestEnergy = e; w = s0; }
+  }
+  const runFrom = kind === "start" ? clipIdx + w : clipIdx - w - run + 1;
+  const span = (w + run + lead + 2) / fps;
+  const src = await framesWithPts(ref, kind === "start" ? t - (lead + 2) / fps : t - span, kind === "start" ? t + span : t + (lead + 2) / fps);
+  // Index of the source frame the cut should land on.
+  const expectIdx = kind === "start" ? src.findLastIndex((f) => f.pts <= t + 1e-4) : src.findLastIndex((f) => f.pts < t - 1e-4);
+  const zero = kind === "start" ? expectIdx + w : expectIdx - w - run + 1; // expected source index of runFrom
+  const lo = Math.max(0, zero - lead - 2);
+  const v = bestFrameOffset(clipFrames.slice(runFrom, runFrom + run), src.map((f) => f.data).slice(lo), zero - lo);
+  const gotIdx = expectIdx + v.offset; // source frame the clip's cut frame really is
+  const gotPts = src[gotIdx]?.pts;
+  // Sound vs picture: clip sound next to the cut against source sound next to the matched frame.
+  const clipT = clipIdx / fps, len = 1.5;
+  const [cFrom, sFrom] = kind === "start" ? [clipT + 0.05, gotPts + 0.05] : [clipT + 1 / fps - 0.05 - len, gotPts + 1 / fps - 0.05 - len];
+  const a = bestAudioLag(await pcm(clip, cFrom, len), await pcm(ref, sFrom - 1.5, len + 3), 1.5);
+  const syncMs = a.lagMs == null ? null : Number(a.lagMs.toFixed(1));
+  return {
+    kind, t, clipFrame: clipIdx, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)), margin: v.margin == null ? null : Number(v.margin.toFixed(2)),
+    expectedPts: src[expectIdx]?.pts, gotPts, syncMs, audioCorr: Number(a.corr.toFixed(3)),
+    picturePass: v.offset != null && Math.abs(v.offset) <= 1, soundPass: a.corr >= 0.8 && Math.abs(syncMs) <= SYNC_MS,
+  };
+}
+
