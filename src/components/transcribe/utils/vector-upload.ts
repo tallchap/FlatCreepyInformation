@@ -1,5 +1,21 @@
-import OpenAI from "openai";
-import * as fs from "fs";
+import OpenAI, { toFile } from "openai";
+
+/** Retry one OpenAI step (3 tries, 2 s / 6 s backoff); the error keeps its real cause. */
+async function withRetries<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  let last: any;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+        return await fn();
+    } catch (e: any) {
+      last = e;
+      const cause = e?.cause ? ` (cause: ${e.cause.code || ""} ${e.cause.message || e.cause})` : "";
+      console.error(`Vector store: ${label} failed, attempt ${attempt}/3: ${e?.message}${cause}`);
+      if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 2000 + (attempt - 1) * 2000));
+    }
+  }
+  const cause = last?.cause ? ` (cause: ${last.cause.code || ""} ${last.cause.message || last.cause})` : "";
+  throw new Error(`${label}: ${last?.message || last}${cause}`);
+}
 
 const SHARED_VECTOR_STORE_ID = "vs_69b1015315d88191b6f26c169575bc4c";
 
@@ -84,7 +100,9 @@ export async function uploadToVectorStore(params: VectorUploadParams): Promise<v
     return;
   }
 
-  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  // Retries: a dropped connection on any one of the many calls below used to
+  // abort the whole upload ("Connection error."), leaving speakers without a file.
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY, maxRetries: 5, timeout: 120_000 });
 
   // Format transcript with timestamps
   const transcriptText = segments
@@ -113,8 +131,10 @@ export async function uploadToVectorStore(params: VectorUploadParams): Promise<v
   });
   const uploaded = new Set<string>();
 
+  const failed: string[] = [];
   for (const speaker of allSpeakers) {
     if (onlySlugs && !onlySlugs.has(slugify(speaker))) continue;
+    try {
     const speakerSlug = slugify(speaker);
     const others = allSpeakers
       .filter((s) => s !== speaker)
@@ -131,20 +151,17 @@ ${transcriptText}
 ${"─".repeat(37)}
 END OF TRANSCRIPT — Video ID: ${videoId} — Title: ${title}`;
 
-    const tmpPath = `/tmp/transcript_${videoId}_${speakerSlug}.txt`;
-    fs.writeFileSync(tmpPath, content);
-
-    const file = await openai.files.create({
-      file: fs.createReadStream(tmpPath),
+    // An in-memory body, so the SDK can resend it on retry (a file stream
+    // is spent after the first attempt, which turned every retry into a failure).
+    const file = await withRetries(`upload ${speaker}`, async () => openai.files.create({
+      file: await toFile(Buffer.from(content, "utf8"), `transcript_${videoId}_${speakerSlug}.txt`, { type: "text/plain" }),
       purpose: "assistants",
-    });
-
-    fs.unlinkSync(tmpPath);
+    }));
 
     // 2. Add file to shared vector store
-    await openai.vectorStores.fileBatches.createAndPoll(SHARED_VECTOR_STORE_ID, {
+    await withRetries(`index ${speaker}`, () => openai.vectorStores.fileBatches.createAndPoll(SHARED_VECTOR_STORE_ID, {
       file_ids: [file.id],
-    });
+    }));
 
     // 3. Set metadata attributes
     const attributes: Record<string, string | number> = {
@@ -163,17 +180,23 @@ END OF TRANSCRIPT — Video ID: ${videoId} — Title: ${title}`;
       attributes[`co_speaker_${j + 1}`] = others[j].slice(0, 512);
     }
 
-    await openai.vectorStores.files.update(SHARED_VECTOR_STORE_ID, file.id, { attributes });
+    await withRetries(`tag ${speaker}`, () => openai.vectorStores.files.update(SHARED_VECTOR_STORE_ID, file.id, { attributes }));
     uploaded.add(file.id);
 
     console.log(`Vector store: uploaded ${speaker} | ${videoId} | ${title.slice(0, 50)}`);
+    } catch (e: any) {
+      // Keep going: one speaker's failure must not leave the others without a file.
+      failed.push(`${speaker}: ${e?.message || e}`);
+    }
   }
 
+  const failedSlugs = new Set(failed.map((f) => slugify(f.split(":")[0])));
   const superseded = previous.filter(
-    (f) => !uploaded.has(f.fileId) && (!onlySlugs || onlySlugs.has(slugify(f.speaker))),
+    (f) => !uploaded.has(f.fileId) && (!onlySlugs || onlySlugs.has(slugify(f.speaker))) && !failedSlugs.has(slugify(f.speaker)),
   );
   for (const f of superseded) {
     await openai.vectorStores.files.del(SHARED_VECTOR_STORE_ID, f.fileId);
     console.log(`Vector store: detached superseded ${f.speaker || "?"} file ${f.fileId} | ${videoId}`);
   }
+  if (failed.length) throw new Error(`chat files failed for ${failed.length} of ${allSpeakers.length} speakers — ${failed.join(" | ")}`);
 }
