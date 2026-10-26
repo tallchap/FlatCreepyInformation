@@ -37,7 +37,9 @@ function iso8601ToSec(d: string | undefined): number | null {
 export function guessSpeaker(title: string): string {
   const lead = title.split(/\s*(?:,|:|\||—|–| - | on | with )\s*/i)[0]?.trim() || "";
   const words = lead.split(/\s+/);
-  const isName = words.length >= 2 && words.length <= 4 && words.every((w) => /^[A-Z][\p{L}'.-]+$/u.test(w));
+  // Title-case leads like "Full Speech" or "Live Interview" aren't names.
+  const NOT_NAME = /^(full|speech|live|interview|exclusive|extended|breaking|keynote|watch|episode|ep|part|special|panel|debate|podcast|lecture|talk|news|update|the|a|an|why|how|what|official|new|ai)$/i;
+  const isName = words.length >= 2 && words.length <= 4 && words.every((w) => /^[A-Z][\p{L}'.-]+$/u.test(w) && !NOT_NAME.test(w));
   return isName ? lead : "";
 }
 
