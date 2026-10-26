@@ -60,6 +60,23 @@ each segment on its side (`start_time`/`end_time`, whole seconds), so a 2:10 cli
 - Bug found on the way: frame-rate snapping matched 24→23.976 and 30→29.97 (first match within 0.2%), shifting
   frame indices on 24/30 fps videos (the Chamath −1 frame). Now nearest standard rate within 0.05%.
 
+**Correction: the reference was a frame off (2026-10-25, 161 trims of 11 videos vs YouTube's own DASH streams).**
+Clipping five videos on the live site as a user, the Sherman clip's sound ran 49 ms behind its picture. Checked
+against YouTube's DASH video + original audio (yt-dlp, muxed by stream copy, frame k shown from k/fps — what the
+player and so the editor show):
+- RapidAPI's whole-video file is **not** a valid reference: its audio matches DASH, its video sits one frame late.
+  The study above measured against it, so the fitted audio rule carried that frame: with it, every clip's sound
+  ran late — 10–53 ms on original-path trims (≈ a frame at 24 fps), on all five walkthrough clips.
+- The frame rule holds against DASH (160/161 trims): the cut's first frame is the frame YouTube shows at `in`.
+- A trim's sound is in step with its own picture: −19…+6 ms on the original path (one −28 ms outlier), about one
+  frame early on the copy path. So audio is now cut at the trim time of the first kept frame (one frame earlier on
+  the copy path): sound vs picture −19…+6 ms. The rest can't be predicted per trim without a reference.
+- Segments now run to the frame YouTube shows just before `out` (⌈out·fps⌉ − ⌊in·fps⌋ frames; was round(len·fps),
+  which could drop that last frame).
+- The whole-stream fallback (`rapidapi-range/prefix/full`) reads its video one frame later than its audio.
+- `scripts/yt-only/check-clip.mjs` checks any downloaded clip against the editor's `seg=` value this way (first and
+  last frame of every segment, sound vs picture at every cut, side-by-side PNGs); the verifier uses the same check.
+
 **Deviations.**
 - Segment count: Apify returns 1,082 lines for this talk, not "2,9xx"; the verifier checks coverage (≥ 80% of the length, ≥ 1 line per 10 s) instead of > 2,000.
 - Storyboard: works when fetched from a residential IP; from Vercel the watch page doesn't yield the spec, so production falls back to the static thumbnails (verifier warns).
