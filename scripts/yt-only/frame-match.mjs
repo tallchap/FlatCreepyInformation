@@ -142,19 +142,33 @@ export function framesShown(seg, fps) {
   return Math.max(1, Math.ceil(seg.out * fps - 1e-6) - Math.floor(seg.in * fps + 1e-6));
 }
 
+/** Video and audio track lengths of a file, seconds. */
+export async function streamDurations(file) {
+  const out = await runText("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", file]);
+  const d = {};
+  for (const st of JSON.parse(out).streams || []) if (st.codec_type === "video" || st.codec_type === "audio") d[st.codec_type] = Number(st.duration);
+  return d;
+}
+
 /** Every cut of a clip (Start and End of each segment), picture and sound. */
 export async function checkCuts({ clip, segments, fps, ref }) {
   const clipFrames = await allFrames(clip);
+  // Where each segment sits in the clip. Clips cut before 2026-10-26 used
+  // round((out − in) × fps) frames per segment; read those by that rule.
+  let lens = segments.map((s) => framesShown(s, fps));
+  const expectFrames = lens.reduce((a, b) => a + b, 0);
+  const oldLens = segments.map((s) => Math.max(1, Math.round((s.out - s.in) * fps)));
+  if (clipFrames.length !== expectFrames && clipFrames.length === oldLens.reduce((a, b) => a + b, 0)) lens = oldLens;
   const cuts = [];
   let idx = 0;
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
-    const frames = framesShown(s, fps);
+    const frames = lens[i];
     cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx, segFrames: frames, t: s.in, kind: "start", fps, ref })) });
     cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx + frames - 1, segFrames: frames, t: s.out, kind: "end", fps, ref })) });
     idx += frames;
   }
-  return { cuts, frames: clipFrames.length, expectFrames: idx };
+  return { cuts, frames: clipFrames.length, expectFrames };
 }
 
 // YouTube's DASH streams for the video, muxed by stream copy (timestamps untouched).
@@ -199,12 +213,16 @@ export async function checkCut({ clip, clipFrames, clipIdx, segFrames, t, kind, 
   // Sound vs picture: clip sound next to the cut against source sound next to the matched frame.
   const clipT = clipIdx / fps, len = 1.5;
   const [cFrom, sFrom] = kind === "start" ? [clipT + 0.05, gotPts + 0.05] : [clipT + 1 / fps - 0.05 - len, gotPts + 1 / fps - 0.05 - len];
-  const a = bestAudioLag(await pcm(clip, cFrom, len), await pcm(ref, sFrom - 1.5, len + 3), 1.5);
+  const clipA = await pcm(clip, cFrom, len);
+  // A short window means the clip has no sound there (a silent tail): fail it,
+  // don't compare the part that exists.
+  const soundPresent = clipA.length >= len * 8000 * 0.98;
+  const a = bestAudioLag(clipA, await pcm(ref, sFrom - 1.5, len + 3), 1.5);
   const syncMs = a.lagMs == null ? null : Number(a.lagMs.toFixed(1));
   return {
     kind, t, clipFrame: clipIdx, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)), margin: v.margin == null ? null : Number(v.margin.toFixed(2)),
-    expectedPts: src[expectIdx]?.pts, gotPts, syncMs, audioCorr: Number(a.corr.toFixed(3)),
-    picturePass: v.offset != null && Math.abs(v.offset) <= 1, soundPass: a.corr >= 0.8 && Math.abs(syncMs) <= SYNC_MS,
+    expectedPts: src[expectIdx]?.pts, gotPts, syncMs, audioCorr: Number(a.corr.toFixed(3)), soundPresent,
+    picturePass: v.offset != null && Math.abs(v.offset) <= 1, soundPass: soundPresent && a.corr >= 0.8 && Math.abs(syncMs) <= SYNC_MS,
   };
 }
 

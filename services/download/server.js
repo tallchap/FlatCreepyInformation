@@ -608,8 +608,9 @@ function cutSegmentArgs(input, seg, outFile, overlayFilter, fps, height, videoLa
     "-err_detect", "ignore_err", "-fflags", "+genpts",
     ...inputs,
     "-map", "0:v:0", "-map", `${videoLag ? 1 : 0}:a:0`, "-dn", "-sn", "-map_chapters", "-1",
-    ...(overlayFilter ? ["-vf", overlayFilter] : []),
-    ...(frames ? ["-frames:v", String(frames)] : []),
+    // Video is bounded by a trim filter, not -frames:v: on Render's ffmpeg
+    // (5.1) -frames:v ends the file with the last ~0.5–0.9 s of audio unwritten.
+    ...(frames || overlayFilter ? ["-vf", [frames ? `trim=end_frame=${frames}` : null, overlayFilter].filter(Boolean).join(",")] : []),
     ...segmentEncodeArgs(height),
     "-af", `atrim=duration=${exact.toFixed(6)},afade=t=in:d=0.03,afade=t=out:st=${Math.max(0, exact - 0.03).toFixed(6)}:d=0.03`,
     "-c:a", "aac", "-b:a", "128k",
@@ -851,6 +852,16 @@ function downloadUntil(url, outFile, { needSec, job, onCovered }) {
   });
 }
 
+// Video and audio track lengths, seconds.
+async function probeStreamDurations(file) {
+  try {
+    const r = await execCapture("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", file], { timeout: 20_000 });
+    const out = {};
+    for (const st of JSON.parse(r.stdout).streams || []) if (st.codec_type === "video" || st.codec_type === "audio") out[st.codec_type] = parseFloat(st.duration) || null;
+    return out;
+  } catch { return {}; }
+}
+
 async function probeDuration(file) {
   try {
     const r = await execCapture("ffprobe", ["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", file], { timeout: 20_000 });
@@ -978,7 +989,9 @@ function cutTrimArgs(input, cut, outFile, overlayFilter, fps, height) {
     "-err_detect", "ignore_err", "-i", input,
     "-filter_complex", `[0:v:0]${vchain}[v];[0:a:0]${achain}[a]`,
     "-map", "[v]", "-map", "[a]", "-dn", "-sn", "-map_chapters", "-1",
-    "-fps_mode", "passthrough", "-frames:v", String(cut.frames),
+    // No -frames:v: the trim filter already ends the video, and -frames:v cut
+    // the last ~0.5–0.9 s of audio on Render's ffmpeg.
+    "-fps_mode", "passthrough",
     ...segmentEncodeArgs(height),
     "-c:a", "aac", "-b:a", "128k",
     "-movflags", "+faststart", "-y", outFile,
@@ -1027,6 +1040,11 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
     const d = await probeDuration(clipFile);
     if (d == null || Math.abs(d - total) > 0.35) throw new Error(`output is ${d}s, expected ${total.toFixed(2)}s`);
     job.outputDuration = d;
+    // The sound must run as long as the picture (a short audio track is a
+    // silent tail on every segment).
+    job.streamDurations = await probeStreamDurations(clipFile);
+    const { video: vd, audio: ad } = job.streamDurations;
+    if (vd && ad && vd - ad > 0.1) logDebug("clip.audio-short", { jobId, video: vd, audio: ad });
   };
   const planFor = (kind, q) => ({
     kind, quality: q, startedAt: Date.now(), encoderFreeAt: null, liveEncodeRate: null,
@@ -1896,7 +1914,7 @@ app.get("/clip/:jobId", (req, res) => {
     stage: job.stage || null, stageDetail: job.stageDetail || null,
     source: job.source || null, segments: job.segments || null, attempts: job.attempts || null,
     bytesPulled: job.bytesPulled || null, sourceDuration: job.sourceDuration || null,
-    outputDuration: job.outputDuration || null, fps: job.fps || null, timings: job.timings || null,
+    outputDuration: job.outputDuration || null, streamDurations: job.streamDurations || null, fps: job.fps || null, timings: job.timings || null,
     stageLog: job.stageLog || null, elapsedSec: Number(((Date.now() - job.createdAt) / 1000).toFixed(1)),
     etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null, trimChecks: job.trimChecks || null, copyPathRetries: job.copyPathRetries || 0,
   });
