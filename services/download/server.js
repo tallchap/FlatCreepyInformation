@@ -589,14 +589,25 @@ function segmentEncodeArgs(height) {
 // Cut one segment out of a file/URL (frame-accurate re-encode). With the
 // frame rate known, video is cut to round(len × fps) frames and audio to the
 // same length, so every join lands within half a frame of where it should.
-function cutSegmentArgs(input, seg, outFile, overlayFilter, fps, height) {
+// videoLag: how far the file's video runs behind its audio. RapidAPI's
+// whole-video file puts every frame one frame later than YouTube does (its
+// audio is right), so its video is read that much later than its audio.
+// With it, the cut also follows YouTube's frames: from the frame shown at
+// `in` through the one shown just before `out`, sound from that first frame.
+function cutSegmentArgs(input, seg, outFile, overlayFilter, fps, height, videoLag = 0) {
   const len = seg.out - seg.in;
-  const frames = fps ? Math.max(1, Math.round(len * fps)) : null;
+  const aligned = videoLag && fps;
+  const first = aligned ? Math.floor(seg.in * fps + 1e-6) : 0;
+  const frames = aligned ? Math.max(1, Math.ceil(seg.out * fps - 1e-6) - first) : fps ? Math.max(1, Math.round(len * fps)) : null;
   const exact = frames ? frames / fps : len;
+  const t0 = aligned ? first / fps : seg.in;
+  const inputs = aligned
+    ? ["-ss", (t0 + videoLag - 0.001).toFixed(6), "-to", String(t0 + exact + videoLag + 0.1), "-i", input, "-ss", t0.toFixed(6), "-to", String(t0 + exact + 0.1), "-i", input]
+    : ["-ss", String(seg.in), "-to", String(seg.out + 0.1), "-i", input];
   return [
     "-err_detect", "ignore_err", "-fflags", "+genpts",
-    "-ss", String(seg.in), "-to", String(seg.out + 0.1), "-i", input,
-    "-map", "0:v:0", "-map", "0:a:0", "-dn", "-sn", "-map_chapters", "-1",
+    ...inputs,
+    "-map", "0:v:0", "-map", `${videoLag ? 1 : 0}:a:0`, "-dn", "-sn", "-map_chapters", "-1",
     ...(overlayFilter ? ["-vf", overlayFilter] : []),
     ...(frames ? ["-frames:v", String(frames)] : []),
     ...segmentEncodeArgs(height),
@@ -732,12 +743,14 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
     while (pending.size) {
       const { i, r } = await Promise.race(pending.values());
       pending.delete(i);
-      const { input, seg, cut } = r;
+      const { input, seg, cut, videoLag } = r;
       if (!fpsByInput.has(input)) fpsByInput.set(input, await probeFps(input));
       const fps = fpsByInput.get(input);
       if (!job.fps && fps) job.fps = fps;
       const len = cut ? cut.frames / fps : seg.out - seg.in;
-      exactLen[i] = cut ? cut.frames / fps : fps ? Math.max(1, Math.round(len * fps)) / fps : len;
+      exactLen[i] = cut ? cut.frames / fps
+        : videoLag && fps ? Math.max(1, Math.ceil(seg.out * fps - 1e-6) - Math.floor(seg.in * fps + 1e-6)) / fps
+        : fps ? Math.max(1, Math.round(len * fps)) / fps : len;
       const label = n > 1 ? `cutting ${i + 1}/${n}` : "cutting";
       job.stage = label;
       job.stageDetail = `${n > 1 ? `Cutting ${i + 1}/${n}` : "Cutting"}: 0%`;
@@ -745,7 +758,7 @@ async function cutAndJoin({ jobId, job, parts, clipFile, overlay, videoWidth, pi
       const t0 = Date.now();
       if (ps) { ps.encoding = true; plan.encoderFreeAt = t0 + len * (plan.liveEncodeRate || etaRates.encode[plan.quality]) * 1000; }
       logClipEvent({ jobId, videoId, pipeline, step: "segment-cut-start", status: "info", detail: { index: i + 1, of: n, in: seg.in, out: seg.out } });
-      const args = cut ? cutTrimArgs(input, cut, segFiles[i], overlayFilter, fps, height) : cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fps, height);
+      const args = cut ? cutTrimArgs(input, cut, segFiles[i], overlayFilter, fps, height) : cutSegmentArgs(input, seg, segFiles[i], overlayFilter, fps, height, videoLag && fps ? videoLag / fps : 0);
       if (pieceAudio) {
         // swap the AAC encode for PCM, drop mp4-only flags
         const ca = args.indexOf("-c:a");
@@ -882,35 +895,44 @@ setInterval(() => {
 // YouTube-sourced clip: RapidAPI direct URL → yt-dlp per-segment sections →
 // yt-dlp full download. Nothing is written anywhere but /tmp, and every raw or
 // segment file is deleted the moment the final clip exists.
-// How a RapidAPI trim maps onto YouTube's frames (measured 2026-10-24: 158
-// trims of 10 videos at 23.976/24/29.97/30/59.94 fps; docs/spec-yt-only-clipping.md):
-//  - YouTube frame k is at y0 + k/fps, y0 = one frame (H.264 reorder delay).
-//    RapidAPI's whole-video stream is a stream copy, so it has these times.
+// How a RapidAPI trim maps onto YouTube's frames (measured 2026-10-24/25: 161
+// trims of 11 videos at 23.976/24/29.97/30/59.94 fps against YouTube's own
+// DASH streams; docs/spec-yt-only-clipping.md):
+//  - YouTube shows frame k from k/fps (the DASH streams the player — and so
+//    the editor — plays). RapidAPI's whole-video file has every frame one
+//    frame later while its audio is right, so it is no timing reference.
 //  - Trims come from one of two sources, told apart by the video track's
 //    handler name:
 //      "…produced by Google Inc." (original, ~92%): first frame = YouTube
-//        frame ceil(S·fps)  (145/145 trims)
+//        frame ceil(S·fps)
 //      "VideoHandler" (an intermediate copy, ~8%, likely a cache): its clock
 //        runs ~13 ms ahead, so first frame = first frame ≥ S − 13 ms
-//        (13/13 trims; one or two frames earlier than the original rule)
-//  - Audio: trim audio pts + base = YouTube time, base = time of the trim's
-//    first frame − its video start (+ one frame on the copy path).
+//        (one or two frames earlier than the original rule)
+//  - Audio: a trim's sound is in step with its own picture (−19…+6 ms on the
+//    original path), so it is cut at the trim time of the first kept frame.
+//    On the copy path the sound runs one frame early, so one frame earlier.
+//    (Cutting audio at `in` against a fitted base left the sound 10–53 ms late.)
 //  - Trim video timestamps can be irregular after frame 0, so video is cut by
 //    frame number, audio by its own timestamps.
 const COPY_PATH_SHIFT = 0.0127;
 function trimPlan(trimStartSec, seg, fps, path, videoStart) {
   const googleFirst = Math.ceil(trimStartSec * fps - 1e-6);
   const firstTrimFrame = path === "copy" ? Math.ceil((trimStartSec - COPY_PATH_SHIFT - 1 / fps) * fps - 1e-6) : googleFirst;
-  const firstWanted = Math.ceil((seg.in - 1 / fps) * fps - 1e-6); // first YouTube frame at or after `in`
-  // trim audio pts + audioBase = YouTube time. Audio is in step with the
-  // trim's own first frame on the original path, one frame after it on the copy path.
-  const audioBase = (firstTrimFrame + 1) / fps - videoStart + (path === "copy" ? 1 / fps : 0);
-  return {
+  const firstWanted = Math.floor(seg.in * fps + 1e-6); // the frame YouTube shows at `in`
+  const endFrame = Math.ceil(seg.out * fps - 1e-6); // first frame not shown before `out`
+  const cut = {
     startFrame: firstWanted - firstTrimFrame,
-    frames: Math.max(1, Math.round((seg.out - seg.in) * fps)),
-    audioStart: Math.max(0, seg.in - audioBase),
+    frames: Math.max(1, endFrame - firstWanted),
+    videoStart, audioShift: path === "copy" ? -1 / fps : 0,
     firstTrimFrame, googleFirst,
   };
+  setAudioStart(cut, fps);
+  return cut;
+}
+// Audio starts at the trim time of the first kept frame (call again after
+// startFrame changes).
+function setAudioStart(cut, fps) {
+  cut.audioStart = Math.max(0, cut.videoStart + cut.startFrame / fps + cut.audioShift);
 }
 async function trimSource(file) {
   try {
@@ -1088,7 +1110,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
               if (src.path !== "google" && wsrc.path === "google") check.correction = w.d - expected;
               logDebug("rapidapi.witness-mismatch", { jobId, ...check });
             }
-            if (check.correction) cut.startFrame += check.correction;
+            if (check.correction) { cut.startFrame += check.correction; setAudioStart(cut, fps); }
           } catch (e) { check.error = e.message; }
           await unlink(wf).catch(() => {});
         }
@@ -1165,7 +1187,7 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         if (ranged) {
           // ffmpeg seeks inside the remote file and pulls only what each segment needs.
           job.source = "rapidapi-range";
-          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: downloadUrl, seg })), clipFile, overlay, pipeline: "clip", videoId, exact: true, height: heightLimit });
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: downloadUrl, seg, videoLag: 1 })), clipFile, overlay, pipeline: "clip", videoId, exact: true, height: heightLimit });
           timings.downloadDone = Date.now();
         } else {
           // No Range support: stream the file once, stop after the last needed second.
@@ -1200,8 +1222,8 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
           const have = await probeDuration(rawFile);
           if (have != null && have < maxOut - 0.05) throw new Error(`fetched ${have}s of video, segments need ${maxOut}s`);
           job.sourceDuration = have;
-          // Whole-video stream = YouTube's own timestamps: cut by time.
-          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId, exact: true, height: heightLimit });
+          // Whole-video stream: cut by time; its video runs one frame late.
+          await cutAndJoin({ jobId, job, parts: segments.map((seg) => ({ input: rawFile, seg, videoLag: 1 })), clipFile, overlay, videoWidth: videoMeta?.width, pipeline: "clip", videoId, exact: true, height: heightLimit });
           await unlink(rawFile).catch(() => {});
         }
         await checkOutput();
