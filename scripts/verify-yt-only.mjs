@@ -184,7 +184,8 @@ async function main() {
   if (status?.source === "rapidapi-trim") {
     const tc = status.trimChecks || [];
     check("witness check ran on every segment", tc.length === SEGMENTS.length && tc.every((c) => c && c.witness && c.d != null) ? "pass" : "warn",
-      tc.map((c) => c ? `#${c.segment} d=${c.d}${c.correction ? ` → corrected +${c.correction}f` : ""} (err ${c.err})` : "?").join(" · "));
+      tc.map((c) => c ? `#${c.segment} ${c.path}${c.tries > 1 ? ` after ${c.tries} tries` : ""} d=${c.d}${c.correction ? ` → corrected +${c.correction}f` : ""} (err ${c.err})` : "?").join(" · ") + ` · copy-path retries ${status.copyPathRetries || 0}`);
+    if (tc.some((c) => c?.unverifiedCopyPath)) check("no segment left on an unverified copy-path trim", "fail", "every retry came back from the copy path");
   }
   report.etaTrace = etaTrace;
   report.panelEta = panelEtaSeen;
@@ -254,6 +255,9 @@ async function main() {
       const rows = await checkJoins({ clip: clipPath, segments: SEGMENTS, fps: clipFps, runFrames: 60, sourceAt: async () => ({ input: ref }) });
       report.cuts = rows;
       console.table(rows);
+      // Picture and sound both: the audio must be the same audio (correlation) and in sync (±45 ms).
+      check("audio matches YouTube and is in sync (±45 ms)", rows.every((r) => r.audioCorr >= 0.8 && Math.abs(r.audioLagMs) <= 45) ? "pass" : "fail",
+        rows.map((r) => `#${r.segment} ${r.audioLagMs} ms (corr ${r.audioCorr})`).join(" · "));
       check("every cut lands within 1 frame of the requested time", rows.every((r) => r.pass) ? "pass" : "fail",
         rows.map((r) => `#${r.segment} ${r.frameOffset >= 0 ? "+" : ""}${r.frameOffset}f (audio ${r.audioLagMs} ms)`).join(" · "));
     } catch (e) {
