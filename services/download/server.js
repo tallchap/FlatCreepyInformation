@@ -1032,17 +1032,33 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         const ps = plan.segs[i];
         ps.fetchLen = endSec - startSec;
         const t0 = Date.now();
+        // Fetch a trim until it comes from the original path. Copy-path trims
+        // (an intermediate copy on RapidAPI's side, ~8% of requests) are
+        // usually 1–2 frames early but on some videos start seconds off, with
+        // audio and video off from each other — so they are re-requested.
+        const fetchOriginal = async (file, range, tries, label) => {
+          let src = null;
+          for (let a = 1; a <= tries; a++) {
+            const dl = await rapidApiDownload(url, q, null, range);
+            await execCapture("curl", ["-fL", "-sS", "-o", file, dl], { timeout: 600_000 });
+            src = await trimSource(file);
+            src.tries = a;
+            if (src.path === "google") return src;
+            job.copyPathRetries = (job.copyPathRetries || 0) + 1;
+            if (a < tries) job.bytesPulled += fs.statSync(file).size; // discarded copy-path download still counts
+            logDebug("rapidapi.copy-path", { jobId, segment: i + 1, label, attempt: a, handler: src.handler, retrying: a < tries });
+          }
+          return src;
+        };
         const witness = join(tmpdir(), `raw-${jobId}-${i + 1}-w.mp4`);
         const witnessReady = limit(async () => {
-          const wdl = await rapidApiDownload(url, q, null, { startSec, endSec: startSec + 3 });
-          await execCapture("curl", ["-fL", "-sS", "-o", witness, wdl], { timeout: 300_000 });
-          return witness;
+          const wsrc = await fetchOriginal(witness, { startSec, endSec: startSec + 3 }, 2, "witness");
+          return { file: witness, src: wsrc };
         }).catch((e) => { logDebug("rapidapi.witness-failed", { jobId, segment: i + 1, error: e.message }); return null; });
-        const dl = await rapidApiDownload(url, q, null, { startSec, endSec });
+        const raw = join(tmpdir(), `raw-${jobId}-${i + 1}.mp4`);
+        const src = await fetchOriginal(raw, { startSec, endSec }, 3, "main");
         ps.urlAt = Date.now();
         learn(etaRates, "rapidPrepSec", (ps.urlAt - t0) / 1000);
-        const raw = join(tmpdir(), `raw-${jobId}-${i + 1}.mp4`);
-        await execCapture("curl", ["-fL", "-sS", "-o", raw, dl], { timeout: 600_000 });
         ps.arrivedAt = Date.now();
         learn(etaRates.trimDelivery, q, (ps.arrivedAt - ps.urlAt) / 1000 / ps.fetchLen);
         job.bytesPulled += fs.statSync(raw).size;
@@ -1051,15 +1067,16 @@ async function processClipJob(jobId, { url, segments, quality, overlay, lengthSe
         if (!plan.segs.some((x) => x.encoding)) job.stage = n > 1 ? `fetching ${arrived}/${n}` : "fetching";
         job.stageDetail = `${arrived}/${n} segment${n > 1 ? "s" : ""} fetched (${(job.bytesPulled / 1024 / 1024).toFixed(1)} MB)`;
         const fps = (await probeFps(raw)) || 60000 / 1001;
-        const src = await trimSource(raw);
         const cut = trimPlan(startSec, seg, fps, src.path, src.videoStart);
-        // Witness check: shift the cut if this trim started early.
-        const wf = await witnessReady;
-        let check = { segment: i + 1, path: src.path, witness: !!wf, d: null, expected: null, correction: 0 };
+        // Witness check: the two files' frames must line up as the rules say.
+        const w0 = await witnessReady;
+        const wf = w0?.file || null;
+        let check = { segment: i + 1, path: src.path, tries: src.tries, witness: !!wf, d: null, expected: null, correction: 0 };
+        if (src.path !== "google") check.unverifiedCopyPath = true; // every retry came back from the copy path
         if (wf) {
           try {
             job.bytesPulled += fs.statSync(wf).size;
-            const wsrc = await trimSource(wf);
+            const wsrc = w0.src;
             const wplan = trimPlan(startSec, seg, fps, wsrc.path, wsrc.videoStart);
             const w = await witnessOffset(raw, wf);
             const expected = wplan.firstTrimFrame - cut.firstTrimFrame; // main frame `expected` == witness frame 0
@@ -1859,7 +1876,7 @@ app.get("/clip/:jobId", (req, res) => {
     bytesPulled: job.bytesPulled || null, sourceDuration: job.sourceDuration || null,
     outputDuration: job.outputDuration || null, fps: job.fps || null, timings: job.timings || null,
     stageLog: job.stageLog || null, elapsedSec: Number(((Date.now() - job.createdAt) / 1000).toFixed(1)),
-    etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null, trimChecks: job.trimChecks || null,
+    etaSec: etaRemainingSec(job), qualityUsed: job.qualityUsed || null, trimChecks: job.trimChecks || null, copyPathRetries: job.copyPathRetries || 0,
   });
 });
 

@@ -113,9 +113,10 @@ export async function checkJoins({ clip, segments, fps, sourceAt, runFrames = 60
     const zero = src.findIndex((f) => f.pts + shift >= seg.in - 1e-4) + w;
     const run = clipFrames.slice(idx + w, idx + w + runFrames);
     const v = bestFrameOffset(run, src.map((f) => f.data).slice(Math.max(0, zero - lead - 2)), Math.min(zero, lead + 2));
+    // Wide search (±1.5 s) so a big audio offset is measured, not mistaken for noise.
     const clipA = await pcm(clip, audioAt + 0.05, 1.5);
-    const srcA = await pcm(input, seg.in - shift + 0.05 - 0.25, 2.0);
-    const a = bestAudioLag(clipA, srcA, 0.25);
+    const srcA = await pcm(input, seg.in - shift + 0.05 - 1.5, 4.5);
+    const a = bestAudioLag(clipA, srcA, 1.5);
     rows.push({
       segment: i + 1, in: seg.in, clipFrame: idx, measuredAt: `+${(w / fps).toFixed(1)}s`, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)),
       margin: v.margin == null ? null : Number(v.margin.toFixed(2)),
