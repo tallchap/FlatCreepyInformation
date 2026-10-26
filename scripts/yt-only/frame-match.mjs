@@ -142,6 +142,14 @@ export function framesShown(seg, fps) {
   return Math.max(1, Math.ceil(seg.out * fps - 1e-6) - Math.floor(seg.in * fps + 1e-6));
 }
 
+/** Video and audio track lengths of a file, seconds. */
+export async function streamDurations(file) {
+  const out = await runText("ffprobe", ["-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", file]);
+  const d = {};
+  for (const st of JSON.parse(out).streams || []) if (st.codec_type === "video" || st.codec_type === "audio") d[st.codec_type] = Number(st.duration);
+  return d;
+}
+
 /** Every cut of a clip (Start and End of each segment), picture and sound. */
 export async function checkCuts({ clip, segments, fps, ref }) {
   const clipFrames = await allFrames(clip);
@@ -205,12 +213,16 @@ export async function checkCut({ clip, clipFrames, clipIdx, segFrames, t, kind, 
   // Sound vs picture: clip sound next to the cut against source sound next to the matched frame.
   const clipT = clipIdx / fps, len = 1.5;
   const [cFrom, sFrom] = kind === "start" ? [clipT + 0.05, gotPts + 0.05] : [clipT + 1 / fps - 0.05 - len, gotPts + 1 / fps - 0.05 - len];
-  const a = bestAudioLag(await pcm(clip, cFrom, len), await pcm(ref, sFrom - 1.5, len + 3), 1.5);
+  const clipA = await pcm(clip, cFrom, len);
+  // A short window means the clip has no sound there (a silent tail): fail it,
+  // don't compare the part that exists.
+  const soundPresent = clipA.length >= len * 8000 * 0.98;
+  const a = bestAudioLag(clipA, await pcm(ref, sFrom - 1.5, len + 3), 1.5);
   const syncMs = a.lagMs == null ? null : Number(a.lagMs.toFixed(1));
   return {
     kind, t, clipFrame: clipIdx, frameOffset: v.offset, frameErr: Number(v.err.toFixed(2)), margin: v.margin == null ? null : Number(v.margin.toFixed(2)),
-    expectedPts: src[expectIdx]?.pts, gotPts, syncMs, audioCorr: Number(a.corr.toFixed(3)),
-    picturePass: v.offset != null && Math.abs(v.offset) <= 1, soundPass: a.corr >= 0.8 && Math.abs(syncMs) <= SYNC_MS,
+    expectedPts: src[expectIdx]?.pts, gotPts, syncMs, audioCorr: Number(a.corr.toFixed(3)), soundPresent,
+    picturePass: v.offset != null && Math.abs(v.offset) <= 1, soundPass: soundPresent && a.corr >= 0.8 && Math.abs(syncMs) <= SYNC_MS,
   };
 }
 

@@ -17,7 +17,7 @@ import path from "node:path";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
 import { BigQuery } from "@google-cloud/bigquery";
-import { checkCuts, pullYouTubeDash, SYNC_MS } from "./yt-only/frame-match.mjs";
+import { checkCuts, pullYouTubeDash, streamDurations, SYNC_MS } from "./yt-only/frame-match.mjs";
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), "..");
 const arg = (n, d) => { const i = process.argv.indexOf(`--${n}`); return i >= 0 ? process.argv[i + 1] : d; };
@@ -256,10 +256,12 @@ async function main() {
       report.cuts = cuts;
       console.table(cuts.map(({ segment, kind, t, frameOffset, syncMs, audioCorr }) => ({ segment, kind, t, frameOffset, syncMs, audioCorr })));
       const fmtCut = (c) => `#${c.segment} ${c.kind} ${c.frameOffset >= 0 ? "+" : ""}${c.frameOffset}f`;
+      const sd = await streamDurations(clipPath);
+      check("sound runs the whole clip (audio track within 30 ms of video)", sd.video - sd.audio <= 0.03 ? "pass" : "fail", `video ${sd.video.toFixed(3)} s, audio ${sd.audio.toFixed(3)} s`);
       check("frame count = every frame YouTube shows from Start to End", frames === expectFrames ? "pass" : "fail", `${frames} frames, expected ${expectFrames}`);
       check("every cut is the frame YouTube shows there (±1 frame)", cuts.every((c) => c.picturePass) ? "pass" : "fail", cuts.map(fmtCut).join(" · "));
       check(`sound in sync with picture at every cut (±${SYNC_MS} ms)`, cuts.every((c) => c.soundPass) ? "pass" : "fail",
-        cuts.map((c) => `#${c.segment} ${c.kind} ${c.syncMs} ms (corr ${c.audioCorr})`).join(" · "));
+        cuts.map((c) => `#${c.segment} ${c.kind} ${c.soundPresent ? `${c.syncMs} ms (corr ${c.audioCorr})` : "NO SOUND"}`).join(" · "));
     } catch (e) {
       check("every cut is the frame YouTube shows there (±1 frame)", "fail", `reference unavailable: ${e.message.slice(0, 200)}`);
     }

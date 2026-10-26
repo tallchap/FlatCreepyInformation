@@ -24,7 +24,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
-import { checkCuts, pullYouTubeDash, SYNC_MS } from "./frame-match.mjs";
+import { checkCuts, pullYouTubeDash, streamDurations, SYNC_MS } from "./frame-match.mjs";
 
 const argv = process.argv.slice(2);
 const arg = (k) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : undefined; };
@@ -79,15 +79,17 @@ async function main() {
   const checks = [];
   const check = (name, ok, detail) => { checks.push({ name, ok, detail }); console.log(`${ok ? "\x1b[32m✓" : "\x1b[31m✗"}\x1b[0m ${name} — ${detail}`); };
   const sign = (x) => (x >= 0 ? `+${x}` : `${x}`);
+  const sd = await streamDurations(CLIP);
+  check("sound runs the whole clip (audio track within 30 ms of video)", sd.video - sd.audio <= 0.03, `video ${sd.video.toFixed(3)} s, audio ${sd.audio.toFixed(3)} s`);
   check("frame count = every frame YouTube shows from Start to End", clipFrameCount === expectFrames, `${clipFrameCount} frames, expected ${expectFrames} (${dur.toFixed(3)} s @ ${fps.toFixed(3)} fps)`);
   for (const kind of ["start", "end"]) {
     const rows = cuts.filter((c) => c.kind === kind);
     const what = kind === "start" ? "first frame = what YouTube shows at Start" : "last frame = what YouTube shows just before End";
     check(`every ${kind === "start" ? "Start" : "End"}: ${what}`, rows.every((r) => r.picturePass), rows.map((r) => `#${r.segment} ${fmt(r.t)} ${sign(r.frameOffset)}f`).join(" · "));
     check(`every ${kind === "start" ? "Start" : "End"}: sound in sync with picture (±${SYNC_MS} ms)`, rows.every((r) => r.soundPass),
-      rows.map((r) => `#${r.segment} ${r.syncMs >= 0 ? "+" : ""}${r.syncMs} ms (corr ${r.audioCorr})`).join(" · "));
+      rows.map((r) => `#${r.segment} ${r.soundPresent ? `${r.syncMs >= 0 ? "+" : ""}${r.syncMs} ms (corr ${r.audioCorr})` : "NO SOUND"}`).join(" · "));
   }
-  const report = { clip: CLIP, video: VIDEO, reference: ref, segments: SEGMENTS, fps, durationSec: dur, frames: clipFrameCount, expectFrames, cuts, shots: [], checks };
+  const report = { clip: CLIP, video: VIDEO, reference: ref, segments: SEGMENTS, fps, durationSec: dur, streamDurations: sd, frames: clipFrameCount, expectFrames, cuts, shots: [], checks };
   const reportPath = path.join(OUT, "report.json");
   fs.writeFileSync(reportPath, JSON.stringify(report, null, 2));
 
