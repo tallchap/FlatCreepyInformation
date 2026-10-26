@@ -56,7 +56,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const startSec = active?.in ?? 0;
   const endSec = active?.out ?? 0;
   const handlesPlaced = segments.length > 0;
+  // Index of a segment made by "+ Add segment" that hasn't been placed yet:
+  // the first transcript click moves it there instead of moving a handle.
+  const placeholderIdxRef = useRef<number | null>(null);
   const updateActive = useCallback((patch: Partial<ClipSegment>) => {
+    placeholderIdxRef.current = null;
     setSegments((prev) => prev.map((s, i) => (i === activeIdxRef.current ? { ...s, ...patch } : s)));
   }, []);
   const setStartSec = useCallback((v: number) => updateActive({ in: Math.max(0, v) }), [updateActive]);
@@ -476,6 +480,7 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
 
   const handleAddSegment = () => {
     const t = Math.max(0, Math.min(playheadSec, Math.max(0, duration - 1)));
+    if (segments.length < MAX_SEGMENTS) placeholderIdxRef.current = segments.length;
     addSegmentAt(t, Math.min(duration || t + 10, t + 10));
   };
 
@@ -486,6 +491,7 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   };
 
   const removeSegment = (i: number) => {
+    placeholderIdxRef.current = null;
     setSegments((prev) => prev.filter((_, k) => k !== i));
     const nextActive = activeIdx > i ? activeIdx - 1 : Math.min(activeIdx, segments.length - 2);
     setActiveIdx(Math.max(0, nextActive));
@@ -602,11 +608,13 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     if (playerReadyRef.current) playerRef.current?.setPlaybackRate(rate);
   };
 
-  // Transcript click: first click starts a segment; later clicks move the
-  // active segment's nearer handle.
+  // Transcript click: first click starts a segment (or places one just made by
+  // "+ Add segment"); later clicks move the active segment's nearer handle.
   const handleTranscriptClick = (sec: number) => {
     if (!handlesPlaced) {
       addSegmentAt(sec, Math.min(duration, sec + 10));
+    } else if (placeholderIdxRef.current === activeIdxRef.current) {
+      updateActive({ in: sec, out: Math.min(duration || sec + 10, sec + 10) });
     } else {
       const mid = (startSec + endSec) / 2;
       if (sec < mid) {
