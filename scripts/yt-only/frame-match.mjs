@@ -145,16 +145,22 @@ export function framesShown(seg, fps) {
 /** Every cut of a clip (Start and End of each segment), picture and sound. */
 export async function checkCuts({ clip, segments, fps, ref }) {
   const clipFrames = await allFrames(clip);
+  // Where each segment sits in the clip. Clips cut before 2026-10-26 used
+  // round((out − in) × fps) frames per segment; read those by that rule.
+  let lens = segments.map((s) => framesShown(s, fps));
+  const expectFrames = lens.reduce((a, b) => a + b, 0);
+  const oldLens = segments.map((s) => Math.max(1, Math.round((s.out - s.in) * fps)));
+  if (clipFrames.length !== expectFrames && clipFrames.length === oldLens.reduce((a, b) => a + b, 0)) lens = oldLens;
   const cuts = [];
   let idx = 0;
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
-    const frames = framesShown(s, fps);
+    const frames = lens[i];
     cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx, segFrames: frames, t: s.in, kind: "start", fps, ref })) });
     cuts.push({ segment: i + 1, ...(await checkCut({ clip, clipFrames, clipIdx: idx + frames - 1, segFrames: frames, t: s.out, kind: "end", fps, ref })) });
     idx += frames;
   }
-  return { cuts, frames: clipFrames.length, expectFrames: idx };
+  return { cuts, frames: clipFrames.length, expectFrames };
 }
 
 // YouTube's DASH streams for the video, muxed by stream copy (timestamps untouched).
