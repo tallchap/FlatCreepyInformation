@@ -69,6 +69,41 @@ function saveToStorage(items: DownloadItem[]) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, MAX_ITEMS)));
 }
 
+// Wait `ms`, or less if the tab comes back into view: background tabs' timers
+// are throttled, which left finished exports undownloaded for minutes.
+function waitOrVisible(ms: number) {
+  return new Promise<void>((resolve) => {
+    const done = () => { clearTimeout(t); document.removeEventListener("visibilitychange", onVis); resolve(); };
+    const onVis = () => { if (document.visibilityState === "visible") done(); };
+    const t = setTimeout(done, ms);
+    document.addEventListener("visibilitychange", onVis);
+  });
+}
+
+// The finished clip, with retries: network errors and 5xx are retried with
+// backoff (1, 2, 4, 8 s); a 4xx (job expired or unknown) is final.
+async function fetchClipFile(jobId: string): Promise<{ blob: Blob } | { error: string }> {
+  let last = "Download failed";
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      const resp = await fetch(`/api/clip-download?jobId=${jobId}`);
+      if (resp.ok) return { blob: await resp.blob() };
+      const err = await resp.json().catch(() => ({ error: `HTTP ${resp.status}` }));
+      last = err.error || `HTTP ${resp.status}`;
+      if (resp.status < 500) return { error: last };
+    } catch (e: any) {
+      last = e?.message || "Network error";
+    }
+    fetch("/api/download-client-error", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ error: `clip-download attempt ${attempt}: ${last}`, jobId }),
+    }).catch(() => {});
+    if (attempt < 5) await new Promise((r) => setTimeout(r, 1000 * 2 ** (attempt - 1)));
+  }
+  return { error: last };
+}
+
 export function DownloadProvider({ children }: { children: React.ReactNode }) {
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const downloadsRef = useRef(downloads);
@@ -145,7 +180,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
           let consecutiveErrors = 0;
 
           while (true) {
-            await new Promise((r) => setTimeout(r, pollInterval));
+            await waitOrVisible(pollInterval);
 
             // Check if this download was dismissed
             const current = downloadsRef.current.find((d) => d.id === id);
@@ -186,15 +221,14 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
             if (status.status === "ready") {
               updateItem(id, { progress: 95 });
 
-              // Step 3: Download the clip file
-              const fileResp = await fetch(`/api/clip-download?jobId=${jobId}`);
-              if (!fileResp.ok) {
-                const err = await fileResp.json().catch(() => ({ error: "Download failed" }));
-                updateItem(id, { status: "error", error: err.error || "Download failed", progress: 0 });
+              // Step 3: Download the clip file (retried: the job is done, a
+              // dropped connection shouldn't lose the clip)
+              const got = await fetchClipFile(jobId);
+              if ("error" in got) {
+                updateItem(id, { status: "error", error: got.error, progress: 0 });
                 return;
               }
-
-              const blob = await fileResp.blob();
+              const blob = got.blob;
               updateItem(id, { status: "complete", progress: 100, source: status.source || undefined, elapsedSec: (Date.now() - t0) / 1000 });
 
               const a = document.createElement("a");
