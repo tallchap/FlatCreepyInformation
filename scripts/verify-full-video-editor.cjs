@@ -450,6 +450,47 @@ async function run(name, engine, options, flow) {
         .waitFor();
     },
   );
+  await run(
+    "timeline-short-clip",
+    chromium,
+    { viewport: { width: 1440, height: 1000 } },
+    async (p) => {
+      await p.goto(base + "/edit?v=CRraHg4Ks_g&start=75&end=76", {
+        waitUntil: "domcontentloaded",
+      });
+      await p.getByTestId("transcript-line").first().waitFor();
+      await p.getByTestId("start-frame-controls").waitFor();
+      for (const width of [1440, 390, 320]) {
+        await p.setViewportSize({ width, height: 1000 });
+        await p.getByTestId("start-frame-controls").scrollIntoViewIfNeeded();
+        const a = await p.getByTestId("start-frame-controls").boundingBox();
+        const b = await p.getByTestId("end-frame-controls").boundingBox();
+        assert(
+          a.x + a.width <= b.x ||
+            b.x + b.width <= a.x ||
+            a.y + a.height <= b.y ||
+            b.y + b.height <= a.y,
+          "Start and End controls overlap",
+        );
+        await fits(p);
+        await p
+          .getByRole("button", { name: "Move Start back two frames" })
+          .click();
+        const range = JSON.parse(
+          await p.getByTestId("segment-list").getAttribute("data-segments"),
+        )[0];
+        assert(range.in < 75 && range.out === 76);
+        await shot(p, "timeline-" + width);
+      }
+      await p.setViewportSize({ width: 1440, height: 1000 });
+      await p.getByRole("textbox", { name: "Start", exact: true }).fill("1:00");
+      await p.getByRole("textbox", { name: "Start", exact: true }).press("Tab");
+      await p
+        .getByRole("heading", { name: "Snippet Editor" })
+        .scrollIntoViewIfNeeded();
+      await shot(p, "editor-desktop");
+    },
+  );
   console.log(
     JSON.stringify({
       passed: results.filter((r) => r.pass).length,

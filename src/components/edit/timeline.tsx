@@ -36,12 +36,6 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-function formatTimePrecise(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toFixed(2).padStart(5, "0")}`;
-}
-
 export function Timeline({
   duration,
   startSec,
@@ -322,25 +316,7 @@ export function Timeline({
         </div>
       </div>
 
-      <div className="relative pt-7 pb-2">
-        {/* Precise time labels above handles */}
-        {handlesPlaced && startVisible && (
-          <div
-            className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30 font-mono"
-            style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
-          >
-            {formatTimePrecise(startSec)}
-          </div>
-        )}
-        {handlesPlaced && endVisible && (
-          <div
-            className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30 font-mono"
-            style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
-          >
-            {formatTimePrecise(endSec)}
-          </div>
-        )}
-
+      <div className="relative pt-1 pb-2">
         {/* Track */}
         <div
           ref={trackRef}
@@ -431,48 +407,48 @@ export function Timeline({
           ))}
         </div>
 
-        {/* Start/End frame-nudge buttons aligned with markers */}
-        {handlesPlaced && <div className="relative h-7 mt-1">
-          {startVisible && (
+        {/* Keep controls separate even when a short clip's handles are adjacent. */}
+        {handlesPlaced && <div className="flex flex-wrap justify-between gap-3 mt-2">
             <div
-              className="absolute flex items-center gap-0.5 z-10"
-              style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
+              data-testid="start-frame-controls"
+              className="flex items-center gap-1"
             >
               <span className="text-[10px] text-[#99cc66] font-semibold mr-0.5">Start</span>
               <button
+                aria-label="Move Start back two frames"
                 onClick={() => onStartChange(Math.max(0, startSec - FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
               >
                 -2f
               </button>
               <button
+                aria-label="Move Start forward two frames"
                 onClick={() => onStartChange(Math.min(endSec - 0.01, startSec + FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
               >
                 +2f
               </button>
             </div>
-          )}
-          {endVisible && (
             <div
-              className="absolute flex items-center gap-0.5 z-10"
-              style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
+              data-testid="end-frame-controls"
+              className="flex items-center gap-1"
             >
               <span className="text-[10px] text-red-500 font-semibold mr-0.5">End</span>
               <button
+                aria-label="Move End back two frames"
                 onClick={() => onEndChange(Math.max(startSec + 0.01, endSec - FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
               >
                 -2f
               </button>
               <button
+                aria-label="Move End forward two frames"
                 onClick={() => onEndChange(Math.min(duration, endSec + FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
               >
                 +2f
               </button>
             </div>
-          )}
         </div>}
 
         {/* Draggable minimap when zoomed */}
