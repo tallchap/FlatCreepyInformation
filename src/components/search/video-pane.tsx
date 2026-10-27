@@ -1,5 +1,6 @@
 "use client";
 
+import { editorHref } from "@/lib/editor-link";
 import TranscriptPane from "@/components/TranscriptPane";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -34,7 +35,7 @@ export function VideoPane({
         <div className="flex items-center justify-between">
           <CardTitle className="text-base">Video preview</CardTitle>
           <a
-            href={`/edit?v=${videoId}`}
+            href={editorHref(videoId, startSec)}
             target="_blank"
             className="inline-flex items-center px-4 py-1.5 text-xs font-semibold text-white bg-[#DC2626] rounded-full transition-colors hover:bg-[#b91c1c]"
           >

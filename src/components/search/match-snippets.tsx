@@ -2,6 +2,7 @@
 "use client";
 
 import Link from "next/link";
+import { editorHref } from "@/lib/editor-link";
 
 /* ───────────────────────── helpers ───────────────────────── */
 
@@ -71,7 +72,7 @@ export function MatchSnippets({
           return (
             <Link
               key={i}
-              href={`/video/${videoId}?t=${seconds}`}
+              href={editorHref(videoId, seconds)}
               className="bg-gray-50 p-3 rounded text-sm mb-2 flex gap-2 items-start"
             >
               {content}

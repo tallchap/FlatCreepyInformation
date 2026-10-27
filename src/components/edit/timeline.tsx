@@ -3,8 +3,7 @@
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { Storyboard } from "@/lib/youtube-storyboard";
 
-export const SEGMENT_COLORS = ["#99cc66", "#60a5fa", "#f59e0b", "#a78bfa", "#f472b6", "#2dd4bf", "#fb7185", "#facc15"];
-export const segmentColor = (i: number) => SEGMENT_COLORS[i % SEGMENT_COLORS.length];
+const CLIP_COLOR = "#99cc66";
 
 const FRAME_STEP = 2 / 30; // 2 frames at 30fps ≈ 0.067s
 const SPEED_OPTIONS = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
@@ -27,10 +26,6 @@ interface TimelineProps {
   onFromStart?: () => void;
   onLast5?: () => void;
   clipRangeNode?: React.ReactNode;
-  /** All segments of a multi-range clip; the active one is startSec/endSec. */
-  segments?: { in: number; out: number }[];
-  activeIdx?: number;
-  onSelectSegment?: (idx: number) => void;
   /** yt-only videos: YouTube storyboard sprites instead of the waveform bars. */
   storyboard?: Storyboard | null;
 }
@@ -39,12 +34,6 @@ function formatTime(sec: number): string {
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatTimePrecise(sec: number): string {
-  const m = Math.floor(sec / 60);
-  const s = sec % 60;
-  return `${m}:${s.toFixed(2).padStart(5, "0")}`;
 }
 
 export function Timeline({
@@ -65,9 +54,6 @@ export function Timeline({
   onFromStart,
   onLast5,
   clipRangeNode,
-  segments,
-  activeIdx = 0,
-  onSelectSegment,
   storyboard,
 }: TimelineProps) {
   const trackRef = useRef<HTMLDivElement>(null);
@@ -245,7 +231,7 @@ export function Timeline({
 
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
-      <div className="flex items-center justify-between mb-3">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
         <div className="flex items-center gap-1">
           {onFromStart && (
             <>
@@ -274,11 +260,11 @@ export function Timeline({
           )}
         </div>
         {clipRangeNode && (
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3">
             {clipRangeNode}
           </div>
         )}
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <div className="flex items-center gap-2">
             <button
               onClick={() => handleZoomChange(zoom - 1)}
@@ -330,25 +316,7 @@ export function Timeline({
         </div>
       </div>
 
-      <div className="relative pt-7 pb-2">
-        {/* Precise time labels above handles */}
-        {handlesPlaced && startVisible && (
-          <div
-            className="absolute top-0 text-[11px] font-semibold text-[#99cc66] bg-green-50 px-1.5 py-0.5 rounded z-30 font-mono"
-            style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
-          >
-            {formatTimePrecise(startSec)}
-          </div>
-        )}
-        {handlesPlaced && endVisible && (
-          <div
-            className="absolute top-0 text-[11px] font-semibold text-red-500 bg-red-50 px-1.5 py-0.5 rounded z-30 font-mono"
-            style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
-          >
-            {formatTimePrecise(endSec)}
-          </div>
-        )}
-
+      <div className="relative pt-1 pb-2">
         {/* Track */}
         <div
           ref={trackRef}
@@ -374,28 +342,6 @@ export function Timeline({
             </div>
           )}
 
-          {/* Other segments: coloured bands, click one to make it active */}
-          {segments && segments.length > 1 && segments.map((seg, i) => {
-            if (i === activeIdx) return null;
-            const l = clampPct(pctOf(seg.in));
-            const r = clampPct(pctOf(seg.out));
-            if (r <= l) return null;
-            return (
-              <div
-                key={i}
-                data-handle="band"
-                data-testid={`segment-band-${i + 1}`}
-                title={`Segment ${i + 1} — click to edit`}
-                className="absolute top-0 bottom-0 z-[5] cursor-pointer rounded-sm flex items-start justify-center"
-                style={{ left: `${l}%`, width: `${r - l}%`, backgroundColor: `${segmentColor(i)}55`, borderLeft: `2px solid ${segmentColor(i)}`, borderRight: `2px solid ${segmentColor(i)}` }}
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={(e) => { e.stopPropagation(); onSelectSegment?.(i); }}
-              >
-                <span className="text-[9px] font-bold text-white px-1 rounded-b" style={{ backgroundColor: segmentColor(i) }}>{i + 1}</span>
-              </div>
-            );
-          })}
-
           {/* Selected region */}
           {handlesPlaced && regionWidth > 0 && (
             <div
@@ -404,14 +350,11 @@ export function Timeline({
               style={{
                 left: `${regionLeft}%`,
                 width: `${regionWidth}%`,
-                backgroundColor: `${segmentColor(activeIdx)}40`,
-                borderLeft: startVisible ? `3px solid ${segmentColor(activeIdx)}` : undefined,
+                backgroundColor: `${CLIP_COLOR}40`,
+                borderLeft: startVisible ? `3px solid ${CLIP_COLOR}` : undefined,
                 borderRight: endVisible ? "3px solid #ef4444" : undefined,
               }}
             >
-              {segments && segments.length > 1 && (
-                <span className="text-[9px] font-bold text-white px-1 rounded-b" style={{ backgroundColor: segmentColor(activeIdx) }}>{activeIdx + 1}</span>
-              )}
             </div>
           )}
 
@@ -464,48 +407,48 @@ export function Timeline({
           ))}
         </div>
 
-        {/* Start/End frame-nudge buttons aligned with markers */}
-        {handlesPlaced && <div className="relative h-7 mt-1">
-          {startVisible && (
+        {/* Keep controls separate even when a short clip's handles are adjacent. */}
+        {handlesPlaced && <div className="flex flex-wrap justify-between gap-3 mt-2">
             <div
-              className="absolute flex items-center gap-0.5 z-10"
-              style={{ left: `${clampPct(pctOf(startSec))}%`, transform: "translateX(-50%)" }}
+              data-testid="start-frame-controls"
+              className="flex items-center gap-1"
             >
               <span className="text-[10px] text-[#99cc66] font-semibold mr-0.5">Start</span>
               <button
+                aria-label="Move Start back two frames"
                 onClick={() => onStartChange(Math.max(0, startSec - FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
               >
                 -2f
               </button>
               <button
+                aria-label="Move Start forward two frames"
                 onClick={() => onStartChange(Math.min(endSec - 0.01, startSec + FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-[#99cc66]/50 text-[10px] font-bold text-[#99cc66] hover:bg-green-50"
               >
                 +2f
               </button>
             </div>
-          )}
-          {endVisible && (
             <div
-              className="absolute flex items-center gap-0.5 z-10"
-              style={{ left: `${clampPct(pctOf(endSec))}%`, transform: "translateX(-50%)" }}
+              data-testid="end-frame-controls"
+              className="flex items-center gap-1"
             >
               <span className="text-[10px] text-red-500 font-semibold mr-0.5">End</span>
               <button
+                aria-label="Move End back two frames"
                 onClick={() => onEndChange(Math.max(startSec + 0.01, endSec - FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
               >
                 -2f
               </button>
               <button
+                aria-label="Move End forward two frames"
                 onClick={() => onEndChange(Math.min(duration, endSec + FRAME_STEP))}
                 className="w-6 h-5 flex items-center justify-center rounded border border-red-300 text-[10px] font-bold text-red-500 hover:bg-red-50"
               >
                 +2f
               </button>
             </div>
-          )}
         </div>}
 
         {/* Draggable minimap when zoomed */}
@@ -518,17 +461,16 @@ export function Timeline({
             onPointerUp={handlePointerUp}
           >
             {/* Selection region on minimap */}
-            {handlesPlaced && (segments && segments.length > 1 ? segments : [{ in: startSec, out: endSec }]).map((seg, i) => (
+            {handlesPlaced && (
               <div
-                key={i}
                 className="absolute top-0 bottom-0 pointer-events-none"
                 style={{
-                  left: `${(seg.in / duration) * 100}%`,
-                  width: `${((seg.out - seg.in) / duration) * 100}%`,
-                  backgroundColor: `${segmentColor(segments && segments.length > 1 ? i : 0)}66`,
+                  left: `${(startSec / duration) * 100}%`,
+                  width: `${((endSec - startSec) / duration) * 100}%`,
+                  backgroundColor: `${CLIP_COLOR}66`,
                 }}
               />
-            ))}
+            )}
             {/* Viewport indicator — draggable */}
             <div
               className="absolute top-0 bottom-0 border-2 border-gray-500 rounded-full bg-white/40 cursor-grab active:cursor-grabbing pointer-events-none"

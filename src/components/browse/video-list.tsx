@@ -3,6 +3,7 @@
 import { useId, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import { editorHref } from "@/lib/editor-link";
 import { ChevronRight, Play, Scissors } from "lucide-react";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import type { BrowseSnippet, BrowseVideo } from "./utils/types";
@@ -46,7 +47,7 @@ export function VideoList({ entries, snippetsByVideo, total, page, tab, onPageCh
         {mediaError && <p role="alert">This snippet could not be loaded. You can still open the full video below.</p>}
         {playing?.snippet?.transcript && <details className={styles.snippetTranscript}><summary>Clip transcript</summary><p>{playing.snippet.transcript}</p></details>}
         {playing && <div className={styles.playerActions}>
-          <Link className={styles.outlineButton} href={`/video/${playing.video.id}`}>View full video<ChevronRight size={14} /></Link>
+          <Link className={styles.outlineButton} href={editorHref(playing.video.id)}>View full video<ChevronRight size={14} /></Link>
           {playing.snippet && <a className={styles.outlineButton} href={playing.snippet.url} target="_blank" rel="noopener noreferrer">Open clip / download<ChevronRight size={14} /></a>}
         </div>}
       </DialogContent>
@@ -62,7 +63,7 @@ function VideoRow({ video, snippets, onPlay }: { video: BrowseVideo; snippets: B
   const id = useId();
   return <div className={styles.videoGroup}>
     <div className={styles.videoRow} data-expanded={expanded}>
-      <Link className={styles.videoLink} href={`/video/${video.id}`}>
+      <Link className={styles.videoLink} href={editorHref(video.id)}>
         <Thumbnail video={video} />
         <span className={styles.videoInfo}><strong>{video.title}</strong><span>{video.channel}</span></span>
         <span className={styles.date}>{displayDate(video.published)}</span>

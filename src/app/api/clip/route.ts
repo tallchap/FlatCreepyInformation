@@ -8,8 +8,7 @@ const DOWNLOAD_SERVICE_URL = process.env.DOWNLOAD_SERVICE_URL;
 
 // POST { videoId, quality, segments: [{in, out}], overlay? }
 // (or the old { url | videoId, startSec, endSec } one-segment shorthand).
-// The video's row decides the source: Bunny for stored videos, YouTube on
-// demand for yt-only ones (and for anything Bunny turns out not to have).
+// All editor exports use the same YouTube timeline as the preview.
 export async function POST(request: Request) {
   if (!DOWNLOAD_SERVICE_URL) {
     return NextResponse.json({ error: "Download service not configured" }, { status: 503 });
@@ -40,7 +39,7 @@ export async function POST(request: Request) {
       videoId,
       segments,
       quality: quality === "1080p" ? "1080p" : "720p",
-      videoSource: meta?.video_source === "youtube" ? "youtube" : "bunny",
+      videoSource: "youtube",
       lengthSeconds,
       ...(overlay ? { overlay } : {}),
     }),

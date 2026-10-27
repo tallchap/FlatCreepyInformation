@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import type { Ref } from "react";
+import { editorHref } from "@/lib/editor-link";
 import TranscriptPane from "@/components/TranscriptPane";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -71,7 +72,7 @@ export function VideoPreviewPane({ videoId, startSec, title, cueId = 0, previewR
 
         <div className="pt-2 border-t border-[#e6dfcc]">
           <Link
-            href={`/edit?v=${videoId}`}
+            href={editorHref(videoId, startSec)}
             target="_blank"
             className="inline-flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-[#DC2626] rounded-full transition-colors hover:bg-[#b91c1c]"
           >
