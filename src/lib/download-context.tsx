@@ -144,8 +144,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
 
       (async () => {
         try {
-          // Step 1: Start the clip job. /api/clip picks the source: the Bunny
-          // file for stored videos, YouTube on demand for yt-only ones.
+          // Start the single-range YouTube export.
           const startResp = await fetch("/api/clip", {
             method: "POST",
             headers: { "Content-Type": "application/json" },

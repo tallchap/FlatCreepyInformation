@@ -4,7 +4,7 @@
 //
 //   PLAYWRIGHT_MODULE=/path/to/node_modules/playwright node scripts/verify-yt-only.mjs
 //     [--site https://www.snippysaurus.com] [--render https://snippysaurus-download.onrender.com]
-//     [--video anAmTGcewX8] [--seg 252-297,1110.5-1160.5,2465-2500]
+//     [--video anAmTGcewX8] [--seg 252-282]
 //     [--reference <YouTube DASH video+audio mp4>]   (else pulled with yt-dlp)
 //     [--wait-ttl]                                   (also wait 31 min and check /tmp is empty)
 //
@@ -25,7 +25,7 @@ const flag = (n) => process.argv.includes(`--${n}`);
 const SITE = arg("site", "https://www.snippysaurus.com").replace(/\/$/, "");
 const RENDER = arg("render", "https://snippysaurus-download.onrender.com").replace(/\/$/, "");
 const VIDEO = arg("video", "anAmTGcewX8");
-const SEG = arg("seg", "252-297,1110.5-1160.5,2465-2500");
+const SEG = arg("seg", "252-282");
 const QUALITY = "1080p"; // the editor always exports at 1080p
 const SEGMENTS = SEG.split(",").map((p) => { const [a, b] = p.split("-").map(Number); return { in: a, out: b }; });
 const TOTAL = SEGMENTS.reduce((a, s) => a + s.out - s.in, 0);

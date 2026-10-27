@@ -8,12 +8,13 @@ import { useDownload } from "@/lib/download-context";
 import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal";
 import { ClipsSection } from "./clips-section";
 import { mountYouTubeCleanPlayer, type CleanPlayer } from "./youtube-clean-player";
-import { segmentColor } from "./timeline";
 import { formatEta } from "@/components/download-panel";
 import type { Storyboard } from "@/lib/youtube-storyboard";
 import {
-  MAX_CLIP_SEC, MAX_SEGMENTS, formatSegTime, formatTotal, parseSegParam, segParam, totalLength, type ClipSegment,
+  MAX_CLIP_SEC, MIN_SEGMENT_SEC, formatSegTime, formatTotal, lengthToSec, validateSegments, type ClipSegment,
 } from "@/lib/clip-segments";
+
+import { clampEditorRange, editorHref, readEditorRange } from "@/lib/editor-link";
 
 type Quality = "720p" | "1080p";
 
@@ -42,37 +43,28 @@ function truncateAtWord(text: string, limit: number): string {
   return truncated + "...";
 }
 
-export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "gcs" | "bunny"; enableClipFinder?: boolean } = {}) {
-  const [url, setUrl] = useState("");
+export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } = {}) {
   const [videoId, setVideoId] = useState<string | null>(null);
   const [duration, setDuration] = useState(0);
-  // A clip is a list of segments joined in this order; the active one is what
-  // the timeline handles, transcript clicks and Start/End inputs edit.
-  const [segments, setSegments] = useState<ClipSegment[]>([]);
-  const [activeIdx, setActiveIdxState] = useState(0);
-  const activeIdxRef = useRef(0);
-  const setActiveIdx = useCallback((i: number) => { activeIdxRef.current = i; setActiveIdxState(i); }, []);
-  const active = segments[activeIdx] ?? segments[segments.length - 1];
-  const startSec = active?.in ?? 0;
-  const endSec = active?.out ?? 0;
-  const handlesPlaced = segments.length > 0;
-  // Index of a segment made by "+ Add segment" that hasn't been placed yet:
-  // the first transcript click moves it there instead of moving a handle.
-  const placeholderIdxRef = useRef<number | null>(null);
-  const updateActive = useCallback((patch: Partial<ClipSegment>) => {
-    placeholderIdxRef.current = null;
-    setSegments((prev) => prev.map((s, i) => (i === activeIdxRef.current ? { ...s, ...patch } : s)));
-  }, []);
-  const setStartSec = useCallback((v: number) => updateActive({ in: Math.max(0, v) }), [updateActive]);
-  const setEndSec = useCallback((v: number) => updateActive({ out: v }), [updateActive]);
+  const [selection, setSelection] = useState<ClipSegment | null>(null);
+  const selectionRef = useRef(selection);
+  selectionRef.current = selection;
+  const segments = selection ? [selection] : [];
+  const startSec = selection?.in ?? 0;
+  const endSec = selection?.out ?? 0;
+  const handlesPlaced = selection !== null;
+  const [legacyRanges, setLegacyRanges] = useState(false);
+  const updateSelection = useCallback((patch: Partial<ClipSegment>) => {
+    setSelection((prev) => clampEditorRange({ ...(prev || { in: patch.in ?? 0, out: (patch.in ?? 0) + 10 }), ...patch }, duration));
+  }, [duration]);
+  const setStartSec = useCallback((v: number) => updateSelection({ in: Math.max(0, Math.min(v, selection ? endSec - MIN_SEGMENT_SEC : Infinity)) }), [updateSelection, endSec, selection]);
+  const setEndSec = useCallback((v: number) => updateSelection({ out: v }), [updateSelection]);
   const [playheadSec, setPlayheadSec] = useState(0);
   const [isPlaying, setIsPlaying] = useState(false);
   // Exports are always requested at 1080p; the server uses the best the
   // source has (720p when there is no 1080p).
   const quality: Quality = "1080p";
-  const [has1080, setHas1080] = useState(false);
-  const { startDownload, hasActive: exporting } = useDownload();
-  const [gcsAvailable, setGcsAvailable] = useState<boolean | null>(null);
+  const { startDownload } = useDownload();
   const [debugOpen, setDebugOpen] = useState(false);
   const [debugLogs, setDebugLogs] = useState<any[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
@@ -82,22 +74,15 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const [crashLog, setCrashLog] = useState<string | null>(null);
   const [clipStats, setClipStats] = useState<any>(null);
   const [playbackRate, setPlaybackRate] = useState(1);
-  const [ytOnly, setYtOnly] = useState(false);
   const [shieldOn, setShieldOn] = useState(true);
-  const [playingAll, setPlayingAll] = useState(false);
-  const playAllRef = useRef<{ idx: number } | null>(null);
   // Text overlay state
   const [overlaySettings, setOverlaySettings] = useState<OverlaySettings | null>(null);
   const [overlayModalOpen, setOverlayModalOpen] = useState(false);
-  const [clipFinderOpen, setClipFinderOpen] = useState(true);
+  const [clipFinderOpen, setClipFinderOpen] = useState(false);
   const [transcriptLines, setTranscriptLines] = useState<{ start: number; text: string }[]>([]);
   const playerRef = useRef<any>(null);
-  const videoElRef = useRef<HTMLVideoElement | null>(null);
   const playerReadyRef = useRef(false);
-  // Pending start/end from ?start=&end= query params. Consumed once the
-  // player's loadedmetadata/onReady callback fires — the callbacks otherwise
-  // reset startSec/endSec to 0, clobbering the user's deep-link.
-  const pendingSegmentsRef = useRef<ClipSegment[] | null>(null);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const previewTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const playheadTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const videoContainerRef = useRef<HTMLDivElement>(null);
@@ -105,7 +90,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   const videoWrapperRef = useRef<HTMLDivElement>(null);
   const [videoHeight, setVideoHeight] = useState<number | null>(null);
   const [playerWidth, setPlayerWidth] = useState(700);
-  const [videoRes, setVideoRes] = useState<string | null>(null);
   const [videoMeta, setVideoMeta] = useState<{ title?: string; channel?: string; published?: string; speakers?: string; description?: string; video_length?: string; video_source?: "bunny" | "youtube"; storyboard?: Storyboard } | null>(null);
   const [metaLoaded, setMetaLoaded] = useState(false);
   const [metaDescExpanded, setMetaDescExpanded] = useState(false);
@@ -116,20 +100,17 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     setMetaLoaded(false);
     fetch(`/api/video-meta?videoId=${videoId}&storyboard=1`)
       .then((r) => r.json())
-      .then((data) => setVideoMeta(data))
+      .then((data) => { setVideoMeta(data); setDuration(lengthToSec(data.video_length) || 0); })
       .catch(() => setVideoMeta(null))
       .finally(() => setMetaLoaded(true));
   }, [videoId]);
 
-  // Once the player knows the duration: apply deep-linked segments, else start empty.
-  const applyPendingSegments = useCallback((dur: number) => {
-    const pending = pendingSegmentsRef.current;
-    pendingSegmentsRef.current = null;
-    const segs = (pending || []).map((s) => ({ in: Math.max(0, s.in), out: dur ? Math.min(dur, s.out) : s.out })).filter((s) => s.out > s.in);
-    setSegments(segs);
-    setActiveIdx(0);
-    setPlayheadSec(segs[0]?.in ?? 0);
-  }, [setActiveIdx]);
+  const clampSelection = useCallback((dur: number) => {
+    const current = selectionRef.current;
+    const range = current ? clampEditorRange(current, dur) : null;
+    setSelection(range);
+    setPlayheadSec(range?.in ?? 0);
+  }, []);
 
   const leftColRef = useRef<HTMLDivElement>(null);
   const lockedHeightRef = useRef<number | null>(null);
@@ -150,95 +131,21 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     return () => ro.disconnect();
   }, [videoId, metaDescExpanded]);
 
-  // Auto-load from ?v= query param. ?seg=252-297,1110.5-1160.5 pre-loads the
-  // segment list; ?start=&end= stays as a one-segment alias (used by the admin
-  // log's "Snippy ↗" deep-link to jump straight into re-editing a failed clip).
+  // Preserve old bookmarked ranges, but edit only the first one.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const v = params.get("v");
-    if (v) {
-      setUrl(v);
-      const id = extractVideoId(v);
-      if (id) setVideoId(id);
-    }
-    const fromSeg = parseSegParam(params.get("seg")).slice(0, MAX_SEGMENTS);
-    const startParam = parseFloat(params.get("start") || "");
-    const endParam = parseFloat(params.get("end") || "");
-    // Stashed in a ref: the player-ready callbacks apply them once the
-    // duration is known (they would otherwise reset the selection).
-    if (fromSeg.length) pendingSegmentsRef.current = fromSeg;
-    else if (Number.isFinite(startParam) && Number.isFinite(endParam) && endParam > startParam) {
-      pendingSegmentsRef.current = [{ in: startParam, out: endParam }];
-    }
+    const id = extractVideoId(params.get("v") || "");
+    if (id) setVideoId(id);
+    const { range, hadMultiple } = readEditorRange(params);
+    setSelection(range);
+    setLegacyRanges(hadMultiple);
   }, []);
 
-  // Keep ?seg= in the address bar in step with the segment list (shareable).
+  // One shareable Start/End range; no multi-range state in the editor.
   useEffect(() => {
     if (!videoId || !playerReadyRef.current) return;
-    const params = new URLSearchParams(window.location.search);
-    params.delete("start");
-    params.delete("end");
-    if (segments.length) params.set("seg", segParam(segments));
-    else params.delete("seg");
-    const qs = params.toString().replace(/%2C/g, ",");
-    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}`);
-  }, [segments, videoId]);
-
-  // Bunny HLS state
-  const [bunnyHlsUrl, setBunnyHlsUrl] = useState<string | null>(null);
-  const [bunnyResolutions, setBunnyResolutions] = useState<string[]>([]);
-
-  // Check GCS/Bunny availability when video changes. yt-only videos have no
-  // stored file: they go straight to the YouTube embed, no lookups.
-  useEffect(() => {
-    if (!videoId) { setGcsAvailable(null); setVideoRes(null); setBunnyHlsUrl(null); setBunnyResolutions([]); setYtOnly(false); return; }
-    setGcsAvailable(null);
-    setVideoRes(null);
-    setBunnyHlsUrl(null);
-    setBunnyResolutions([]);
-    setYtOnly(false);
-    if (!metaLoaded) return;
-    if (videoMeta?.video_source === "youtube") {
-      setYtOnly(true);
-      setGcsAvailable(false);
-      return;
-    }
-
-    if (videoSource === "bunny") {
-      fetch(`/api/bunny-lookup?videoId=${videoId}`)
-        .then(r => r.json())
-        .then(d => {
-          if (d.available && d.hlsUrl) {
-            setBunnyHlsUrl(d.hlsUrl);
-            setGcsAvailable(false);
-            if (d.availableResolutions) {
-              setBunnyResolutions(
-                d.availableResolutions.split(",").map((s: string) => s.trim()).filter(Boolean)
-              );
-            }
-          } else {
-            // Bunny not ready (fetching or transcoding) — fall back to GCS
-            fetch(`/api/clip-gcs-check?videoId=${videoId}`)
-              .then(r => r.json())
-              .then(g => setGcsAvailable(!!g.available))
-              .catch(() => setGcsAvailable(false));
-          }
-        })
-        .catch(() => {
-          // Bunny API error — fall back to GCS
-          fetch(`/api/clip-gcs-check?videoId=${videoId}`)
-            .then(r => r.json())
-            .then(g => setGcsAvailable(!!g.available))
-            .catch(() => setGcsAvailable(false));
-        });
-    } else {
-      fetch(`/api/clip-gcs-check?videoId=${videoId}`)
-        .then(r => r.json())
-        .then(d => setGcsAvailable(!!d.available))
-        .catch(() => setGcsAvailable(false));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [videoId, videoSource, metaLoaded]);
+    window.history.replaceState(null, "", editorHref(videoId, selection?.in, selection?.out));
+  }, [selection, videoId]);
 
   // Fetch transcript for Clip Finder
   useEffect(() => {
@@ -271,140 +178,32 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     document.head.appendChild(link);
   }, []);
 
-  // Mount player when videoId changes — Bunny HLS, GCS, or YouTube
+  // Playback and export both use YouTube, even when a stored copy exists.
   useEffect(() => {
-    if (!videoId || (gcsAvailable === null && !bunnyHlsUrl)) return; // wait for availability check
-    stopPlayAll();
+    if (!videoId || !metaLoaded) return;
+    const container = document.getElementById("clip-player");
+    if (!container) return;
     playerReadyRef.current = false;
-    setHas1080(false);
-
-    if (bunnyHlsUrl) {
-      // Bunny Stream: HLS via hls.js
-      const container = document.getElementById("clip-player");
-      if (!container) return;
-      container.innerHTML = "";
-      const video = document.createElement("video");
-      video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
-      video.controls = true;
-      video.setAttribute("controlsList", "nodownload nofullscreen");
-      video.setAttribute("disablePictureInPicture", "true");
-      video.style.width = "100%";
-      video.style.height = "100%";
-      video.style.backgroundColor = "#000";
-      container.appendChild(video);
-      videoElRef.current = video;
-
-      // Load hls.js and attach
-      const script = document.createElement("script");
-      script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest";
-      script.onload = () => {
-        const Hls = (window as any).Hls;
-        if (Hls.isSupported()) {
-          const hls = new Hls();
-          hls.loadSource(bunnyHlsUrl);
-          hls.attachMedia(video);
-          hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            playerReadyRef.current = true;
-            // Duration available after manifest
-            video.addEventListener("loadedmetadata", () => {
-              setDuration(video.duration);
-              setVideoRes("ABR");
-              setHas1080(true);
-              applyPendingSegments(video.duration);
-            }, { once: true });
-          });
-        } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
-          // Safari native HLS
-          video.src = bunnyHlsUrl;
-          video.addEventListener("loadedmetadata", () => {
-            playerReadyRef.current = true;
-            setDuration(video.duration);
-            setVideoRes("ABR");
-            setHas1080(true);
-            applyPendingSegments(video.duration);
-          }, { once: true });
-        }
-      };
-      document.head.appendChild(script);
-
-      playerRef.current = {
-        seekTo: (sec: number) => { video.currentTime = sec; },
-        getCurrentTime: () => video.currentTime,
-        getDuration: () => video.duration,
-        playVideo: () => video.play(),
-        pauseVideo: () => video.pause(),
-        getPlayerState: () => (video.paused ? 2 : 1),
-        setPlaybackRate: (r: number) => { video.playbackRate = r; },
-        getVideoData: () => ({ title: "" }),
-        destroy: () => { video.pause(); video.src = ""; },
-      };
-    } else if (gcsAvailable) {
-      // GCS: use native HTML5 video
-      const container = document.getElementById("clip-player");
-      if (!container) return;
-      container.innerHTML = "";
-      const video = document.createElement("video");
-      video.src = `https://storage.googleapis.com/snippysaurus-clips/videos/${videoId}.mp4`;
-      video.poster = `https://img.youtube.com/vi/${videoId}/maxresdefault.jpg`;
-      video.preload = "auto";
-      video.controls = true;
-      video.setAttribute("controlsList", "nodownload nofullscreen");
-      video.setAttribute("disablePictureInPicture", "true");
-      video.style.width = "100%";
-      video.style.height = "100%";
-      video.style.backgroundColor = "#000";
-      video.addEventListener("loadedmetadata", () => {
+    setPlayerError(null);
+    playerRef.current = mountYouTubeCleanPlayer(container, videoId, {
+      onReady: (p: CleanPlayer) => {
         playerReadyRef.current = true;
-        setDuration(video.duration);
-        setVideoRes(`${video.videoHeight}p`);
-        setHas1080(video.videoHeight >= 1080);
-        applyPendingSegments(video.duration);
-      });
-      container.appendChild(video);
-      videoElRef.current = video;
-      // Wrap as playerRef adapter for compatibility
-      playerRef.current = {
-        seekTo: (sec: number) => { video.currentTime = sec; },
-        getCurrentTime: () => video.currentTime,
-        getDuration: () => video.duration,
-        playVideo: () => video.play(),
-        pauseVideo: () => video.pause(),
-        getPlayerState: () => (video.paused ? 2 : 1),
-        setPlaybackRate: (r: number) => { video.playbackRate = r; },
-        getVideoData: () => ({ title: "" }),
-        destroy: () => { video.pause(); video.src = ""; },
-      };
-    } else {
-      // YouTube (yt-only videos, or a stored file that isn't there): the clean
-      // embed — no YouTube chrome, a shield takes the clicks.
-      const container = document.getElementById("clip-player");
-      if (!container) return;
-      playerRef.current = mountYouTubeCleanPlayer(container, videoId, {
-        onReady: (p: CleanPlayer) => {
-          playerReadyRef.current = true;
-          const dur = p.getDuration();
-          setDuration(dur);
-          const levels = p.getAvailableQualityLevels() || [];
-          // The embed often lists no levels until playback starts; then offer
-          // 1080p anyway (the exporter falls back to 720p if YouTube lacks it).
-          const supports1080 = levels.length ? levels.includes("hd1080") : true;
-          setHas1080(supports1080);
-          applyPendingSegments(dur);
-        },
-      });
-      setShieldOn(true);
-    }
-
+        const dur = p.getDuration() || lengthToSec(videoMeta?.video_length) || 0;
+        setDuration(dur);
+        const start = selectionRef.current?.in;
+        clampSelection(dur);
+        if (start != null) p.seekTo(clampEditorRange({ in: start, out: start + 10 }, dur).in, true);
+      },
+      onError: () => setPlayerError("YouTube could not play this video. Its transcript is still available below."),
+    });
+    setShieldOn(true);
     return () => {
       if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-      if (playheadTimerRef.current) clearInterval(playheadTimerRef.current);
-      if (playerRef.current?.destroy) {
-        try { playerRef.current.destroy(); } catch {}
-      }
+      try { playerRef.current?.destroy(); } catch {}
       playerRef.current = null;
-      videoElRef.current = null;
+      playerReadyRef.current = false;
     };
-  }, [videoId, gcsAvailable, bunnyHlsUrl]);
+  }, [videoId, metaLoaded]);
 
   // Playhead sync + isPlaying state — update from player every 100ms
   useEffect(() => {
@@ -425,31 +224,20 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if (e.code !== "Space") return;
-      const tag = (document.activeElement?.tagName || "").toLowerCase();
-      if (tag === "input" || tag === "textarea" || tag === "select") return;
+      if (document.activeElement?.closest("input, textarea, select, button, a, [contenteditable=true], [role=dialog]")) return;
       e.preventDefault();
       if (!playerReadyRef.current) return;
-      const state = playerRef.current?.getPlayerState?.();
-      if (state === 1) {
-        playerRef.current?.pauseVideo();
-      } else {
-        playerRef.current?.playVideo();
-      }
+      handlePlayPause();
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, []);
-
-  const handleLoad = () => {
-    const id = extractVideoId(url);
-    if (id) setVideoId(id);
-  };
+  }, [isPlaying, handlesPlaced, endSec]);
 
   // "≈ 2 min" next to Export: the download service's estimate for these segments.
   const [exportEta, setExportEta] = useState<number | null>(null);
-  const segKey = segParam(segments);
+  const segKey = selection ? `${selection.in}-${selection.out}` : "";
   useEffect(() => {
-    if (!videoId || !segments.length || totalLength(segments) > MAX_CLIP_SEC) { setExportEta(null); return; }
+    if (!videoId || !segments.length || validateSegments(segments, duration)) { setExportEta(null); return; }
     const t = setTimeout(() => {
       fetch("/api/clip-estimate", {
         method: "POST",
@@ -465,81 +253,25 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
   }, [videoId, segKey, quality]);
 
   const clipDuration = endSec - startSec;
-  const clipTotal = totalLength(segments);
-  const clipTooLong = clipTotal > MAX_CLIP_SEC;
+  const clipTotal = Math.max(0, clipDuration);
+  const clipError = selection ? validateSegments(segments, duration) : null;
+  const clipTooLong = !!clipError;
 
-  // ── Segment list ──
-  const addSegmentAt = useCallback((inSec: number, outSec: number) => {
-    setSegments((prev) => {
-      if (prev.length >= MAX_SEGMENTS) return prev;
-      const next = [...prev, { in: inSec, out: outSec }];
-      setActiveIdx(next.length - 1);
-      return next;
-    });
-  }, [setActiveIdx]);
+  const selectRange = useCallback((inSec: number, outSec: number) => {
+    setSelection(clampEditorRange({ in: inSec, out: outSec }, duration));
+  }, [duration]);
 
-  const handleAddSegment = () => {
-    const t = Math.max(0, Math.min(playheadSec, Math.max(0, duration - 1)));
-    if (segments.length < MAX_SEGMENTS) placeholderIdxRef.current = segments.length;
-    addSegmentAt(t, Math.min(duration || t + 10, t + 10));
-  };
-
-  const selectSegment = (i: number) => {
-    setActiveIdx(i);
-    const seg = segments[i];
-    if (seg && playerReadyRef.current) { playerRef.current?.seekTo(seg.in, true); setPlayheadSec(seg.in); }
-  };
-
-  const removeSegment = (i: number) => {
-    placeholderIdxRef.current = null;
-    setSegments((prev) => prev.filter((_, k) => k !== i));
-    const nextActive = activeIdx > i ? activeIdx - 1 : Math.min(activeIdx, segments.length - 2);
-    setActiveIdx(Math.max(0, nextActive));
-  };
-
-  // ── Play all: segment 1, then seek to segment 2's in point, and so on ──
-  const stopPlayAll = useCallback(() => {
-    playAllRef.current = null;
-    setPlayingAll(false);
+  const stopPreview = useCallback(() => {
     if (previewTimerRef.current) clearInterval(previewTimerRef.current);
   }, []);
 
-  const handlePlayAll = () => {
-    if (!playerReadyRef.current || !segments.length) return;
-    if (playingAll) { playerRef.current?.pauseVideo(); stopPlayAll(); return; }
-    const segs = segments;
-    if (previewTimerRef.current) clearInterval(previewTimerRef.current);
-    playAllRef.current = { idx: 0 };
-    setPlayingAll(true);
-    setActiveIdx(0);
-    playerRef.current?.seekTo(segs[0].in, true);
-    playerRef.current?.playVideo();
-    previewTimerRef.current = setInterval(() => {
-      const st = playAllRef.current;
-      if (!st) return;
-      const t = playerRef.current?.getCurrentTime?.();
-      const seg = segs[st.idx];
-      if (t == null || !seg || t < seg.out) return;
-      const next = st.idx + 1;
-      if (next >= segs.length) {
-        playerRef.current?.pauseVideo();
-        stopPlayAll();
-        return;
-      }
-      st.idx = next;
-      setActiveIdx(next);
-      // Embed seeks take 300–800 ms: a short fade keeps it from looking broken.
-      playerRef.current?.flash?.(450);
-      playerRef.current?.seekTo(segs[next].in, true);
-    }, 50);
-  };
-
   const handleStartChange = useCallback(
     (sec: number) => {
-      setStartSec(sec);
-      if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
+      const start = Math.max(0, Math.min(sec, endSec - MIN_SEGMENT_SEC));
+      setStartSec(start);
+      if (playerReadyRef.current) playerRef.current?.seekTo(start, true);
     },
-    [setStartSec],
+    [setStartSec, endSec],
   );
 
   const handleEndChange = useCallback(
@@ -549,19 +281,19 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
 
   const handleSeek = useCallback(
     (sec: number) => {
-      if (!handlesPlaced) addSegmentAt(sec, Math.min(duration, sec + 10));
+      if (!handlesPlaced) selectRange(sec, sec + 10);
       setPlayheadSec(sec);
       if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
     },
-    [handlesPlaced, duration, addSegmentAt],
+    [handlesPlaced, duration, selectRange],
   );
 
   // Auto-pause at endSec helper (the preview never runs past the out point)
   const startAutoPause = () => {
-    stopPlayAll();
+    stopPreview();
     previewTimerRef.current = setInterval(() => {
       const t = playerRef.current?.getCurrentTime?.();
-      if (t != null && t >= endSec) {
+      if (t != null && selectionRef.current && t >= selectionRef.current.out) {
         playerRef.current?.pauseVideo();
         if (previewTimerRef.current) clearInterval(previewTimerRef.current);
       }
@@ -584,7 +316,7 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     if (!playerReadyRef.current) return;
     if (isPlaying) {
       playerRef.current?.pauseVideo();
-      stopPlayAll();
+      stopPreview();
     } else {
       playerRef.current?.playVideo();
       if (handlesPlaced) startAutoPause();
@@ -608,13 +340,11 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     if (playerReadyRef.current) playerRef.current?.setPlaybackRate(rate);
   };
 
-  // Transcript click: first click starts a segment (or places one just made by
-  // "+ Add segment"); later clicks move the active segment's nearer handle.
+  // The first transcript click selects a clip; later clicks move its nearer handle.
   const handleTranscriptClick = (sec: number) => {
     if (!handlesPlaced) {
-      addSegmentAt(sec, Math.min(duration, sec + 10));
-    } else if (placeholderIdxRef.current === activeIdxRef.current) {
-      updateActive({ in: sec, out: Math.min(duration || sec + 10, sec + 10) });
+      selectRange(sec, sec + 10);
+
     } else {
       const mid = (startSec + endSec) / 2;
       if (sec < mid) {
@@ -626,9 +356,9 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
     if (playerReadyRef.current) playerRef.current?.seekTo(sec, true);
   };
 
-  // Clip Finder result → a new segment.
+  // A Clip Finder result replaces the current clip.
   const handleSnippetSelect = (start: number, end: number) => {
-    addSegmentAt(start, end);
+    selectRange(start, end);
     if (playerReadyRef.current) {
       playerRef.current?.seekTo(start, true);
       playerRef.current?.playVideo();
@@ -678,10 +408,13 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
       <div>
         <h1 className="text-2xl font-bold text-gray-900">Snippet Editor</h1>
         <p className="text-sm text-gray-500 mt-1">
-          Trim and export YouTube video clips — one range or several joined (max {MAX_CLIP_SEC / 60} min total) &middot; Spacebar to play/pause
+          Select one clip in the transcript, adjust Start and End, then export (max {MAX_CLIP_SEC / 60} min) &middot; Spacebar to play/pause
         </p>
       </div>
 
+      {legacyRanges && <p role="status" className="text-sm text-amber-800">This saved link contained multiple ranges. The editor now uses one clip, so only the first range is selected.</p>}
+      {!videoId && <p className="text-sm text-gray-600">Open a video from Chat, Search, or Browse to select a clip.</p>}
+      {playerError && <p role="alert" className="text-sm text-red-700">{playerError}</p>}
       {videoId && (
         <>
           {/* Player + Transcript side by side */}
@@ -703,10 +436,10 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                   >
                     &#x26F6;
                   </button>
-                  {ytOnly && (
+                  {(
                     <div className="absolute top-2 left-2 z-20 flex items-center gap-1">
                       <span data-testid="yt-only-badge" className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
-                        YouTube · not stored
+                        YouTube
                       </span>
                       <button
                         onClick={() => { const v = !shieldOn; setShieldOn(v); playerRef.current?.setShield?.(v); }}
@@ -716,11 +449,6 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                         {shieldOn ? "Ad? click-through" : "Back to editing"}
                       </button>
                     </div>
-                  )}
-                  {videoRes && gcsAvailable && (
-                    <span className="absolute bottom-20 right-2 z-20 px-1.5 py-0.5 rounded text-[10px] font-semibold bg-black/60 text-white pointer-events-none">
-                      {videoRes}
-                    </span>
                   )}
                   {/* HIDDEN FOR NOW: overlay preview
                   {overlaySettings?.text && (
@@ -784,7 +512,7 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
                 </div>
               )}
             </div>
-            <div className="lg:col-span-2 flex flex-col" style={videoHeight ? { maxHeight: videoHeight } : undefined}>
+            <div className="lg:col-span-2 flex flex-col h-[380px] lg:h-[var(--transcript-height)] lg:max-h-[var(--transcript-height)]" style={{ "--transcript-height": `${videoHeight || 440}px` } as React.CSSProperties}>
               {enableClipFinder ? (
                 <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 overflow-hidden">
                   {/* Tab bar */}
@@ -858,34 +586,31 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
             onPlayPause={handlePlayPause}
             onFromStart={handleFromStart}
             onLast5={handleLast5}
-            segments={segments}
-            activeIdx={activeIdx}
-            onSelectSegment={selectSegment}
-            storyboard={ytOnly ? videoMeta?.storyboard ?? null : null}
+            storyboard={videoMeta?.storyboard ?? null}
             clipRangeNode={
               <>
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] font-medium text-gray-500 uppercase">Start</label>
-                  <TimeInput value={startSec} onChange={(s) => setStartSec(Math.min(s, endSec - 0.01))} />
+                  <TimeInput label="Start" value={startSec} onChange={setStartSec} />
                 </div>
                 <div className="flex items-center gap-2">
                   <label className="text-[11px] font-medium text-gray-500 uppercase">End</label>
-                  <TimeInput value={endSec} onChange={(s) => setEndSec(Math.max(s, startSec + 0.01))} />
+                  <TimeInput label="End" value={endSec} onChange={setEndSec} />
                 </div>
-                <div className="text-[11px] text-gray-500 whitespace-nowrap">
-                  {segments.length > 1 ? `Seg ${activeIdx + 1}: ` : "Clip: "}
+                <div className="text-[11px] text-gray-500">
+                  Clip:{" "}
                   <span className="font-semibold text-gray-700 font-mono">{formatDuration(Math.max(0, clipDuration))}</span>
                   {clipTooLong && (
-                    <span className="text-red-500 ml-1">(total max {MAX_CLIP_SEC / 60}m)</span>
+                    <span role="alert" className="text-red-500 ml-1">{clipError}</span>
                   )}
                 </div>
               </>
             }
           />
 
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
+          <div>
           {/* Controls */}
-          <div className="lg:col-span-3 bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm">
+          <div className="bg-white rounded-xl border border-gray-200 px-5 py-3 shadow-sm">
             <div className="flex flex-wrap items-center gap-3">
               <button
                 onClick={() => { setDebugOpen((v) => !v); if (!debugOpen) void loadDebugLogs(); }}
@@ -913,58 +638,12 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
             </div>
           </div>
 
-          {/* Segment list */}
-          <div className="lg:col-span-2 bg-white rounded-xl border border-gray-200 shadow-sm" data-testid="segment-panel">
-            <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100">
-              <span className="text-[13px] font-semibold text-gray-700">Segments</span>
-              <div className="flex gap-1.5">
-                <button
-                  onClick={handlePlayAll}
-                  disabled={!segments.length}
-                  data-testid="play-all"
-                  className="px-2 py-1 text-[11px] font-semibold rounded border border-gray-300 text-gray-700 hover:bg-gray-50 disabled:opacity-40"
-                >
-                  {playingAll ? "Stop" : "Play all"}
-                </button>
-                <button
-                  onClick={handleAddSegment}
-                  disabled={segments.length >= MAX_SEGMENTS || !duration}
-                  data-testid="add-segment"
-                  className="px-2 py-1 text-[11px] font-semibold rounded text-white disabled:opacity-40"
-                  style={{ backgroundColor: DINO_RED }}
-                >
-                  + Add segment
-                </button>
-              </div>
-            </div>
-            {/* Only the segment that's in the timeline; click another band there to switch. */}
-            <div hidden data-testid="segment-list" data-segments={JSON.stringify(segments)} />
-            {!active ? (
-              <p className="px-4 py-3 text-[12px] text-gray-400">Click the timeline or a transcript line to start a segment.</p>
-            ) : (
-              <div
-                className="flex items-center gap-2 px-4 py-2.5 text-[12px] font-mono"
-                data-testid="segment-active"
-                data-in={active.in}
-                data-out={active.out}
-              >
-                <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: segmentColor(activeIdx) }} />
-                {segments.length > 1 && <span className="text-gray-500 font-sans">{activeIdx + 1}/{segments.length}</span>}
-                <span className="text-gray-800" data-testid="segment-text">{formatSegTime(active.in)} → {formatSegTime(active.out)}</span>
-                <span className="text-gray-500 ml-auto">{(active.out - active.in).toFixed(1)} s</span>
-                <button onClick={() => removeSegment(activeIdx)} className="px-1 text-gray-400 hover:text-red-600" title="Remove this segment" data-testid="segment-remove">✕</button>
-              </div>
-            )}
-            <div className="flex justify-between px-4 py-2 text-[12px] border-t border-gray-50">
-              <span className="text-gray-500">
-                {segments.length > 1 ? `${segments.length} segments joined · click a band in the timeline to edit it` : `${segments.length} segment${segments.length === 1 ? "" : "s"}`}
-              </span>
-              <span className={`font-mono font-semibold ${clipTooLong ? "text-red-600" : "text-gray-800"}`}>
-                Total <span data-testid="segment-total">{formatTotal(clipTotal)}</span>
-                {clipTooLong && <span className="ml-1 font-sans font-normal">(max {MAX_CLIP_SEC / 60}:00)</span>}
-              </span>
-            </div>
-          </div>
+          <div hidden data-testid="segment-list" data-segments={JSON.stringify(segments)} />
+          {selection && <div className="flex flex-wrap items-center gap-3 text-sm text-gray-600 mt-3" data-testid="segment-active" data-in={startSec} data-out={endSec}>
+            <span data-testid="segment-text">{formatSegTime(startSec)} → {formatSegTime(endSec)}</span>
+            <span data-testid="segment-total">{formatTotal(clipTotal)}</span>
+            <button onClick={() => { stopPreview(); setSelection(null); }} className="underline min-h-11 px-2" data-testid="clear-selection">Clear selection</button>
+          </div>}
           </div>
 
           {debugOpen && (
@@ -1090,40 +769,24 @@ export function ClipEditor({ videoSource, enableClipFinder }: { videoSource?: "g
 
 /* ── Editable MM:SS.ms input ── */
 
-function TimeInput({ value, onChange }: { value: number; onChange: (sec: number) => void }) {
+function TimeInput({ label, value, onChange }: { label: string; value: number; onChange: (sec: number) => void }) {
   const [text, setText] = useState(formatDuration(value));
-  const prevValue = useRef(value);
-
-  useEffect(() => {
-    if (Math.abs(value - prevValue.current) > 0.005) {
-      setText(formatDuration(value));
-      prevValue.current = value;
-    }
-  }, [value]);
+  useEffect(() => { setText(formatDuration(value)); }, [value]);
 
   const commit = () => {
-    // Accept M:SS, M:SS.mm, or just seconds
-    const match = text.match(/^(\d+):(\d{1,2}(?:\.\d{0,2})?)$/);
-    if (match) {
-      const sec = parseInt(match[1]) * 60 + parseFloat(match[2]);
-      onChange(sec);
-      prevValue.current = sec;
-      setText(formatDuration(sec));
-    } else {
-      const num = parseFloat(text);
-      if (!isNaN(num) && num >= 0) {
-        onChange(num);
-        prevValue.current = num;
-        setText(formatDuration(num));
-      } else {
-        setText(formatDuration(value));
-      }
-    }
+    const match = text.trim().match(/^(\d+):([0-5]?\d(?:\.\d+)?)$/);
+    const seconds = match ? Number(match[1]) * 60 + Number(match[2])
+      : /^\d+(?:\.\d+)?$/.test(text.trim()) ? Number(text) : NaN;
+    // Always restore the displayed value; a clamped/no-op change may not
+    // trigger a new value effect (e.g. entering an End beyond the video).
+    setText(formatDuration(value));
+    if (Number.isFinite(seconds)) onChange(seconds);
   };
 
   return (
     <input
       type="text"
+      aria-label={label}
       value={text}
       onChange={(e) => setText(e.target.value)}
       onBlur={commit}

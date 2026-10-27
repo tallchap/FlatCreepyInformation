@@ -1,3 +1,4 @@
+import { editorHref } from "@/lib/editor-link";
 import { Card, CardContent } from "@/components/ui/card";
 import { Calendar, FileText, Youtube } from "lucide-react";
 import Link from "next/link";
@@ -23,7 +24,7 @@ export function VideoResult({ video, onTimestampClick }: Props) {
         <div className="flex flex-col md:flex-row justify-between gap-4">
           <div className="flex flex-col gap-2">
             <Link
-              href={video.Youtube_Link}
+              href={editorHref(video.ID)}
               rel="noopener noreferrer"
               className="font-[family-name:var(--font-display)] text-xl font-semibold leading-snug text-[#1f2e25] underline-offset-4 hover:underline"
             >
@@ -49,7 +50,7 @@ export function VideoResult({ video, onTimestampClick }: Props) {
           <div className="flex gap-2">
             <Button variant="outline" asChild>
               <Link
-                href={video.Transcript_Doc_Link}
+                href={editorHref(video.ID, video.MatchSnippets?.find((s) => s.seconds != null)?.seconds)}
                 target="_blank"
                 rel="noopener noreferrer"
               >

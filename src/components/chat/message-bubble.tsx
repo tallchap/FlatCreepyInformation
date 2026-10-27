@@ -1,5 +1,6 @@
 "use client";
 
+import { formatChatContent } from "@/lib/chat-content";
 import { cn } from "@/lib/utils";
 
 interface MessageBubbleProps {
@@ -14,65 +15,6 @@ interface MessageBubbleProps {
     citationIndex: number;
   }) => void;
   onSuggestionClick?: (suggestion: string) => void;
-}
-
-/**
- * Clean a numbered suggestion line: strip number prefix, leading "or ",
- * trailing comma/period, and trim whitespace.
- */
-function cleanSuggestion(raw: string): string {
-  return raw
-    .replace(/^\d+\.\s*/, "")
-    .replace(/^or\s+/i, "")
-    .replace(/[,.]$/, "")
-    .trim();
-}
-
-/**
- * Turn markdown-ish links into clickable anchors, convert
- * youtube:VIDEO_ID citations into Snippysaurus video links,
- * strip OpenAI file-search annotations, make numbered follow-ups
- * clickable, and preserve formatting.
- */
-function formatContent(text: string): string {
-  return (
-    text
-      // Remove OpenAI file-search annotation markers like 【4:14†source】
-      .replace(/[\u3010][^\u3011]*[\u3011]/g, "")
-      // Bold **text**
-      .replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
-      // Snippysaurus video links: [Video Title](youtube:VIDEO_ID) or [Video Title](youtube:VIDEO_ID:SECONDS)
-      .replace(
-        /\[((?:[^\[\]]|\[[^\]]*\])*)\]\(youtube:([\w-]{11})(?::(\d+(?:\.\d+)?))?\)/g,
-        (_match, title: string, videoId: string, seconds?: string) => {
-          const startSec = seconds ? Math.floor(parseFloat(seconds)) : 0;
-          const href = `/video/${videoId}?t=${startSec}`;
-          return `<a href="${href}" data-video-id="${videoId}" data-start-sec="${startSec}" data-video-title="${encodeURIComponent(title)}" class="inline-flex items-center gap-1 font-medium underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="inline"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>${title}</a>`;
-        },
-      )
-      // Regular markdown links [text](url)
-      .replace(
-        /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g,
-        '<a href="$2" target="_blank" rel="noopener noreferrer" class="underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]">$1</a>',
-      )
-      // Bare youtu.be URLs
-      .replace(
-        /(https:\/\/youtu\.be\/([\w-]{11}))/g,
-        '<a href="/video/$2" data-video-id="$2" data-start-sec="0" class="underline decoration-[#d4cdb8] underline-offset-4 text-[#1f2e25] hover:decoration-[#1f2e25]">$1</a>',
-      )
-      // Numbered follow-up suggestions (e.g. "1. find quotes about...")
-      // Convert to clickable spans with cleaned text
-      .replace(/^(\d+\.\s+.+)$/gm, (_match, line: string) => {
-        const cleaned = cleanSuggestion(line);
-        return `<span data-suggestion="${encodeURIComponent(cleaned)}" class="cursor-pointer underline text-emerald-600 hover:text-emerald-800">${line
-          .replace(/^\d+\.\s*/, "")
-          .replace(/^or\s+/i, "")
-          .replace(/[,.]$/, "")
-          .trim()}</span>`;
-      })
-      // Newlines
-      .replace(/\n/g, "<br />")
-  );
 }
 
 export function MessageBubble({
@@ -100,7 +42,7 @@ export function MessageBubble({
     }
 
     // Handle video link clicks
-    if (!onVideoLinkClick) return;
+    if (!onVideoLinkClick || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
     const link = target.closest("a[data-video-id]") as HTMLAnchorElement | null;
     if (!link) return;
 
@@ -139,7 +81,7 @@ export function MessageBubble({
           <div
             className="prose prose-sm max-w-none"
             onClick={handleAssistantContentClick}
-            dangerouslySetInnerHTML={{ __html: formatContent(content) }}
+            dangerouslySetInnerHTML={{ __html: formatChatContent(content) }}
           />
         )}
       </div>

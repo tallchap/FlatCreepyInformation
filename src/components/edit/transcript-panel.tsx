@@ -24,23 +24,31 @@ function formatTime(sec: number): string {
 export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpenClipFinder, bare }: TranscriptPanelProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
-  const startLineRef = useRef<HTMLDivElement>(null);
-  const matchRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const startLineRef = useRef<HTMLButtonElement>(null);
+  const matchRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    const controller = new AbortController();
     setLoading(true);
-    fetch(`/api/transcript/${videoId}`)
-      .then((r) => r.json())
-      .then((data: Line[]) => {
-        setLines(data);
-        setLoading(false);
+    setError(false);
+    setLines([]);
+    fetch(`/api/transcript/${videoId}`, { signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) throw new Error("Transcript unavailable");
+        const data = await r.json();
+        if (!Array.isArray(data)) throw new Error("Invalid transcript");
+        setLines(data.filter((line) => line && typeof line.start === "number" && Number.isFinite(line.start) && line.start >= 0 && typeof line.text === "string"));
       })
-      .catch(() => setLoading(false));
-  }, [videoId]);
+      .catch(() => { if (!controller.signal.aborted) setError(true); })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [videoId, attempt]);
 
   // Compute matching line indices
   const matchIndices = useMemo(() => {
@@ -88,7 +96,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
         });
       }
     }
-  }, [startSec, query]);
+  }, [startSec, query, lines]);
 
   const goNext = useCallback(() => {
     if (matchIndices.length === 0) return;
@@ -123,6 +131,8 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
       </div>
     );
   }
+
+  if (error) return <div role="alert" className="p-5 text-sm text-gray-600">The transcript could not be loaded. <button className="underline min-h-11" onClick={() => setAttempt((n) => n + 1)}>Try again</button></div>;
 
   if (lines.length === 0) {
     return (
@@ -161,10 +171,12 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleSearchKeyDown}
               placeholder="Search transcript..."
+              aria-label="Search transcript"
               className="w-full pl-7 pr-7 py-1.5 text-xs border border-gray-200 rounded-md focus:outline-none focus:ring-1 focus:ring-blue-300 focus:border-blue-300"
             />
             {query && (
               <button
+                aria-label="Clear transcript search"
                 onClick={() => setQuery("")}
                 className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
               >
@@ -180,6 +192,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
                   : "0 of 0"}
               </span>
               <button
+                aria-label="Previous transcript match"
                 onClick={goPrev}
                 disabled={matchIndices.length === 0}
                 className="w-6 h-6 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
@@ -187,6 +200,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
                 <ChevronUp className="h-3.5 w-3.5" />
               </button>
               <button
+                aria-label="Next transcript match"
                 onClick={goNext}
                 disabled={matchIndices.length === 0}
                 className="w-6 h-6 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:bg-gray-100 disabled:opacity-30"
@@ -217,7 +231,10 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
           }
 
           return (
-            <div
+            <button
+              type="button"
+              data-testid="transcript-line"
+              data-start={line.start}
               key={i}
               ref={(el) => {
                 if (isFirstInRange && !query.trim()) startLineRef.current = el;
@@ -225,7 +242,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
                 else matchRefs.current.delete(i);
               }}
               onClick={() => onLineClick(line.start)}
-              className={`flex gap-2 px-2 py-1 rounded cursor-pointer transition-colors text-sm ${bgClass}`}
+              className={`flex w-full text-left min-h-11 gap-2 px-2 py-2 rounded cursor-pointer transition-colors text-sm focus-visible:outline-2 focus-visible:outline-green-600 ${bgClass}`}
             >
               <span className="text-[10px] text-gray-400 font-mono w-8 shrink-0 pt-0.5">
                 {formatTime(line.start)}
@@ -233,7 +250,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
               <span className={inRange || isMatch ? "text-gray-800" : "text-gray-500"}>
                 {line.text}
               </span>
-            </div>
+            </button>
           );
         })}
       </div>
