@@ -6,6 +6,15 @@ export type ClipSegment = { in: number; out: number };
 export const MAX_CLIP_SEC = 11 * 60;
 export const MIN_SEGMENT_SEC = 1;
 
+/** Full-video position: 122 → "02:02"; 3725 → "1:02:05". */
+export function formatPlaybackTime(sec: number): string {
+  const total = Number.isFinite(sec) ? Math.max(0, Math.floor(sec)) : 0;
+  const hours = Math.floor(total / 3600);
+  const minutes = String(Math.floor(total / 60) % 60).padStart(2, "0");
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours ? `${hours}:${minutes}:${seconds}` : `${minutes}:${seconds}`;
+}
+
 /** null when valid, else the reason. `lengthSeconds` = video length, if known. */
 export function validateSegments(segments: unknown, lengthSeconds?: number | null): string | null {
   if (!Array.isArray(segments) || segments.length !== 1) return "Choose exactly one clip range";
