@@ -105,7 +105,10 @@ async function seek(p, seconds) {
       assert.equal(await saved.getByRole("heading", { name: "Ready-Made Snippet", exact: true }).count(), 1);
       assert.equal(await saved.getByRole("button", { name: /Snippets.*1 snippet/ }).count(), 0);
       await saved.scrollIntoViewIfNeeded(); await shot("single-snippet");
-      checks.push({ name: "one saved snippet has no duplicate chooser or accordion header" });
+      assert.equal(await saved.getByTestId("snippet-row").count(), 1);
+      assert.equal(await saved.locator("h3 button[aria-expanded=true]").count(), 1);
+      assert(await saved.getByTestId("snippet-transcript").isVisible());
+      checks.push({ name: "one saved snippet opens directly with its transcript and no duplicate chooser" });
       const follow = p.getByRole("checkbox", { name: "Follow playback" });
       assert(await follow.isChecked(), "Following defaults on");
       await p.locator("#clip-player").scrollIntoViewIfNeeded();
@@ -176,9 +179,9 @@ async function seek(p, seconds) {
         checks.push({ name: "unobstructed fullscreen and compact 320px timestamp" });
       }
       await p.goto(base + "/edit?v=UWh1MIMQd1Y", { waitUntil: "domcontentloaded" });
-      const chooser = p.getByTestId("snippet-chooser");
+      const chooser = p.getByTestId("ready-made-snippets");
       await chooser.waitFor({ timeout: 60000 });
-      const cards = chooser.locator("div.flex-shrink-0");
+      const cards = chooser.getByTestId("snippet-row").locator("h3 button");
       assert.equal(await cards.count(), 6);
       const media = p.getByTestId("ready-made-snippets").locator("video");
       const firstSource = await media.getAttribute("src");
@@ -188,7 +191,7 @@ async function seek(p, seconds) {
       await media.evaluate(v => { v.muted = true; return v.play(); });
       await p.waitForFunction(() => document.querySelector('[data-testid="ready-made-snippets"] video')?.currentTime > 0);
       await fits(p); await p.getByTestId("ready-made-snippets").scrollIntoViewIfNeeded(); await shot("multiple-snippets");
-      checks.push({ name: "multiple snippets retain their chooser, selected source, playback and download link" });
+      checks.push({ name: "multiple snippet rows switch player and transcript, preserving playback and download link" });
       assert.deepEqual(errors, []);
       results.push({ name, pass: true, checks, errors });
       console.log(`PASS ${name} (${checks.length} checks)`);
