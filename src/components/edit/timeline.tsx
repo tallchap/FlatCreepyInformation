@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState, useMemo } from "react";
 import type { Storyboard } from "@/lib/youtube-storyboard";
+import { PlaybackPosition } from "./playback-position";
 
 const CLIP_COLOR = "#99cc66";
 
@@ -232,6 +233,7 @@ export function Timeline({
   return (
     <div className="bg-white rounded-xl border border-gray-200 p-5 shadow-sm">
       <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+        <PlaybackPosition seconds={playheadSec} duration={duration} />
         <div className="flex items-center gap-1">
           {onFromStart && (
             <>
@@ -320,6 +322,7 @@ export function Timeline({
         {/* Track */}
         <div
           ref={trackRef}
+          data-testid="timeline-track"
           className="relative h-12 bg-gray-100 rounded-lg overflow-visible cursor-pointer select-none"
           onClick={handleTrackClick}
           onPointerDown={handleTrackPointerDown}

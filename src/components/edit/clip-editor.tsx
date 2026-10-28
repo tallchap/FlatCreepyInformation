@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Timeline } from "./timeline";
 import { TranscriptPanel } from "./transcript-panel";
+import { PlaybackPosition } from "./playback-position";
 import { ClipFinder } from "./clip-finder";
 import { useDownload } from "@/lib/download-context";
 import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal";
@@ -423,6 +424,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
               <div ref={playerContainerRef} className="bg-black rounded-xl overflow-hidden [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
                 <div ref={videoWrapperRef} className="relative aspect-video w-full max-h-full">
                   <div id="clip-player" className="w-full h-full" />
+                  <PlaybackPosition seconds={playheadSec} duration={duration} overlay />
                   {/* Custom fullscreen button — fullscreens container so overlay shows */}
                   <button
                     onClick={() => {
@@ -551,6 +553,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                         videoId={videoId}
                         startSec={startSec}
                         endSec={endSec}
+                        playheadSec={playheadSec}
                         onLineClick={handleTranscriptClick}
                         bare
                       />
@@ -562,6 +565,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                   videoId={videoId}
                   startSec={startSec}
                   endSec={endSec}
+                  playheadSec={playheadSec}
                   onLineClick={handleTranscriptClick}
                 />
               )}

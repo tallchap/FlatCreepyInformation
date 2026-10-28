@@ -10,6 +10,7 @@ interface TranscriptPanelProps {
   videoId: string;
   startSec: number;
   endSec: number;
+  playheadSec: number;
   onLineClick: (sec: number) => void;
   onOpenClipFinder?: () => void;
   bare?: boolean;
@@ -21,17 +22,32 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpenClipFinder, bare }: TranscriptPanelProps) {
+export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLineClick, onOpenClipFinder, bare }: TranscriptPanelProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [query, setQuery] = useState("");
   const [currentMatchIdx, setCurrentMatchIdx] = useState(0);
+  const [followPlayback, setFollowPlayback] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
   const startLineRef = useRef<HTMLButtonElement>(null);
+  const currentLineRef = useRef<HTMLButtonElement>(null);
   const matchRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const searchInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    try { setFollowPlayback(localStorage.getItem("transcript-follow-playback") !== "false"); } catch {}
+  }, []);
+
+  const currentLineIdx = useMemo(() => {
+    let index = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].start > playheadSec) break;
+      index = i;
+    }
+    return index;
+  }, [lines, playheadSec]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,6 +113,23 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
       }
     }
   }, [startSec, query, lines]);
+
+  // Search keeps control of the scroll position until its query is cleared.
+  // Only scroll when the spoken line changes, so reading stays steady.
+  useEffect(() => {
+    if (!followPlayback || query.trim()) return;
+    const line = currentLineRef.current;
+    const container = containerRef.current;
+    if (!line || !container) return;
+    const row = line.getBoundingClientRect();
+    const view = container.getBoundingClientRect();
+    if (row.top < view.top || row.bottom > view.bottom) {
+      container.scrollTo({
+        top: Math.max(0, container.scrollTop + row.top - view.top - 40),
+        behavior: "smooth",
+      });
+    }
+  }, [currentLineIdx, followPlayback, query, lines]);
 
   const goNext = useCallback(() => {
     if (matchIndices.length === 0) return;
@@ -210,9 +243,22 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
             </>
           )}
         </div>
+        <label className="flex w-fit items-center gap-2 min-h-8 text-xs font-medium text-gray-600 cursor-pointer" title="Scroll to the current spoken line. Paused while searching.">
+          <input
+            type="checkbox"
+            checked={followPlayback}
+            onChange={(e) => {
+              setFollowPlayback(e.target.checked);
+              try { localStorage.setItem("transcript-follow-playback", String(e.target.checked)); } catch {}
+            }}
+            className="h-4 w-4 accent-green-700"
+          />
+          Follow playback
+        </label>
       </div>
       <div
         ref={containerRef}
+        data-testid="transcript-scroll"
         className="overflow-y-auto flex-1 p-3 space-y-0.5"
       >
         {lines.map((line, i) => {
@@ -220,12 +266,15 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
           const isFirstInRange = i === firstInRangeIdx;
           const isMatch = matchSet.has(i);
           const isCurrentMatch = i === currentMatchLineIdx;
+          const isCurrentLine = i === currentLineIdx;
 
           let bgClass = "hover:bg-gray-50 border-l-2 border-l-transparent";
           if (isCurrentMatch) {
             bgClass = "bg-orange-100 border-l-2 border-l-orange-400";
           } else if (isMatch) {
             bgClass = "bg-yellow-50 border-l-2 border-l-yellow-400";
+          } else if (isCurrentLine) {
+            bgClass = "bg-blue-50 border-l-2 border-l-blue-600";
           } else if (inRange) {
             bgClass = "bg-green-50 border-l-2 border-l-[#99cc66]";
           }
@@ -235,9 +284,11 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
               type="button"
               data-testid="transcript-line"
               data-start={line.start}
+              aria-current={isCurrentLine ? "true" : undefined}
               key={i}
               ref={(el) => {
                 if (isFirstInRange && !query.trim()) startLineRef.current = el;
+                if (isCurrentLine) currentLineRef.current = el;
                 if (isMatch && el) matchRefs.current.set(i, el);
                 else matchRefs.current.delete(i);
               }}
@@ -247,7 +298,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, onLineClick, onOpen
               <span className="text-[10px] text-gray-400 font-mono w-8 shrink-0 pt-0.5">
                 {formatTime(line.start)}
               </span>
-              <span className={inRange || isMatch ? "text-gray-800" : "text-gray-500"}>
+              <span className={inRange || isMatch || isCurrentLine ? "text-gray-800" : "text-gray-500"}>
                 {line.text}
               </span>
             </button>
