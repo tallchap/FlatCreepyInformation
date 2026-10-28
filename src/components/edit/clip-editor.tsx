@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Timeline } from "./timeline";
 import { TranscriptPanel } from "./transcript-panel";
-import { PlaybackPosition } from "./playback-position";
 import { ClipFinder } from "./clip-finder";
 import { useDownload } from "@/lib/download-context";
 import { OverlayEditorModal, type OverlaySettings } from "./overlay-editor-modal";
@@ -114,23 +113,17 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
   }, []);
 
   const leftColRef = useRef<HTMLDivElement>(null);
-  const lockedHeightRef = useRef<number | null>(null);
 
-  // Track left column height (video + collapsed description) for transcript pane
+  // Measure the natural video/details height, never a grid-stretched height.
   useEffect(() => {
     const el = leftColRef.current;
     if (!el) return;
     const ro = new ResizeObserver(([entry]) => {
-      // Only update height when description is NOT expanded
-      if (!metaDescExpanded) {
-        const h = entry.contentRect.height;
-        setVideoHeight(h);
-        lockedHeightRef.current = h;
-      }
+      setVideoHeight(entry.contentRect.height);
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [videoId, metaDescExpanded]);
+  }, [videoId]);
 
   // Preserve old bookmarked ranges, but edit only the first one.
   useEffect(() => {
@@ -419,12 +412,11 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
       {videoId && (
         <>
           {/* Player + Transcript side by side */}
-          <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
-            <div className="lg:col-span-3" ref={(el) => { videoContainerRef.current = el; leftColRef.current = el; }}>
+          <div className="grid grid-cols-1 lg:grid-cols-5 items-start gap-3">
+            <div data-testid="editor-video-column" className="lg:col-span-3 min-w-0" ref={(el) => { videoContainerRef.current = el; leftColRef.current = el; }}>
               <div ref={playerContainerRef} className="bg-black rounded-xl overflow-hidden [&:fullscreen]:rounded-none [&:fullscreen]:w-screen [&:fullscreen]:h-screen [&:fullscreen]:flex [&:fullscreen]:items-center [&:fullscreen]:justify-center">
                 <div ref={videoWrapperRef} className="relative aspect-video w-full max-h-full">
                   <div id="clip-player" className="w-full h-full" />
-                  <PlaybackPosition seconds={playheadSec} duration={duration} overlay />
                   {/* Custom fullscreen button — fullscreens container so overlay shows */}
                   <button
                     onClick={() => {
@@ -514,9 +506,9 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                 </div>
               )}
             </div>
-            <div className="lg:col-span-2 flex flex-col h-[380px] lg:h-[var(--transcript-height)] lg:max-h-[var(--transcript-height)]" style={{ "--transcript-height": `${videoHeight || 440}px` } as React.CSSProperties}>
+            <div data-testid="editor-side-pane" className="lg:col-span-2 min-h-0 min-w-0 flex flex-col h-[380px] lg:h-[var(--transcript-height)] lg:max-h-[var(--transcript-height)]" style={{ "--transcript-height": `${videoHeight || 440}px` } as React.CSSProperties}>
               {enableClipFinder ? (
-                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 overflow-hidden">
+                <div className="bg-white rounded-xl border border-gray-200 shadow-sm flex flex-col flex-1 min-h-0 overflow-hidden">
                   {/* Tab bar */}
                   <div className="flex border-b border-gray-100 shrink-0">
                     <button
@@ -541,7 +533,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                     </button>
                   </div>
                   {/* Tab content */}
-                  <div className="flex-1 overflow-hidden">
+                  <div className="flex-1 min-h-0 overflow-hidden">
                     {clipFinderOpen ? (
                       <ClipFinder
                         transcript={transcriptLines}

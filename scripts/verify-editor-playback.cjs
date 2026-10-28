@@ -41,14 +41,32 @@ async function currentVisible(p) {
 }
 async function readout(p) {
   const actual = await playerState(p);
-  const player = await p.getByTestId("player-position").getByTestId("current-time").textContent();
   const timeline = await p.getByTestId("timeline-position").getByTestId("current-time").textContent();
-  assert.equal(player, timeline);
-  assert(Math.abs(timeValue(player) - actual.time) < 1.2, `Readout ${player} differs from player ${actual.time}`);
-  return { display: player, actual: actual.time };
+  assert.equal(await p.getByTestId("player-position").count(), 0);
+  assert.equal(await p.getByText("Video position", { exact: true }).count(), 0);
+  assert(Math.abs(timeValue(timeline) - actual.time) < 1.2, `Readout ${timeline} differs from player ${actual.time}`);
+  return { display: timeline, actual: actual.time };
 }
 async function fits(p) {
   assert(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1), "Horizontal overflow");
+}
+async function aligned(p) {
+  await p.waitForFunction(() => {
+    const left = document.querySelector('[data-testid="editor-video-column"]');
+    const right = document.querySelector('[data-testid="editor-side-pane"]');
+    if (!left || !right) return false;
+    const a = left.getBoundingClientRect(), b = right.getBoundingClientRect();
+    return innerWidth >= 1024
+      ? Math.abs(a.top - b.top) < 2 && Math.abs(a.bottom - b.bottom) < 2 && b.left - a.right <= 13
+      : b.top >= a.bottom && b.top - a.bottom <= 13;
+  });
+  const pane = await p.getByTestId("editor-side-pane").boundingBox();
+  const input = p.getByPlaceholder("Find clips about...");
+  if (await input.isVisible()) {
+    const box = await input.boundingBox();
+    assert(box.y + box.height <= pane.y + pane.height, "Clip Finder input must stay inside the aligned pane");
+  }
+  await fits(p);
 }
 async function seek(p, seconds) {
   const track = p.getByTestId("timeline-track");
@@ -74,14 +92,29 @@ async function seek(p, seconds) {
     try {
       await p.goto(base + "/edit?v=CRraHg4Ks_g&start=60&end=76", { waitUntil: "domcontentloaded" });
       await ready(p);
+      for (const tab of ["Clip Finder", "Transcript"]) {
+        await p.getByRole("button", { name: tab, exact: true }).click();
+        await aligned(p);
+        await shot(tab.toLowerCase().replace(" ", "-"));
+      }
+      await p.getByRole("checkbox", { name: "Follow playback" }).waitFor();
+      checks.push({ name: "player and side pane align in both tabs; mobile stack and input fit" });
+      const saved = p.getByTestId("ready-made-snippets");
+      await saved.waitFor({ timeout: 60000 });
+      assert.equal(await saved.getByTestId("snippet-chooser").count(), 0);
+      assert.equal(await saved.getByRole("heading", { name: "Ready-Made Snippet", exact: true }).count(), 1);
+      assert.equal(await saved.getByRole("button", { name: /Snippets.*1 snippet/ }).count(), 0);
+      await saved.scrollIntoViewIfNeeded(); await shot("single-snippet");
+      checks.push({ name: "one saved snippet has no duplicate chooser or accordion header" });
       const follow = p.getByRole("checkbox", { name: "Follow playback" });
       assert(await follow.isChecked(), "Following defaults on");
+      await p.locator("#clip-player").scrollIntoViewIfNeeded();
       await p.getByRole("button", { name: "From Start", exact: true }).click();
       await p.waitForFunction(() => window.YT.get(document.querySelector("#clip-player iframe").id).getCurrentTime() >= 63);
       await p.getByRole("button", { name: "Pause", exact: true }).click();
       await currentVisible(p);
-      checks.push({ name: "real playback updates both timestamps and highlighted line", ...await readout(p) });
-      await p.getByTestId("player-position").scrollIntoViewIfNeeded();
+      checks.push({ name: "real playback updates the compact timeline timestamp and highlighted line", ...await readout(p) });
+      await p.locator("#clip-player").scrollIntoViewIfNeeded();
       await fits(p); await shot("playing");
 
       // Zoom out so pointer seeking uses the whole video, independently of clip bounds.
@@ -133,14 +166,29 @@ async function seek(p, seconds) {
       if (name === "chromium-desktop") {
         await p.getByTitle("Fullscreen with overlay").click();
         await p.waitForFunction(() => !!document.fullscreenElement);
-        assert(await p.getByTestId("player-position").isVisible());
+        assert.equal(await p.getByTestId("player-position").count(), 0);
         await shot("fullscreen");
         await p.evaluate(() => document.exitFullscreen());
         await p.setViewportSize({ width: 320, height: 900 });
         await p.getByTestId("timeline-position").scrollIntoViewIfNeeded();
         await fits(p); await shot("320px");
-        checks.push({ name: "fullscreen timestamp and 320px layout" });
+        assert((await p.getByTestId("timeline-position").boundingBox()).height <= 36);
+        checks.push({ name: "unobstructed fullscreen and compact 320px timestamp" });
       }
+      await p.goto(base + "/edit?v=UWh1MIMQd1Y", { waitUntil: "domcontentloaded" });
+      const chooser = p.getByTestId("snippet-chooser");
+      await chooser.waitFor({ timeout: 60000 });
+      const cards = chooser.locator("div.flex-shrink-0");
+      assert.equal(await cards.count(), 6);
+      const media = p.getByTestId("ready-made-snippets").locator("video");
+      const firstSource = await media.getAttribute("src");
+      await cards.nth(1).click();
+      assert.notEqual(await media.getAttribute("src"), firstSource);
+      assert.equal(await p.getByTestId("ready-made-snippets").getByRole("link", { name: "Download Snippet" }).getAttribute("href"), await media.getAttribute("src"));
+      await media.evaluate(v => { v.muted = true; return v.play(); });
+      await p.waitForFunction(() => document.querySelector('[data-testid="ready-made-snippets"] video')?.currentTime > 0);
+      await fits(p); await p.getByTestId("ready-made-snippets").scrollIntoViewIfNeeded(); await shot("multiple-snippets");
+      checks.push({ name: "multiple snippets retain their chooser, selected source, playback and download link" });
       assert.deepEqual(errors, []);
       results.push({ name, pass: true, checks, errors });
       console.log(`PASS ${name} (${checks.length} checks)`);

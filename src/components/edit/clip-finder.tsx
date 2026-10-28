@@ -106,9 +106,9 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose }: ClipFinderP
   const showAutoprompts = messages.length === 0 && !loading;
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full min-h-0">
       {/* Body */}
-      <div ref={bodyRef} className="flex-1 overflow-y-auto p-4 space-y-3">
+      <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {/* Autoprompts */}
         {showAutoprompts && (
           <>
@@ -224,7 +224,7 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose }: ClipFinderP
       </div>
 
       {/* Input */}
-      <form onSubmit={handleSubmit} className="border-t border-gray-100 px-3 py-2 flex gap-1.5 items-center">
+      <form onSubmit={handleSubmit} className="shrink-0 border-t border-gray-100 px-3 py-2 flex gap-1.5 items-center">
         <input
           type="text"
           value={inputValue}
