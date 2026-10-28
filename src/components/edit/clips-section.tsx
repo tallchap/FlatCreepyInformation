@@ -48,10 +48,10 @@ export function ClipsSection({ videoId }: { videoId: string }) {
   if (loading || snippets.length === 0) return null;
 
   return (
-    <div className="space-y-2">
-      <h2 className="text-2xl font-bold text-gray-900">Ready-Made Snippets</h2>
+    <div className="space-y-2" data-testid="ready-made-snippets">
+      <h2 className="text-2xl font-bold text-gray-900">Ready-Made Snippet{snippets.length > 1 ? "s" : ""}</h2>
       <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
-        <button
+        {snippets.length > 1 && <button
           onClick={() => setOpen(!open)}
           className="flex items-center gap-2.5 w-full px-5 py-3 text-left hover:bg-gray-50 transition-colors"
         >
@@ -66,10 +66,10 @@ export function ClipsSection({ videoId }: { videoId: string }) {
           <span className="text-[11px] text-gray-400">
             {snippets.length} snippet{snippets.length !== 1 ? "s" : ""}
           </span>
-        </button>
+        </button>}
 
-        {open && (
-          <div className="px-5 pb-5">
+        {(snippets.length === 1 || open) && (
+          <div className={`px-5 pb-5 ${snippets.length === 1 ? "pt-5" : ""}`}>
             {activeSnippet && (
               <div className="grid grid-cols-1 lg:grid-cols-5 gap-4">
                 <div className="lg:col-span-3">
@@ -144,7 +144,7 @@ export function ClipsSection({ videoId }: { videoId: string }) {
               </div>
             )}
 
-            <div className="mt-4">
+            {snippets.length > 1 && <div className="mt-4" data-testid="snippet-chooser">
               <ClipsStrip
                 clips={snippets.map((s) => ({
                   clipId: s.snippetId,
@@ -167,7 +167,7 @@ export function ClipsSection({ videoId }: { videoId: string }) {
                   if (match) { setActiveSnippet(match); setDescExpanded(false); }
                 }}
               />
-            </div>
+            </div>}
           </div>
         )}
       </div>

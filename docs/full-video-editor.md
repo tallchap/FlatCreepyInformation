@@ -4,7 +4,9 @@ Full-video titles, transcript links, and chat/search “Snip It” actions resol
 
 The full-video editor previews and exports from YouTube. It supports exactly one Start/End range (1 second–11 minutes); Clip Finder replaces that range. The download-service array payload remains an array of one for compatibility. Existing saved snippets, their pages, and their stored media are unchanged. No database migration or Bunny deletion is part of this change.
 
-The current full-video position appears on the player and beside the timeline controls, including hours for long videos. The transcript highlights the current spoken line. **Follow playback** scrolls that line into view; switching it off keeps the reader's position. This preference is remembered in the browser. Transcript search temporarily controls scrolling, and clearing the search resumes following when enabled.
+The current full-video position appears in a compact timer beside the timeline controls, including hours for long videos. The video has no duplicate timer overlay. The transcript highlights the current spoken line. **Follow playback** scrolls that line into view; switching it off keeps the reader's position. This preference is remembered in the browser. Transcript search temporarily controls scrolling, and clearing the search resumes following when enabled. The desktop side pane matches the natural height of the player and video details; mobile uses a stacked layout.
+
+When there is one ready-made snippet, the section shows it directly without a redundant selector card or accordion header. Multiple snippets retain their chooser.
 
 Run the pure regression tests with:
 
