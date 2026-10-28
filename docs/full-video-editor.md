@@ -6,7 +6,7 @@ The full-video editor previews and exports from YouTube. It supports exactly one
 
 The current full-video position appears in a compact timer beside the timeline controls, including hours for long videos. The video has no duplicate timer overlay. The transcript highlights the current spoken line. **Follow playback** scrolls that line into view; switching it off keeps the reader's position. This preference is remembered in the browser. Transcript search temporarily controls scrolling, and clearing the search resumes following when enabled. The desktop side pane matches the natural height of the player and video details; mobile uses a stacked layout.
 
-When there is one ready-made snippet, the section shows it directly without a redundant selector card or accordion header. Multiple snippets retain their chooser.
+Ready-made snippets use compact expandable rows with the first snippet open. Each open row has a saved-video player and an always-visible, scrollable transcript pane: side by side with matching heights on desktop, stacked on smaller screens. Opening another row closes the previous player and switches the transcript and download link. A single snippet uses the same layout without duplicate chooser cards. These saved transcripts are plain text, separate from the full-video transcript editor.
 
 Run the pure regression tests with:
 
@@ -31,3 +31,5 @@ It exercises real homepage/chat requests, search, Browse, timestamp handoffs, tr
 The script writes screenshots and `workflow-results.json` and exits nonzero on a failed check. This is the repeatable link/workflow verifier; real export files, speech checks, source-frame comparisons, and storage-preservation receipts from the implementation run are recorded separately in `.context/single-clip`.
 
 `scripts/verify-editor-playback.cjs` uses the same `PREVIEW_URL` and `PLAYWRIGHT_MODULE` settings for real playback, current-time readouts, follow on/off, search interaction, preference persistence, keyboard input, fullscreen, and narrow layouts. It covers Chromium, Firefox and WebKit desktop, Android Chromium, and iPhone/iPad WebKit emulation. `QA_DEVICE` selects comma-separated matrix names, and `QA_OUT` selects the evidence directory. It writes `verification.json` and exits nonzero if a check fails; it does not export media or mutate stored videos.
+
+`scripts/verify-ready-made-snippets.cjs` uses the same settings and six configurations for the expandable saved-snippet rows. It checks one and six real snippets, exact transcript/media/download matching, playback, keyboard collapse/reopen, independent transcript scrolling, and responsive alignment. Missing-transcript and empty-list fixtures are injected only in Chromium and identified in the report. Stored media and database records are never changed.
