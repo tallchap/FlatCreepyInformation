@@ -4,6 +4,8 @@ Full-video titles, transcript links, and chat/search “Snip It” actions resol
 
 The full-video editor previews and exports from YouTube. It supports exactly one Start/End range (1 second–11 minutes); Clip Finder replaces that range. The download-service array payload remains an array of one for compatibility. Existing saved snippets, their pages, and their stored media are unchanged. No database migration or Bunny deletion is part of this change.
 
+The current full-video position appears on the player and beside the timeline controls, including hours for long videos. The transcript highlights the current spoken line. **Follow playback** scrolls that line into view; switching it off keeps the reader's position. This preference is remembered in the browser. Transcript search temporarily controls scrolling, and clearing the search resumes following when enabled.
+
 Run the pure regression tests with:
 
 ```sh
@@ -25,3 +27,5 @@ node scripts/verify-full-video-editor.cjs
 It exercises real homepage/chat requests, search, Browse, timestamp handoffs, transcript editing, saved-media playback, legacy bookmarks, keyboard selection, and API rejection of multiple ranges. It invokes paid chat APIs. Only the explicit error-path test and Clip Finder replacement test use injected responses. It never deletes storage or changes database records. `QA_DEVICE` filters test names; `QA_LAYOUT=phone|desktop` repeats a journey at another layout. `QA_OUT` chooses the report directory; the default is `.context/single-clip`.
 
 The script writes screenshots and `workflow-results.json` and exits nonzero on a failed check. This is the repeatable link/workflow verifier; real export files, speech checks, source-frame comparisons, and storage-preservation receipts from the implementation run are recorded separately in `.context/single-clip`.
+
+`scripts/verify-editor-playback.cjs` uses the same `PREVIEW_URL` and `PLAYWRIGHT_MODULE` settings for real playback, current-time readouts, follow on/off, search interaction, preference persistence, keyboard input, fullscreen, and narrow layouts. It covers Chromium, Firefox and WebKit desktop, Android Chromium, and iPhone/iPad WebKit emulation. `QA_DEVICE` selects comma-separated matrix names, and `QA_OUT` selects the evidence directory. It writes `verification.json` and exits nonzero if a check fails; it does not export media or mutate stored videos.

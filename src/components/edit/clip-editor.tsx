@@ -553,6 +553,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                         videoId={videoId}
                         startSec={startSec}
                         endSec={endSec}
+                        playheadSec={playheadSec}
                         onLineClick={handleTranscriptClick}
                         bare
                       />
@@ -564,6 +565,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                   videoId={videoId}
                   startSec={startSec}
                   endSec={endSec}
+                  playheadSec={playheadSec}
                   onLineClick={handleTranscriptClick}
                 />
               )}
