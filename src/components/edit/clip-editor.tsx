@@ -141,16 +141,9 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
     window.history.replaceState(null, "", editorHref(videoId, selection?.in, selection?.out));
   }, [selection, videoId]);
 
-  // Fetch transcript for Clip Finder
-  useEffect(() => {
-    if (!videoId || !enableClipFinder) return;
-    fetch(`/api/transcript/${videoId}`)
-      .then((r) => r.json())
-      .then((data) => {
-        if (Array.isArray(data)) setTranscriptLines(data);
-      })
-      .catch(() => {});
-  }, [videoId, enableClipFinder]);
+  // Clip Finder gets its transcript from the Transcript tab (always mounted),
+  // so both use the same request and Clip Finder can't run before it lands.
+  useEffect(() => { setTranscriptLines([]); }, [videoId]);
 
   // Track video wrapper width for proportional overlay font scaling
   useEffect(() => {
@@ -553,6 +546,7 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                         playheadSec={playheadSec}
                         onLineClick={handleTranscriptClick}
                         active={!clipFinderOpen}
+                        onLinesLoaded={setTranscriptLines}
                         bare
                       />
                     </div>
