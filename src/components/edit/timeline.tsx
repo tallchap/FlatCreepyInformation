@@ -62,6 +62,10 @@ export function Timeline({
   const [dragging, setDragging] = useState<"start" | "end" | "playhead" | "minimap" | null>(null);
   const [zoom, setZoom] = useState(5);
   const [panCenter, setPanCenter] = useState<number | null>(null);
+  // While a handle or the playhead is dragged, the zoomed window stays put.
+  // Otherwise it re-centres on the moving range and the handle runs ahead of
+  // the pointer (a 60 s drag at 5x landed 79 s away).
+  const [dragCenter, setDragCenter] = useState<number | null>(null);
   const [trackWidth, setTrackWidth] = useState(0);
 
   useEffect(() => {
@@ -83,7 +87,7 @@ export function Timeline({
 
   // Visible window
   const visibleDuration = duration / zoom;
-  const center = panCenter ?? (startSec + endSec) / 2;
+  const center = panCenter ?? dragCenter ?? (startSec + endSec) / 2;
   const visibleStart = Math.max(0, Math.min(duration - visibleDuration, center - visibleDuration / 2));
   const visibleEnd = visibleStart + visibleDuration;
 
@@ -121,6 +125,7 @@ export function Timeline({
   const handlePointerDown = (handle: "start" | "end") => (e: React.PointerEvent) => {
     e.preventDefault();
     e.stopPropagation();
+    setDragCenter(visibleStart + visibleDuration / 2);
     setDragging(handle);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   };
@@ -143,7 +148,7 @@ export function Timeline({
     }
   };
 
-  const handlePointerUp = () => setDragging(null);
+  const handlePointerUp = () => { setDragging(null); setDragCenter(null); };
 
   const handleTrackClick = (e: React.MouseEvent) => {
     if (dragging) return;
@@ -153,6 +158,7 @@ export function Timeline({
 
   const handleTrackPointerDown = (e: React.PointerEvent) => {
     if ((e.target as HTMLElement).dataset.handle) return;
+    setDragCenter(visibleStart + visibleDuration / 2);
     setDragging("playhead");
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
   };
