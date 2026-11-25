@@ -133,6 +133,10 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
   // Only scroll when the spoken line changes, so reading stays steady.
   useEffect(() => {
     if (!active || !followPlayback || query.trim()) return;
+    // Revealing the tab with a clip selected: show the clip. The playhead can
+    // still be catching up with a Clip Finder seek; following resumes on the
+    // next spoken line.
+    if (revealing && startLineRef.current) return;
     const line = currentLineRef.current;
     const container = containerRef.current;
     if (!line || !container) return;
