@@ -23,7 +23,7 @@ export function validateSegments(segments: unknown, lengthSeconds?: number | nul
   const duration = clip.out - clip.in;
   if (duration < MIN_SEGMENT_SEC) return `Clip must be at least ${MIN_SEGMENT_SEC} s`;
   if (lengthSeconds && clip.out > lengthSeconds + 0.5) return `Clip ends after the video (${Math.round(lengthSeconds)} s)`;
-  if (duration > MAX_CLIP_SEC) return `Clip exceeds maximum length of ${MAX_CLIP_SEC / 60} minutes (${duration.toFixed(1)} s)`;
+  if (duration > MAX_CLIP_SEC) return `Clip is ${formatTotal(duration)}; the maximum is ${MAX_CLIP_SEC / 60} minutes`;
   return null;
 }
 
