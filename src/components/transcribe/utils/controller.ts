@@ -92,7 +92,7 @@ export async function fetchYoutubeMetadata(url: string, speaker: string) {
 
 async function fetchTranscriptApify(videoId: string) {
   const token = process.env.APIFY_TOKEN;
-  if (!token) return null;
+  if (!token) throw new Error("APIFY_TOKEN is not set on this deployment");
 
   const ytUrl = `https://www.youtube.com/watch?v=${videoId}`;
   const res = await fetch(
@@ -103,9 +103,9 @@ async function fetchTranscriptApify(videoId: string) {
       body: JSON.stringify({ videoUrls: [ytUrl] }),
     }
   );
-  const run = await res.json();
+  const run = await res.json().catch(() => ({}));
   const runId = run.data?.id;
-  if (!runId) return null;
+  if (!runId) throw new Error(`run did not start (HTTP ${res.status}${run.error?.message ? `: ${run.error.message}` : ""})`);
 
   // Poll until done (max 2 min)
   const maxWait = 120_000;
@@ -121,13 +121,13 @@ async function fetchTranscriptApify(videoId: string) {
     datasetId = pollData.data?.defaultDatasetId || "";
     if (status === "SUCCEEDED" || status === "FAILED" || status === "ABORTED") break;
   }
-  if (status !== "SUCCEEDED" || !datasetId) return null;
+  if (status !== "SUCCEEDED" || !datasetId) throw new Error(`run ${runId} ended ${status || "still running after 2 min"}`);
 
   const itemsRes = await fetch(
     `https://api.apify.com/v2/datasets/${datasetId}/items?token=${token}&format=json`
   );
-  const items = await itemsRes.json();
-  if (!items.length || !items[0].transcript) return null;
+  const items = await itemsRes.json().catch(() => []);
+  if (!items.length || !items[0].transcript?.length) throw new Error(`run ${runId} returned no transcript (video may have no captions)`);
 
   const item = items[0];
   // The actor has no language input and sometimes returns a YouTube auto-dub
@@ -161,30 +161,30 @@ async function fetchTranscriptProxy(url: string) {
       }] }
     );
     const transcript = response.data;
-    if (transcript.error) return null;
+    if (transcript.error) throw new Error(String(transcript.error).slice(0, 160));
     return { ...transcript, _source: "proxy" };
-  } catch {
-    return null;
+  } catch (e: any) {
+    const body = e?.response?.data?.error;
+    throw new Error(String(body || e?.message || e).slice(0, 160));
   }
 }
 
 async function fetchTranscriptElevenLabs(videoId: string) {
   const serviceUrl = process.env.FFMPEG_TRANSCRIBE_URL;
-  if (!serviceUrl) return null;
+  if (!serviceUrl) throw new Error("FFMPEG_TRANSCRIBE_URL is not set on this deployment");
 
-  try {
-    const res = await fetch(`${serviceUrl}/transcribe`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoId }),
-    });
-    if (!res.ok) return null;
-    const data = await res.json();
-    if (!data.transcript_data?.length) return null;
-    return { ...data, _source: "elevenlabs" };
-  } catch {
-    return null;
+  const res = await fetch(`${serviceUrl}/transcribe`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ videoId }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`HTTP ${res.status}${text ? `: ${text.slice(0, 160)}` : ""}`);
   }
+  const data = await res.json();
+  if (!data.transcript_data?.length) throw new Error("service returned no segments");
+  return { ...data, _source: "elevenlabs" };
 }
 
 export async function fetchYoutubeTranscript(url: string) {
