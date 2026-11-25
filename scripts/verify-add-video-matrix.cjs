@@ -154,23 +154,23 @@ async function runCase(browser, c) {
       check("±2-frame buttons move Start/End by 2/30 s each", s && Math.abs(s.in - (before.in + 2 * step)) < 0.002 && Math.abs(s.out - (before.out + step)) < 0.002, `${JSON.stringify(before)} → ${JSON.stringify(s)}`);
     } else if (c.method === "drag") {
       await typeTime("Start", c.start);
-      await typeTime("End", c.start + 10);
+      await typeTime("End", c.start + 120);
       // The timeline opens zoomed, so measure seconds-per-pixel from the two handles.
       const hx = async (h) => { const b = await page.locator(`[data-handle=${h}]`).boundingBox(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }; };
       const s0 = await hx("start"), e0 = await hx("end");
-      const secPerPx = 10 / (e0.x - s0.x);
+      const secPerPx = 120 / (e0.x - s0.x);
       const drag = async (h, from, dx) => {
         await page.mouse.move(from.x, from.y); await page.mouse.down();
         await page.mouse.move(from.x + dx, from.y, { steps: 15 }); await page.mouse.up();
         await page.waitForTimeout(300);
       };
-      const endDx = Math.round((c.len - 10) / secPerPx), startDx = -Math.round(30 / secPerPx);
+      const endDx = Math.round((c.len - 120) / secPerPx), startDx = -Math.round(30 / secPerPx);
       await drag("end", e0, endDx);
       await drag("start", await hx("start"), startDx);
       const s = await sel();
       const tol = 3 * secPerPx + 0.5;
-      check("dragging handles moves Start/End", s && Math.abs(s.out - (c.start + 10 + endDx * secPerPx)) < tol && Math.abs(s.in - (c.start + startDx * secPerPx)) < tol,
-        `end dragged ${endDx}px, start ${startDx}px → ${JSON.stringify(s)} (1px≈${secPerPx.toFixed(2)}s, expected ≈${(c.start + startDx * secPerPx).toFixed(1)}–${(c.start + 10 + endDx * secPerPx).toFixed(1)})`);
+      check("dragging handles moves Start/End", s && Math.abs(s.out - (c.start + 120 + endDx * secPerPx)) < tol && Math.abs(s.in - (c.start + startDx * secPerPx)) < tol,
+        `end dragged ${endDx}px, start ${startDx}px → ${JSON.stringify(s)} (1px≈${secPerPx.toFixed(2)}s, expected ≈${(c.start + startDx * secPerPx).toFixed(1)}–${(c.start + 120 + endDx * secPerPx).toFixed(1)})`);
       // Snap to the intended length with typed values so the export length is exact.
       await typeTime("Start", c.start);
       await typeTime("End", c.start + c.len);
