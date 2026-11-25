@@ -5,7 +5,8 @@
 //   node scripts/verify-clip-finder-tabs.cjs
 //
 // Calls the paid /api/clip-finder (several prompts) and exports one short
-// clip. Writes QA_OUT/results.json and screenshots; exits nonzero on failure.
+// clip. The "injected" case delays /api/transcript and fakes a Clip Finder
+// error inside the test browser only. Writes QA_OUT/results.json and screenshots; exits nonzero on failure.
 
 const fs = require("fs");
 const path = require("path");
@@ -182,6 +183,37 @@ async function fresh(browser) {
   await ctx.close();
 }
 
+async function injected(browser) {
+  // 10. Slow transcript (delayed 6 s, injected): prompts wait, then work.
+  // 11. Clip Finder API error (injected 500): the panel says so.
+  const cfg = "chromium-desktop injected";
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const p = await ctx.newPage();
+  if (process.env.SHARE_URL) await p.goto(process.env.SHARE_URL, { waitUntil: "domcontentloaded" });
+  const h = helpers(p);
+  await p.route(/\/api\/transcript\//, async (route) => { await new Promise((r) => setTimeout(r, 6000)); await route.continue(); });
+  const bodies = [];
+  p.on("request", (q) => { if (q.url().includes("/api/clip-finder")) bodies.push(JSON.parse(q.postData() || "{}").transcript?.length ?? null); });
+  await p.goto(`${SITE}/edit?v=${SHORT}`, { waitUntil: "domcontentloaded" });
+  await p.getByRole("button", { name: "Clip Finder", exact: true }).waitFor({ timeout: 60000 });
+  await h.tab("Clip Finder");
+  const best = p.getByRole("button", { name: /Best snippets/i });
+  const waiting = await best.isDisabled() && (await p.getByTestId("clip-finder-pane").evaluate((e) => e.textContent)).includes("Loading transcript");
+  await h.snap("injected-loading-transcript");
+  await best.click({ timeout: 30000 }); // waits until enabled
+  await p.locator("[data-testid=clip-finder-pane] div.cursor-pointer").first().waitFor({ timeout: 180000 });
+  check(cfg, "slow transcript: prompts wait, then the request carries the transcript", waiting && bodies.length === 1 && bodies[0] > 0, { disabledWhileLoading: waiting, transcriptLinesSent: bodies });
+  await p.unroute(/\/api\/transcript\//);
+  await p.route(/\/api\/clip-finder/, (route) => route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "Injected failure" }) }));
+  await p.getByPlaceholder("Find clips about...").fill("anything");
+  await p.getByPlaceholder("Find clips about...").press("Enter");
+  const alert = p.getByTestId("clip-finder-pane").getByRole("alert");
+  await alert.waitFor({ timeout: 20000 });
+  check(cfg, "API error is shown in the panel", (await alert.innerText()).includes("Injected failure"), await alert.innerText());
+  await h.snap("injected-api-error");
+  await ctx.close();
+}
+
 async function phone() {
   // 9. iPhone (WebKit): same round trip on the stacked layout.
   const cfg = "iphone-webkit";
@@ -208,7 +240,7 @@ async function phone() {
 (async () => {
   const browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   const only = (process.env.QA_ONLY || "").split(",").filter(Boolean);
-  for (const [name, fn] of [["desktop", () => desktop(browser)], ["fresh", () => fresh(browser)], ["phone", phone]]) {
+  for (const [name, fn] of [["desktop", () => desktop(browser)], ["fresh", () => fresh(browser)], ["injected", () => injected(browser)], ["phone", phone]]) {
     if (only.length && !only.includes(name)) continue;
     try { await fn(); } catch (e) { check(name, "run completed", false, e.message.split("\n")[0]); }
   }
