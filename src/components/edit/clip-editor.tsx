@@ -533,23 +533,29 @@ export function ClipEditor({ enableClipFinder }: { enableClipFinder?: boolean } 
                     </button>
                   </div>
                   {/* Tab content */}
+                  {/* Both tabs stay mounted so Clip Finder results (and a
+                      request still running) survive a switch to Transcript. */}
                   <div className="flex-1 min-h-0 overflow-hidden">
-                    {clipFinderOpen ? (
+                    <div className="h-full" hidden={!clipFinderOpen} data-testid="clip-finder-pane">
                       <ClipFinder
+                        key={videoId}
                         transcript={transcriptLines}
+                        active={clipFinderOpen}
                         onSelectSnippet={handleSnippetSelect}
                         onClose={() => setClipFinderOpen(false)}
                       />
-                    ) : (
+                    </div>
+                    <div className="h-full" hidden={clipFinderOpen} data-testid="transcript-pane">
                       <TranscriptPanel
                         videoId={videoId}
                         startSec={startSec}
                         endSec={endSec}
                         playheadSec={playheadSec}
                         onLineClick={handleTranscriptClick}
+                        active={!clipFinderOpen}
                         bare
                       />
-                    )}
+                    </div>
                   </div>
                 </div>
               ) : (

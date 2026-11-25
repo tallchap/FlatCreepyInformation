@@ -21,6 +21,9 @@ interface ClipFinderProps {
   transcript: TranscriptLine[];
   onSelectSnippet: (startSec: number, endSec: number) => void;
   onClose: () => void;
+  /** False while the Transcript tab is showing. The finder stays mounted so
+   *  its results and any running request survive the switch. */
+  active?: boolean;
 }
 
 function formatDuration(sec: number): string {
@@ -36,7 +39,7 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function ClipFinder({ transcript, onSelectSnippet, onClose }: ClipFinderProps) {
+export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true }: ClipFinderProps) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -49,17 +52,30 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose }: ClipFinderP
   // so the first snippet cards are visible.
   const lastUserRef = useRef<HTMLDivElement>(null);
 
+  // A hidden pane can't scroll. When the tab is shown again: if results or
+  // a new request came in meanwhile, scroll as below; otherwise put the
+  // reader back where they were.
+  const savedScrollRef = useRef(0);
+  const seenRef = useRef({ count: 0, loading: false });
   useEffect(() => {
-    if (!bodyRef.current || messages.length === 0) return;
+    const body = bodyRef.current;
+    if (!body || !active) return;
+    const seen = seenRef.current;
+    if (seen.count === messages.length && seen.loading === loading) {
+      body.scrollTop = savedScrollRef.current;
+      return;
+    }
+    seenRef.current = { count: messages.length, loading };
+    if (messages.length === 0) return;
     const lastMsg = messages[messages.length - 1];
     if (lastMsg.role === "user" || loading) {
       // User just sent a message or loading — scroll to bottom
-      bodyRef.current.scrollTop = bodyRef.current.scrollHeight;
+      body.scrollTop = body.scrollHeight;
     } else if (lastMsg.role === "assistant" && lastUserRef.current) {
       // Results arrived — scroll so the user message is at top
       lastUserRef.current.scrollIntoView({ behavior: "smooth", block: "start" });
     }
-  }, [messages, loading]);
+  }, [messages, loading, active]);
 
   const sendQuery = async (query: string, promptType: "bestSnippets" | "aiSafety" | "general") => {
     const userMsg: Message = { role: "user", query };
@@ -108,7 +124,7 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose }: ClipFinderP
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Body */}
-      <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
+      <div ref={bodyRef} onScroll={(e) => { if (active) savedScrollRef.current = e.currentTarget.scrollTop; }} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-3">
         {/* Autoprompts */}
         {showAutoprompts && (
           <>

@@ -14,6 +14,9 @@ interface TranscriptPanelProps {
   onLineClick: (sec: number) => void;
   onOpenClipFinder?: () => void;
   bare?: boolean;
+  /** False while the tab is hidden: it can't measure or scroll, so the
+   *  scroll effects wait and run when it is shown again. */
+  active?: boolean;
 }
 
 function formatTime(sec: number): string {
@@ -22,7 +25,7 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLineClick, onOpenClipFinder, bare }: TranscriptPanelProps) {
+export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLineClick, onOpenClipFinder, bare, active = true }: TranscriptPanelProps) {
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -35,6 +38,11 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
   const currentLineRef = useRef<HTMLButtonElement>(null);
   const matchRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const searchInputRef = useRef<HTMLInputElement>(null);
+  // On the render that reveals the tab, scroll instantly: two smooth scrolls
+  // (selection start, then the playing line) would otherwise fight.
+  const wasActiveRef = useRef(active);
+  const revealing = active && !wasActiveRef.current;
+  const scrollBehavior: ScrollBehavior = revealing ? "auto" : "smooth";
 
   useEffect(() => {
     try { setFollowPlayback(localStorage.getItem("transcript-follow-playback") !== "false"); } catch {}
@@ -100,7 +108,7 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
 
   // Scroll to start of selection when startSec changes (only when not searching)
   useEffect(() => {
-    if (query.trim()) return;
+    if (!active || query.trim()) return;
     if (startLineRef.current && containerRef.current) {
       const lineTop = startLineRef.current.offsetTop - containerRef.current.offsetTop;
       const viewTop = containerRef.current.scrollTop;
@@ -108,16 +116,16 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
       if (lineTop < viewTop || lineTop > viewBottom - 40) {
         containerRef.current.scrollTo({
           top: Math.max(0, lineTop - 60),
-          behavior: "smooth",
+          behavior: scrollBehavior,
         });
       }
     }
-  }, [startSec, query, lines]);
+  }, [startSec, query, lines, active]);
 
   // Search keeps control of the scroll position until its query is cleared.
   // Only scroll when the spoken line changes, so reading stays steady.
   useEffect(() => {
-    if (!followPlayback || query.trim()) return;
+    if (!active || !followPlayback || query.trim()) return;
     const line = currentLineRef.current;
     const container = containerRef.current;
     if (!line || !container) return;
@@ -126,10 +134,12 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
     if (row.top < view.top || row.bottom > view.bottom) {
       container.scrollTo({
         top: Math.max(0, container.scrollTop + row.top - view.top - 40),
-        behavior: "smooth",
+        behavior: scrollBehavior,
       });
     }
-  }, [currentLineIdx, followPlayback, query, lines]);
+  }, [currentLineIdx, followPlayback, query, lines, active]);
+
+  useEffect(() => { wasActiveRef.current = active; }, [active]);
 
   const goNext = useCallback(() => {
     if (matchIndices.length === 0) return;
