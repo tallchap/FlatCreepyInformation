@@ -33,3 +33,16 @@ The script writes screenshots and `workflow-results.json` and exits nonzero on a
 `scripts/verify-editor-playback.cjs` uses the same `PREVIEW_URL` and `PLAYWRIGHT_MODULE` settings for real playback, current-time readouts, follow on/off, search interaction, preference persistence, keyboard input, fullscreen, and narrow layouts. It covers Chromium, Firefox and WebKit desktop, Android Chromium, and iPhone/iPad WebKit emulation. `QA_DEVICE` selects comma-separated matrix names, and `QA_OUT` selects the evidence directory. It writes `verification.json` and exits nonzero if a check fails; it does not export media or mutate stored videos.
 
 `scripts/verify-ready-made-snippets.cjs` uses the same settings and six configurations for the expandable saved-snippet rows. It checks one and six real snippets, exact transcript/media/download matching, playback, keyboard collapse/reopen, independent transcript scrolling, and responsive alignment. Missing-transcript and empty-list fixtures are injected only in Chromium and identified in the report. Stored media and database records are never changed.
+
+## Add-a-video → editor → export matrix
+
+`scripts/verify-add-video-matrix.cjs` drives the live site end to end for a list of YouTube videos chosen across years and shapes (4:3, 16:10, 16:9, 2:1, 1:1, 9:16 Shorts and long verticals): paste the URL on `/admin/add-video`, enter the speaker, Add, follow "open the editor", choose the range with a different control per case (typed Start/End, transcript clicks, transcript search, handle drag on the zoomed timeline, ±2-frame buttons, Clip Finder), exercise Play/Pause, spacebar, speed, From Start, Last 3s, zoom, Follow playback and the 11-minute limit, then Export and save the download. Adding a video is permanent, so the case list must be videos not yet in the library; `QA_RESUME=1` reuses videos a previous run added, and `QA_SKIP_EXPORT=1` re-runs only the controls.
+
+```sh
+PLAYWRIGHT_MODULE=/abs/node_modules/playwright QA_RESUME=1 QA_OUT=qa-recordings/<run> \
+  node scripts/verify-add-video-matrix.cjs [videoId,videoId…]
+OPENAI_API_KEY=… ANTHROPIC_API_KEY=… YOUTUBE_API_KEY=… \
+  python3 scripts/verify-add-video-matrix-media.py qa-recordings/<run>
+```
+
+The media pass checks each downloaded clip: length against Start/End (±0.5 s), aspect ratio against the YouTube source (±3%), audio present above −40 LUFS, a Whisper transcription of the clip against the site transcript at Start/End (≥70% of heard words, with a far-away control), and a five-frame contact sheet reviewed by an independent Claude call. Both scripts exit nonzero on any failure.
