@@ -15,6 +15,7 @@ type Message = {
   query?: string;
   promptType?: "bestSnippets" | "aiSafety" | "general";
   snippets?: Snippet[];
+  error?: string;
 };
 
 interface ClipFinderProps {
@@ -46,6 +47,7 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
   const [inputValue, setInputValue] = useState("");
   const [allSnippets, setAllSnippets] = useState<Snippet[]>([]);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const ready = transcript.length > 0; // prompts wait for the transcript
 
   // Scroll: when loading starts, scroll to bottom to show the dots.
   // When results arrive, scroll to show the user message (not the bottom),
@@ -88,7 +90,8 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ transcript, query, promptType, previousSnippets: allSnippets }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || data.error) throw new Error(data.error || `HTTP ${res.status}`);
       const newSnippets = data.snippets || [];
       const aiMsg: Message = {
         role: "assistant",
@@ -97,8 +100,8 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
       };
       setMessages((prev) => [...prev, aiMsg]);
       setAllSnippets((prev) => [...prev, ...newSnippets]);
-    } catch {
-      const aiMsg: Message = { role: "assistant", snippets: [] };
+    } catch (e) {
+      const aiMsg: Message = { role: "assistant", snippets: [], error: e instanceof Error ? e.message : "Request failed" };
       setMessages((prev) => [...prev, aiMsg]);
     } finally {
       setLoading(false);
@@ -114,7 +117,7 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const q = inputValue.trim();
-    if (!q || loading) return;
+    if (!q || loading || !ready) return;
     setInputValue("");
     sendQuery(q, "general");
   };
@@ -129,11 +132,12 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
         {showAutoprompts && (
           <>
             <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
-              Quick prompts
+              {ready ? "Quick prompts" : "Loading transcript…"}
             </p>
             <button
               onClick={() => sendQuery("Show me the best snippets", "bestSnippets")}
-              className="w-full text-left flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-green-50 hover:border-green-300 transition-colors"
+              disabled={!ready}
+              className="disabled:opacity-50 disabled:cursor-wait w-full text-left flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-green-50 hover:border-green-300 transition-colors"
             >
               <span className="text-base leading-none mt-0.5">🔥</span>
               <div>
@@ -145,7 +149,8 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
             </button>
             <button
               onClick={() => sendQuery("Show me AI safety quotes", "aiSafety")}
-              className="w-full text-left flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-green-50 hover:border-green-300 transition-colors"
+              disabled={!ready}
+              className="disabled:opacity-50 disabled:cursor-wait w-full text-left flex items-start gap-2.5 p-3 rounded-lg border border-gray-200 bg-gray-50 hover:bg-green-50 hover:border-green-300 transition-colors"
             >
               <span className="text-base leading-none mt-0.5">🛡️</span>
               <div>
@@ -209,7 +214,9 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
               <p className="text-[10px] font-medium text-gray-400 uppercase tracking-wide">
                 Clip Finder · {snippets.length} snippet{snippets.length !== 1 ? "s" : ""}
               </p>
-              {snippets.length === 0 && (
+              {msg.error ? (
+                <p className="text-xs text-red-600" role="alert">Clip Finder failed: {msg.error}. Try again.</p>
+              ) : snippets.length === 0 && (
                 <p className="text-xs text-gray-400">No matching clips found. Try a different query.</p>
               )}
               {snippets.map((s, j) => (
@@ -246,12 +253,12 @@ export function ClipFinder({ transcript, onSelectSnippet, onClose, active = true
           value={inputValue}
           onChange={(e) => setInputValue(e.target.value)}
           placeholder="Find clips about..."
-          disabled={loading}
+          disabled={loading || !ready}
           className="flex-1 border border-gray-200 rounded-full px-3 py-1.5 text-xs bg-gray-50 text-gray-700 placeholder:text-gray-300 focus:outline-none focus:border-green-300 focus:bg-white disabled:opacity-50"
         />
         <button
           type="submit"
-          disabled={loading || !inputValue.trim()}
+          disabled={loading || !ready || !inputValue.trim()}
           className="w-7 h-7 rounded-full bg-green-600 text-white text-xs flex items-center justify-center disabled:bg-gray-200 disabled:cursor-default"
         >
           ↑

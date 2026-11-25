@@ -17,6 +17,9 @@ interface TranscriptPanelProps {
   /** False while the tab is hidden: it can't measure or scroll, so the
    *  scroll effects wait and run when it is shown again. */
   active?: boolean;
+  /** Called with the lines once loaded, so the editor can hand them to
+   *  Clip Finder without fetching the transcript a second time. */
+  onLinesLoaded?: (lines: Line[]) => void;
 }
 
 function formatTime(sec: number): string {
@@ -25,7 +28,9 @@ function formatTime(sec: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLineClick, onOpenClipFinder, bare, active = true }: TranscriptPanelProps) {
+export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLineClick, onOpenClipFinder, bare, active = true, onLinesLoaded }: TranscriptPanelProps) {
+  const onLinesLoadedRef = useRef(onLinesLoaded);
+  onLinesLoadedRef.current = onLinesLoaded;
   const [lines, setLines] = useState<Line[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(false);
@@ -67,7 +72,9 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
         if (!r.ok) throw new Error("Transcript unavailable");
         const data = await r.json();
         if (!Array.isArray(data)) throw new Error("Invalid transcript");
-        setLines(data.filter((line) => line && typeof line.start === "number" && Number.isFinite(line.start) && line.start >= 0 && typeof line.text === "string"));
+        const valid = data.filter((line) => line && typeof line.start === "number" && Number.isFinite(line.start) && line.start >= 0 && typeof line.text === "string");
+        setLines(valid);
+        onLinesLoadedRef.current?.(valid);
       })
       .catch(() => { if (!controller.signal.aborted) setError(true); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -126,6 +133,10 @@ export function TranscriptPanel({ videoId, startSec, endSec, playheadSec, onLine
   // Only scroll when the spoken line changes, so reading stays steady.
   useEffect(() => {
     if (!active || !followPlayback || query.trim()) return;
+    // Revealing the tab with a clip selected: show the clip. The playhead can
+    // still be catching up with a Clip Finder seek; following resumes on the
+    // next spoken line.
+    if (revealing && startLineRef.current) return;
     const line = currentLineRef.current;
     const container = containerRef.current;
     if (!line || !container) return;
